@@ -1,0 +1,23 @@
+# Rust
+/target/
+**/target/
+
+# Tauri
+/src-tauri/gen/schemas/
+
+# Node / frontend
+node_modules/
+/dist/
+.vite/
+
+# Secrets & local
+.env
+.env.*
+CLAUDE.local.md
+.claude/settings.local.json
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+*.log

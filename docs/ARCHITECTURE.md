@@ -1,0 +1,455 @@
+# FocusMode — Architektura
+
+> Status: **wersja 2** — po cross-review ([reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md)).
+> Decyzje: [DECISIONS.md](DECISIONS.md). Produkt i profil czasów: [DESIGN.md](DESIGN.md).
+
+## 1. Stos technologiczny w skrócie
+
+| Warstwa | Technologia | Po co |
+|---|---|---|
+| Powłoka / okna / tray | **Tauri 2** (Rust) | okna (także overlaye per monitor), tray, powiadomienia, instalatory — bez ręcznego HWND |
+| Logika domenowa | **Rust**, crate `focus-core` | profil czasów, maszyna stanów, planer przerwy, walidacja configu, agregaty statystyk — czysta, bez I/O |
+| Audio | **rodio** w `focus-audio` | odtwarzanie plików, generowany szum, fade |
+| Integracje OS | `focus-platform` | (Could) Teams DND przez Graph, eksperymentalna gamma ramp |
+| UI | **Svelte 5 + TypeScript + Vite** w WebView | szybki, ładny interfejs; animacje CSS |
+| Typy UI↔Rust | **ts-rs** (`#[ts(export)]`) | typy TS generowane z DTO w Ruście |
+| Build | `tauri build`, GitHub Actions | instalator Windows (NSIS/MSI) od M1; macOS/Linux w CI best-effort |
+
+Platforma odbioru to Windows, pozostałe best-effort z tabelą ograniczeń (DESIGN §4, ADR-008).
+Tauri nie gwarantuje identycznego UX na każdym OS; to, co obiecujemy, sprawdzamy testami na sprzęcie.
+
+## 2. Układ repozytorium
+
+```
+.
+├── Cargo.toml                 # workspace: crates/* + src-tauri
+├── Cargo.lock                 # commitowany; CI buduje z --locked
+├── rust-toolchain.toml        # przypięta wersja Rusta
+├── .nvmrc                     # przypięta wersja Node
+├── .cargo/config.toml         # [env] TS_RS_EXPORT_DIR = src/lib/bindings (relative = true)
+├── assets/
+│   ├── exercises.json         # JEDYNY katalog ćwiczeń (czyta powłoka → planer w core)
+│   └── music/                 # genres.toml, pliki audio, CREDITS.md
+├── crates/
+│   ├── focus-core/            # ZERO zależności od Tauri/rodio/OS/sieci/systemu plików
+│   │   └── src/
+│   │       ├── api.rs         # DTO współdzielone z UI (#[ts(export)]) — KONTRAKT
+│   │       ├── timing.rs      # TimingProfile { normal(), demo() } — jedyne źródło czasów
+│   │       ├── clock.rs       # Now { mono, wall } — typy czasu (bez czytania zegara)
+│   │       ├── session.rs     # maszyna stanów: Session::handle(now, Input) -> Vec<Effect>
+│   │       ├── break_plan.rs  # planer przerwy: (katalog, profil, seed) -> BreakPlan
+│   │       ├── config.rs      # Config + Default + walidacja + from/to TOML string (bez plików)
+│   │       ├── stats.rs       # SessionRecord, agregaty dzienne, podsumowanie jednym zdaniem
+│   │       └── tint.rs        # kelvin -> kolor/alfa overlay, harmonogram
+│   ├── focus-audio/           # wątek audio (rodio), playlisty, generatory szumu, model fade
+│   └── focus-platform/        # (Could) DndProvider/Teams, eksperymentalna gamma — za traitami
+├── src-tauri/                 # powłoka (imperative shell)
+│   ├── tauri.conf.json
+│   ├── build.rs               # tauri_build + (Should) manifest komend aplikacji dla ACL
+│   ├── capabilities/          # uprawnienia per typ okna
+│   └── src/
+│       ├── main.rs            # tylko focusmode_lib::run()
+│       ├── lib.rs             # Builder, pluginy, setup, rejestracja komend       [B]
+│       ├── commands.rs        # cienkie adaptery #[tauri::command] → SessionCmd   [B]
+│       ├── session_actor.rs   # aktor: Session + tick + dispatch efektów          [A]
+│       ├── effects.rs         # Effect → audio / okna / persystencja / eventy     [A]
+│       ├── persistence.rs     # odczyt/zapis config.toml, sessions.jsonl, katalog [A]
+│       ├── windows.rs         # main, warning, break-{n}, tint-{n} + bootstrap    [B]
+│       ├── tray.rs                                                                [B]
+│       └── tint_service.rs    # harmonogram → okna tint                           [A]
+├── src/                       # FRONTEND (Svelte/TS), nie Rust!
+│   ├── App.svelte             # routing po hash: #/ #/warning #/break #/tint #/settings #/stats
+│   ├── lib/
+│   │   ├── api.ts             # JEDYNE miejsce z invoke()/listen()
+│   │   ├── bindings/          # GENEROWANE przez ts-rs — nie edytować
+│   │   ├── stores/            # session store: snapshot + rewizje
+│   │   ├── components/        # TimerRing, GenrePicker, ExerciseCard, HoldToSkip, ...
+│   │   ├── illustrations/     # SVG/komponenty po id ćwiczenia + fallback
+│   │   └── strings.ts         # teksty UI
+│   └── routes/                # Main, Warning, Break, Tint, Settings, Stats
+└── docs/
+```
+
+## 3. Diagram komponentów
+
+```mermaid
+flowchart LR
+  subgraph UI["Frontend: Svelte w WebView"]
+    Main["Okno główne"]
+    Warn["Okienko ostrzeżenia"]
+    Break["Overlay przerwy per monitor"]
+    TintOv["Overlay tint per monitor"]
+  end
+  subgraph Shell["src-tauri: powłoka"]
+    Cmd["commands.rs"]
+    Actor["SessionActor"]
+    Eff["effects.rs"]
+    Pers["persistence.rs"]
+    Win["windows.rs"]
+    Tray["tray.rs"]
+    TintSvc["tint_service.rs"]
+  end
+  Core[("focus-core")]
+  Audio["focus-audio: wątek audio"]
+  Plat["focus-platform: Teams, gamma (Could)"]
+
+  Main -- "invoke" --> Cmd
+  Warn -- "invoke" --> Cmd
+  Break -- "invoke" --> Cmd
+  Cmd -- "SessionCmd" --> Actor
+  Tray -- "SessionCmd" --> Actor
+  Actor -- "handle(now, input)" --> Core
+  Core -- "Vec of Effect" --> Actor
+  Actor --> Eff
+  Eff -- "AudioCmd" --> Audio
+  Eff --> Win
+  Eff --> Pers
+  Eff -. "Could" .-> Plat
+  Eff -- "session://snapshot" --> UI
+  TintSvc --> Core
+  TintSvc --> Win
+```
+
+## 4. Wzorzec: functional core, imperative shell (ADR-002)
+
+```rust
+// crates/focus-core (szkic — nazwy do ustalenia w T0-4)
+pub struct Now { pub mono: Duration /* od startu aplikacji, monotoniczny */, pub wall: OffsetDateTime /* lokalny kalendarz */ }
+
+pub enum Input {
+    Start { genre: GenreId },
+    Pause, Resume, Stop,
+    Tick,
+    AcceptBreak,                          // „Idę” (tylko w ostrzeżeniu)
+    Postpone,                             // „Jeszcze 2 min” (tylko w ostrzeżeniu, raz na cykl)
+    SetMeetingMode { minutes: Option<u32> }, // None = wyłącz
+    SkipBreak { break_id: BreakId },      // idempotentne, z ID konkretnej przerwy
+    ConfigChanged(Config),
+}
+
+pub enum Effect {
+    Audio(AudioCmd),                      // Play{genre}, FadeTo{factor, ms}, Stop, Gong
+    ShowBreak { break_id: BreakId },      // plan jest w snapshocie, nie w efekcie
+    HideBreak { break_id: BreakId },
+    ShowWarning, HideWarning,
+    Notify { title: String, body: String },   // tylko tekst
+    RecordSession(SessionRecord),         // dokładnie raz na cykl
+    SetDnd { on: bool, for_secs: u32, session_id: SessionId }, // Could
+}
+
+impl Session {
+    pub fn new(profile: TimingProfile, catalog: ExerciseCatalog, seed: u64) -> Self;
+    pub fn handle(&mut self, now: Now, input: Input) -> Vec<Effect>;
+    pub fn snapshot(&self, now: Now) -> SessionSnapshot; // odtwarza CAŁY widok (§6.3)
+}
+```
+
+Zasady:
+- `focus-core` **nie czyta zegara, plików ani sieci**. `now`, katalog ćwiczeń i seed przychodzą z zewnątrz,
+  więc testy są deterministyczne.
+- Config w core to typy, `Default`, walidacja oraz `from_toml_str` / `to_toml_string`. **Pliki czyta i zapisuje powłoka** (`persistence.rs`).
+- Wszystkie czasy pochodzą z `TimingProfile` (żadnych „magicznych” liczb w logice ani w UI; UI dostaje czasy w snapshocie).
+
+## 5. Model czasu i maszyna stanów (ADR-011)
+
+### 5.1 Profil czasów
+
+| Parametr | `normal()` | `demo()` |
+|---|---:|---:|
+| `focus_secs` (ostrzeżenie się w nim zawiera) | 2400 | 40 |
+| `warning_secs` | 30 | 5 |
+| `break_secs` | 300 | 20 |
+| `postpone_secs` (raz na cykl) | 120 | 10 |
+| `meeting_options` | 15/30/60 min | 15 s |
+| `interruption_gap_secs` | 60 | 60 |
+
+Długości faz z configu użytkownika nadpisują `normal()`. Demo ignoruje config i używa stałego planu przerwy.
+
+### 5.2 Zegary
+- **Fazy i deadline'y**: `now.mono` (monotoniczny). **Statystyki dzienne i harmonogram tint**: `now.wall`.
+- **Heurystyka przerwania**: jeśli między tickami minęło > `interruption_gap_secs` w zegarze monotonicznym **albo**
+  zegar kalendarzowy przeskoczył o tyle więcej niż monotoniczny, to sesja jest przerwana. Tak łapiemy uśpienie niezależnie od tego,
+  czy dany OS wlicza suspend do `Instant`; fałszywym alarmem będzie np. ręczna zmiana zegara. Skutki:
+  - w Focus → `Paused { reason: Interrupted }`, czeka na Resume; luka **nie** liczy się jako czas focusa,
+  - w Break → Idle, wynik przerwy `interrupted` (nie zaliczamy ćwiczeń automatycznie).
+- Czas aktywnej sesji = suma odcinków, w których Focus faktycznie biegł (bez pauz i luk).
+
+### 5.3 Stany
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Focus: Start
+  Focus --> Paused: Pause lub luka czasu
+  Paused --> Focus: Resume
+  Focus --> Break: koniec focusa, AcceptBreak
+  Break --> Focus: koniec przerwy i autoStart
+  Break --> Idle: koniec przerwy bez autoStart
+  Break --> Idle: SkipBreak lub luka czasu
+  Focus --> Idle: Stop
+  Paused --> Idle: Stop
+  Break --> Idle: Stop
+```
+
+Ostrzeżenie **nie jest osobną fazą**, tylko flagą `warning` w Focus (ostatnie `warning_secs`).
+Tryb spotkania to pole `meeting_until` w Focus/Paused.
+
+### 5.4 Pełna tabela: faza × wejście
+
+`–` = ignorowane (no-op, bez błędu). Każde wejście jest idempotentne.
+
+| Faza \ wejście | Start | Pause | Resume | Stop | AcceptBreak | Postpone | SetMeetingMode | SkipBreak{id} | Tick |
+|---|---|---|---|---|---|---|---|---|---|
+| **Idle** | → Focus | – | – | – | – | – | – | – | – |
+| **Focus** | – | → Paused(User) | – | → Idle, record(`stopped`) | – | – | ustaw/wyłącz | – | T−warn: `warning=true`, ShowWarning; T: spotkanie aktywne ? czekaj : → Break; luka → Paused(Interrupted) |
+| **Focus + warning** | – | → Paused(User) | – | → Idle, record(`stopped`) | → Break | +`postpone_secs`, raz na cykl | ustaw → HideWarning, przerwa po spotkaniu | – | T → Break |
+| **Paused** | – | – | → Focus (deadline przesunięty o czas pauzy) | → Idle, record(`stopped`) | – | – | ustaw/wyłącz | – | nic (czas stoi) |
+| **Break** | – | – | – | → Idle, record(`stopped`) | – | – | – | id zgodne → Idle, record(`skipped`); inne → – | koniec: autoStart ? → Focus : → Idle, record(`completed`); luka → Idle, record(`interrupted`) |
+
+Efekty przejść:
+
+| Przejście | Efekty |
+|---|---|
+| Idle → Focus | `Audio(Play)` z fade-in; (Could) `SetDnd{on}` |
+| wejście w ostrzeżenie | `ShowWarning`, `Notify` (tekst), `Audio(FadeTo{0.3})` |
+| wyjście z ostrzeżenia bez przerwy (Postpone/spotkanie) | `HideWarning`, `Audio(FadeTo{1.0})` |
+| Focus → Break | `HideWarning`, `ShowBreak{id}`, `Audio(FadeTo{0})`, `Audio(Gong)`; (Could) `SetDnd{off}` |
+| zmiana ćwiczenia w Break | `Audio(Gong)` |
+| Break → Focus | `HideBreak{id}`, `RecordSession`, `Audio(Play)` |
+| * → Idle | `Audio(Stop)`, `HideWarning`, `HideBreak`, `RecordSession` (jeśli był cykl), (Could) `SetDnd{off}` |
+
+`RecordSession` zapisuje **dokładnie jeden** rekord na cykl (`session_id` + `cycle`), z wynikiem:
+`completed | skipped | stopped | interrupted`.
+
+### 5.5 Testy obowiązkowe (A-01)
+Granice demo 34/35/39/40/60 s; Postpone raz (drugi ignorowany) i po nim ponowne ostrzeżenie; spotkanie włączone/wyłączone
+przed końcem focusa i po nim; Stop w każdej fazie i Stop dwukrotny; SkipBreak z cudzym `break_id`; luka w Focus i w Break;
+suma czasów planu = `break_secs`; dokładnie jeden `RecordSession` na cykl; aktywny czas bez pauz.
+
+## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012)
+
+DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
+`#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS).
+Eksport: `cargo test -p focus-core` zapisuje do `TS_RS_EXPORT_DIR` (ustawione w `.cargo/config.toml` względem workspace).
+**CI sprawdza, czy po regeneracji `src/lib/bindings/` nie ma zmian** (`git diff --exit-code`).
+Nazwy komend i eventów są stałymi w `api.rs` eksportowanymi do TS (test eksportu), więc `api.ts` nie wpisuje ich ręcznie.
+Zmiany kontraktu przechodzą przez skill `/sync-contract`.
+
+### 6.1 Komendy (MVP)
+
+Adapter w `commands.rs`: B. Logika w aktorze/core: A.
+
+| Komenda | Argumenty | Zwraca |
+|---|---|---|
+| `get_snapshot` | – | `SessionSnapshot` |
+| `start_focus` | `genre: GenreId` | `()` |
+| `pause` / `resume` / `stop` | – | `()` |
+| `accept_break` / `postpone_break` | – | `()` |
+| `set_meeting_mode` | `minutes: number \| null` | `()` |
+| `skip_break` | `breakId: BreakId` | `()` |
+| `window_ready` | – (etykieta okna z kontekstu) | `()` |
+| `list_genres` | – | `GenreDto[]` |
+| `set_volume` | `volume: number (0..1)` | `()` |
+| `get_config` | – | `Config` |
+| `update_config` | `config: Config` | `Config` (po walidacji) |
+| `preview_tint` | `kelvin: number \| null` | `()` (M2) |
+| `get_stats` | – | `StatsDto` (M2) |
+
+Komendy zwracają `Result<T, AppError>`, gdzie `AppError { code, message }: Serialize`.
+Teams (Could) dostaje własne komendy dopiero w M3, poza kontraktem MVP.
+
+### 6.2 Eventy
+
+| Event | Payload | Kiedy |
+|---|---|---|
+| `session://snapshot` | `SessionSnapshot` | co tick (1 s) i po każdej zmianie |
+| `audio://now-playing` | `NowPlaying` | zmiana utworu/gatunku |
+| `tint://changed` | `TintState` | zmiana tint (M2) |
+| `app://error` | `AppError` | błąd warty pokazania |
+
+Nie ma osobnego eventu z planem przerwy. Wszystko, czego potrzebuje dowolne okno, jest w snapshocie.
+
+### 6.3 Snapshot odtwarza cały widok + protokół gotowości okien
+
+```rust
+pub struct SessionSnapshot {
+    pub revision: u32,                 // rośnie przy każdej zmianie stanu
+    pub session_id: Option<SessionId>, pub cycle: u32,
+    pub phase: Phase,                  // Idle | Focus | Paused | Break
+    pub pause_reason: Option<PauseReason>, // User | Interrupted
+    pub remaining_secs: u32, pub total_secs: u32,
+    pub warning: bool, pub postpone_available: bool,
+    pub meeting_until: Option<String>, // ISO, do wyświetlenia
+    pub active_break: Option<ActiveBreak>, // { break_id, plan: BreakPlan, elapsed_secs, current_step }
+    pub genre: Option<GenreId>, pub demo: bool,
+}
+pub struct BreakPlan { pub total_secs: u32, pub steps: Vec<BreakStep> } // BreakStep: pełna treść ćwiczenia + secs
+```
+
+Każde okno (także nowo utworzone):
+1. **najpierw** rejestruje `listen("session://snapshot")`,
+2. potem wywołuje `get_snapshot`,
+3. stosuje snapshot tylko wtedy, gdy `revision` jest większa od już posiadanej (chroni przed starszą odpowiedzią),
+4. wywołuje `window_ready`.
+
+Powłoka tworzy okna przerwy **ukryte** i pokazuje je dopiero po `window_ready`. Gdy okno nie zgłosi gotowości w 5 s,
+powłoka je zamyka, loguje `app://error` i wyświetla przerwę jako powiadomienie + stan w tray (przerwa trwa, a Stop działa).
+Komendy z okien przerwy niosą `break_id`, więc klik „Pomiń” z dwóch monitorów daje jeden efekt.
+
+### 6.4 Przykłady JSON (uzupełnić w T0-4)
+
+```json
+{ "revision": 42, "sessionId": "s-01", "cycle": 1, "phase": "break", "pauseReason": null,
+  "remainingSecs": 12, "totalSecs": 20, "warning": false, "postponeAvailable": false,
+  "meetingUntil": null, "genre": "brown-noise", "demo": true,
+  "activeBreak": { "breakId": "b-01", "elapsedSecs": 8, "currentStep": 1,
+    "plan": { "totalSecs": 20, "steps": [
+      { "id": "neck-tilt", "name": "Skłony szyi", "steps": ["…"], "secs": 5 },
+      { "id": "shoulder-rolls", "name": "Krążenia barków", "steps": ["…"], "secs": 5 },
+      { "id": "stand-walk", "name": "Wstań i się przejdź", "steps": ["…"], "secs": 10 } ] } } }
+```
+
+## 7. Model wątków i współbieżności
+
+```
+Wątek główny (event loop Tauri)  ── okna, tray, WebView
+Runtime tokio (tauri::async_runtime)
+ ├── SessionActor: select! { cmd = rx.recv(), _ = interval(1 s).tick(), res = effect_results.recv() }
+ │     → Session::handle → dispatch efektów (bez await na wolnych operacjach)
+ ├── TintService: interval(60 s) → core::tint → okna tint
+ ├── zadania efektów: persystencja (spawn_blocking), Graph (Could) — z timeoutem, wynik oznaczony session_id
+Wątek audio (std::thread)
+ └── urządzenie wyjściowe + odtwarzacz rodio; AudioCmd przez kanał; AudioEvent z powrotem
+```
+
+- **Aktor nigdy nie czeka na wolny efekt.** Wysłanie `AudioCmd` jest nieblokujące, a I/O i sieć idą do osobnych zadań z timeoutem.
+  Dzięki temu Stop jest obsługiwany natychmiast.
+- Wynik zadania wraca z `session_id`. **Spóźniony wynik po Stop jest ignorowany** i nie może ponownie włączyć efektu.
+- Stan dla UI: jeden właściciel (aktor), snapshot przez event i `get_snapshot`. Nie ma `Arc<Mutex<Session>>` wołanego z wielu miejsc.
+
+## 8. Audio (`focus-audio`) (ADR-003)
+
+- Dedykowany wątek to **decyzja organizacyjna** (jeden właściciel urządzenia, prosty cykl życia), a nie wymóg typów.
+  Aktualna wersja rodio ma nowe API. Konkretne typy i ich `Send`/`Sync` potwierdzamy w spike'u T0-10 i przypinamy wersję w `Cargo.toml`.
+- API: `AudioHandle::spawn(assets_dir) -> (AudioHandle, Receiver<AudioEvent>)`; `AudioCmd`: `Play{genre}`, `Pause`, `Resume`,
+  `Stop`, `SetVolume(f32)`, `FadeTo{factor, ms}`, `Gong`, `Next`.
+- **Model głośności**: `efektywna = głośność_użytkownika × współczynnik_fade`. `Resume` i `Play` przywracają fade do 1.0,
+  więc po Postpone muzyka nie zostaje wyciszona. Fade jest krokowy, a pętla wątku używa `recv_timeout`, więc `Stop` przerywa fade od razu.
+- Gatunki w `assets/music/genres.toml`: `kind = "noise"` (`brown | pink | white`) albo `"files"` (katalog; shuffle + pętla). M1: brown noise + 1 utwór CC0.
+- Szum: własne źródło `Iterator<Item = f32>` (brown = zintegrowany biały z wyciekiem, pink = filtr Paula Kelleta).
+- Błędy urządzenia (brak wyjścia, odłączenie słuchawek) → `AudioEvent::Error`. Sesja trwa dalej, UI pokazuje „brak dźwięku”, a wątek próbuje ponownie przy kolejnym `Play`.
+- Zasoby dołączane przez `bundle.resources`; ścieżkę rozwiązuje powłoka (`BaseDirectory::Resource`).
+
+## 9. Tint i integracje
+
+### 9.1 Tint: overlay jako główny mechanizm (ADR-009)
+- Okna `tint-{n}` na każdym monitorze: przezroczyste, bez dekoracji, `always_on_top`, `skip_taskbar`, nieaktywujące się,
+  `set_ignore_cursor_events(true)`. Kolor i alfa z `core::tint` (kelvin → RGBA).
+- To **efekt wizualny**, nie kalibracja barw: obniża kontrast i tak go opisujemy.
+- Znika razem z procesem, więc kolory wracają same po każdym crashu i kill.
+- Harmonogram: godziny od–do + przejście 30 min + siła; podgląd w ustawieniach (`preview_tint`).
+- macOS wymaga `macos-private-api` do przezroczystości; Wayland nie ma always-on-top, więc tam tint jest niedostępny i UI to komunikuje.
+
+### 9.2 Eksperymentalna gamma ramp (Could, S-02)
+- Tylko Windows, SDR, domyślnie wyłączona, poza ścieżką demo. Microsoft odradza `SetDeviceGammaRamp`: może zwrócić sukces
+  bez efektu, zachowanie przy HDR jest niezdefiniowane, a system lub inne aplikacje mogą ją nadpisać.
+- Sprzątanie opisujemy osobno dla każdego przypadku: **zwykłe wyjście** (restore), **panika** (hook, próba restore),
+  **zabicie procesu** (brak gwarancji → przy następnym starcie przywracamy liniową rampę, jeśli zapisany znacznik mówi,
+  że gamma była aktywna). Weryfikacja patrzy na widoczny efekt, nie na kod powrotu API.
+
+### 9.3 Teams DND (Could, S-01, ADR-010)
+- `Presence.ReadWrite` (delegowane), device code flow (public client), token w keychainie (`keyring`).
+- Ustawienie: `POST /users/{id}/presence/setUserPreferredPresence` (`/me/...` sprawdzić w próbie),
+  `{"availability":"DoNotDisturb","activity":"DoNotDisturb","expirationDuration":"PT45M"}`. Wygaśnięcie chroni przed „wiecznym DND”.
+- **Polityka odpowiedzialności**: `clearUserPreferredPresence` kasuje *każdy* preferowany status, także ustawiony ręcznie przez użytkownika.
+  Czyścimy więc tylko wtedy, gdy w tej sesji sami ustawiliśmy DND, a ustawienia uprzedzają: „FocusMode nadpisze twój ręczny status w Teams”.
+- Preferred presence wymaga aktywnej sesji presence (zalogowany klient Teams). Zmiana ikony może trwać kilka minut, więc **w demo nie pokazujemy jej na żywo**.
+- **Nie wykrywamy rozmów przez Graph** — od tego jest ręczny tryb spotkania.
+
+## 10. Okna
+
+| Etykieta | URL | Cechy |
+|---|---|---|
+| `main` | `index.html#/` | zwykłe okno; zamknięcie = hide (tray) |
+| `warning` | `index.html#/warning` | małe, w rogu głównego monitora, always-on-top, nieaktywujące się, bez paska zadań |
+| `break-{n}` | `index.html#/break?primary=1` | per monitor: tworzone ukryte → `window_ready` → pokazane; fullscreen, always-on-top, bez dekoracji |
+| `tint-{n}` | `index.html#/tint` | per monitor: przezroczyste, klikalne na wylot, bez fokusu; **bez dostępu do komend** |
+
+- Monitory: `app.available_monitors()`. Testujemy 2 monitory, różne DPI, monitor po lewej (ujemne współrzędne),
+  odłączenie monitora w trakcie i aplikację fullscreen w tle. **Nie obiecujemy przykrycia elementów systemu** (np. paska zadań).
+- Klawiatura: przytrzymanie Esc przez 3 s w oknie przerwy = `skip_break`. Stop z tray działa zawsze.
+- **Uprawnienia**: własne komendy z `invoke_handler` są domyślnie dostępne **każdemu** oknu. Samo capabilities dla pluginów ich nie ogranicza.
+  Izolację (Should, B-12) włączamy przez manifest komend aplikacji w `build.rs` oraz capabilities per etykieta okna
+  (`tint-*`: nic; `warning`, `break-*`: tylko potrzebne komendy). Weryfikacja: wywołanie z `tint-*` odrzucone przez backend.
+- Pluginy: `notification` (tylko tekst; przyciski akcji w tym pluginie są tylko na mobile), `single-instance`, `log`;
+  (Could) `global-shortcut`, `autostart`.
+
+## 11. Dane i konfiguracja
+
+| Co | Gdzie | Kto czyta/pisze |
+|---|---|---|
+| Ustawienia | `app_config_dir()/config.toml` | `persistence.rs` (zapis atomowy: tmp + rename); core parsuje i waliduje string |
+| Historia sesji | `app_data_dir()/sessions.jsonl` | `persistence.rs`, append-only, jeden `SessionRecord` na cykl |
+| Katalog ćwiczeń | zasób `assets/exercises.json` | `persistence.rs` → `ExerciseCatalog` → core |
+| Znacznik gammy (Could) | `app_data_dir()/gamma.active` | tylko dla S-02 |
+| Token Teams (Could) | systemowy keychain | `keyring` |
+| Logi | `app_log_dir()` | `tauri-plugin-log` / `tracing` |
+
+Brak pliku oznacza ustawienia domyślne. Uszkodzony config: log + domyślne, a stary plik zostaje przemianowany na `.bak`. Błąd zapisu kończy się `app://error`, a sesja trwa dalej.
+Demo nie zapisuje się do prawdziwej historii (rekordy z `demo: true` są pomijane w statystykach).
+
+## 12. Obsługa błędów i logowanie
+
+- Biblioteki: `thiserror`. Powłoka: `anyhow` wewnętrznie, `AppError { code, message }` na granicy IPC.
+- Brak `unwrap()/expect()` poza testami i setupem.
+- Błąd integracji (audio, tint, Teams, zapis) **nie przerywa sesji**: log + `app://error` + degradacja.
+- `tracing`, poziom przez `RUST_LOG`.
+
+## 13. Testy
+
+| Poziom | Co | Jak |
+|---|---|---|
+| Unit core | tabela §5.4, granice czasu, planer, config, agregaty | `cargo test -p focus-core`, jawne `Now` |
+| Unit audio | szum w [-1, 1] bez NaN, parsowanie `genres.toml`, model fade | `cargo test -p focus-audio` bez urządzenia |
+| Kontrakt | brak dryfu bindings, stałe nazw komend/eventów | CI: regeneracja + `git diff --exit-code` |
+| Frontend | typy, składnia | `npm run check` |
+| Instalator | pełny cykl z zainstalowanej paczki, poza repo, offline, odrzucone powiadomienia | ręcznie od M1 |
+| Ręczne | checklista awarii (TASKS P-4) | przed każdą bramką |
+
+## 14. Narzędzia i środowisko
+
+Wymagane (wersje przypięte na czas hackathonu):
+- **Rust** przez `rustup`, wersja w `rust-toolchain.toml` (start: 1.98.1) + `clippy`, `rustfmt`.
+- **Node.js LTS**, wersja w `.nvmrc`. Tauri CLI jako devDependency (`@tauri-apps/cli`) → `npm run tauri dev|build`.
+- Windows: MSVC (VS 2022 / Build Tools, komponent „C++ x64/x86 build tools”) + Windows SDK; WebView2 (jest w Win10/11).
+- macOS: Xcode CLT. Linux: `libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev`.
+
+Zalecane: VS Code (*rust-analyzer*, *Tauri*, *Svelte for VS Code*, *Even Better TOML*, *CodeLLDB*), `just`, `cargo-nextest`.
+AI: Claude Code (CLAUDE.md + skille w `.claude/`) i drugi model do review ([CROSS_AI_REVIEW.md](CROSS_AI_REVIEW.md)).
+
+### Zależności (dodawane przez `cargo add` / `npm install` na starcie, potem lockfile)
+
+| Crate / pakiet | Gdzie | Po co |
+|---|---|---|
+| `tauri` 2 (`tray-icon`), `tauri-build` | src-tauri | powłoka |
+| `tauri-plugin-notification`, `-single-instance`, `-log` | src-tauri | powiadomienia, 1 instancja, logi |
+| `serde`, `serde_json`, `toml`, `ts-rs`, `thiserror`, `time` | core | typy, kontrakt |
+| `rand` (z seedem, np. `rand_chacha`) | core | deterministyczne losowanie planu |
+| `tokio` (przez `tauri::async_runtime`), `anyhow`, `tracing` | src-tauri | aktor, błędy, logi |
+| `rodio` (wersja przypięta po T0-10) | audio | odtwarzanie |
+| `reqwest` (rustls), `oauth2`, `keyring` | platform (Could) | Teams |
+| `windows` | platform (Could) | gamma |
+| `svelte` 5, `vite`, `typescript`, `@tauri-apps/api` | frontend | UI |
+
+### Lockfile i bindings po merge'u
+1. Najpierw scal manifesty (`Cargo.toml`, `package.json`).
+2. Zregeneruj lockfile właściwym narzędziem (`cargo update -w` / `npm install`) i przejrzyj diff.
+3. `cargo test -p focus-core` regeneruje bindings; nie rozwiązuj ich konfliktów ręcznie.
+4. CI na czystym checkout: `npm ci`, `cargo … --locked`, brak dryfu bindings, check/test/build.
+
+## 15. Build i dystrybucja
+
+- Dev: `npm run tauri dev` (demo: `FOCUSMODE_DEMO=1`, tylko w dev).
+- Zainstalowana aplikacja: tryb demo przez argument `--demo` lub przełącznik w ustawieniach. Aplikacja uruchomiona ze skrótu nie odziedziczy zmiennej środowiskowej z terminala.
+- Release: `npm run tauri build` → Windows NSIS/MSI (**pierwszy w M1**). macOS/Linux budowane w CI (matrix, `tauri-action`), bez gwarancji UX.
+- Buildy niepodpisane → ostrzeżenie SmartScreen/Gatekeeper; opisać w README.
