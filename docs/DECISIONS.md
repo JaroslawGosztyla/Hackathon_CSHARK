@@ -58,6 +58,9 @@ Model głośności: głośność użytkownika × współczynnik fade; Stop przer
 Typy są `Send + Sync` na Windows, więc wątek zostaje z powodów organizacyjnych. Brown noise piszemy sami, white/pink są w rodio.
 Po błędzie urządzenia rodio samo się nie łączy ponownie; robi to nasz wątek audio (szczegóły w ARCHITECTURE §8).
 
+**Poprawka (review R04, 2026-10-06):** wątek audio trzyma **docelowy stan** odtwarzania (Stopped/Playing/Paused, gatunek, głośność, fade, generacja),
+niezależny od istnienia urządzenia. Reconnect odtwarza ten stan i nie wysyła nowego `Play`, więc po Pause, Stop albo w przerwie muzyka nie wraca.
+
 **Plan B:** `<audio>` w trwałym, ukrytym WebView. Wymaga osobnego sprawdzenia po ukryciu okna, uśpieniu i odłączeniu urządzenia.
 
 ---
@@ -113,6 +116,10 @@ Znika razem z procesem, więc kolory zawsze wracają. Opisujemy je jako efekt wi
 Gamma ramp: Could (S-02), tylko Windows SDR, domyślnie wyłączona, poza demo. Sprzątanie opisujemy osobno dla wyjścia, paniki i kill,
 a naprawa po kill następuje przy następnym starcie.
 
+**Poprawka (review R08, 2026-10-06):** reset do liniowej rampy **nie** przywraca wcześniejszej kalibracji monitora.
+Poprawny S-02 wymagałby kopii bazowej rampy per monitor i polityki konfliktu. **Rekomendacja: nie wdrażać S-02 na hackathonie**,
+bo overlay pokrywa funkcję.
+
 ---
 
 ## ADR-010: Ręczny tryb spotkania w MVP; Teams DND jako Could, bez wykrywania rozmów
@@ -128,6 +135,10 @@ kasuje także ręczny status użytkownika. Firmowy tenant może blokować zgodę
   Warunek: pozytywny test tenantu (T0-8). Demo nie pokazuje zmiany ikony na żywo.
 - Won't: wykrywanie rozmów przez Graph.
 
+**Poprawka (review R07, 2026-10-06):** rezygnujemy z automatycznego `clearUserPreferredPresence`. Flaga „to my ustawiliśmy DND”
+nie dowodzi, że aktualny status jest nasz, a odczyt przed czyszczeniem nie jest atomowy. DND ma krótkie wygaśnięcie (10 min) odnawiane
+w trakcie Focus. Po Stop, Pause i w przerwie odnawianie się kończy i status wygasa sam. Czyszczenie statusu jest wyłącznie ręczne (przycisk w UI).
+
 ---
 
 ## ADR-011: Model czasu — profil czasów, ostrzeżenie w focusie, dwa zegary
@@ -141,6 +152,13 @@ kasuje także ręczny status użytkownika. Firmowy tenant może blokować zgodę
   Luki nie liczymy jako focusa i nie zaliczamy ćwiczeń.
 - Brak przycisku „Zrobione”. Przerwa kończy się z odliczaniem, a wynik przerwy to `completed | skipped | stopped | interrupted`.
 
+**Poprawka (review R01, R05, R09, 2026-10-06):**
+- Spotkanie blokuje **i** ostrzeżenie, **i** przerwę. Po jego końcu, jeśli zostało mniej niż `warning_secs`, startuje pełne ostrzeżenie (`deadline = now + warning_secs`).
+  „Idę” nie wymusza przerwy w trakcie spotkania.
+- Pauza zamraża `remaining`. Przy luce `remaining` liczymy od ostatniego zaufanego ticka, a Resume ustawia `deadline = now + remaining`.
+  Pause/Resume mają efekty audio i ostrzeżenia (tabela w ARCHITECTURE §5.4).
+- Walidacja configu (zakresy) i planer z `min_walk_secs`: plan zawsze mieści się w `break_secs`, a przy krótkiej przerwie ma mniej ćwiczeń, nie krótsze.
+
 ---
 
 ## ADR-012: Okna odtwarzają stan ze snapshotu; protokół gotowości
@@ -150,3 +168,12 @@ kasuje także ręczny status użytkownika. Firmowy tenant może blokować zgodę
 Okno: listen → `get_snapshot` → stosuj tylko nowszą rewizję → `window_ready`. Okna przerwy tworzone są ukryte i pokazywane po gotowości,
 a po 5 s bez gotowości powłoka je zamyka i degraduje przerwę do powiadomienia. Komendy z okien przerwy niosą `break_id` (idempotencja).
 Aktor nie czeka na wolne efekty; ich wyniki są oznaczone `session_id`, a spóźnione są ignorowane.
+
+**Poprawka (review R02, R03, R06, 2026-10-06):**
+- Ignorowanie spóźnionego wyniku chroni tylko stan aktora i **nie anuluje** efektu (`spawn_blocking` nie da się przerwać, HTTP nie da się cofnąć).
+  Poprawność efektów zapewniają wykonawcy: jeden na zasób, operacje seryjnie, docelowy stan z generacją dla efektów zewnętrznych (DND),
+  a `RecordSession` jako trwałe zlecenie z unikalnym kluczem `(session_id, cycle)`.
+- Okna przerwy po `window_ready` wysyłają heartbeat co 1 s. Watchdog w powłoce zamyka okno po 5 s bez sygnału. Tray („Pomiń przerwę”, „Stop”)
+  jest ścieżką wyjścia niezależną od WebView. Zawieszenie całego procesu nie jest objęte gwarancją.
+- Każdy stan okna ma getter + event z rewizją (`get_snapshot`, `get_now_playing`, `get_tint_state`). Okna `tint-*` mają tylko odczyt
+  (`get_tint_state`, `window_ready`), żadnych komend zmieniających stan.

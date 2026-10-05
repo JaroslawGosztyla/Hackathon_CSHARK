@@ -1,6 +1,6 @@
 # FocusMode — Design Document (produkt)
 
-> Status: **wersja 2** — po cross-review ([reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md)).
+> Status: **wersja 3** — po dwóch cross-review ([2026-09-27](reviews/codex-crosscheck-2026-09-27.md), [2026-10-06](reviews/codex-review-2026-10-06.md)).
 > Architektura: [ARCHITECTURE.md](ARCHITECTURE.md). Decyzje: [DECISIONS.md](DECISIONS.md). Podział pracy: [TASKS.md](TASKS.md).
 
 ## 1. Pitch (jedno zdanie)
@@ -72,7 +72,8 @@ a skrócone ćwiczenia nie są zaleceniem ruchowym.
 - **Tryb „Jestem na spotkaniu”** (ręczny, bez Teams): przesuwa przerwę o wybrany czas, a UI pokazuje, kiedy nastąpi następna próba.
 - **Przerwa na pełnym ekranie** na każdym monitorze (Windows), z odliczaniem i **3 prostymi kartami ćwiczeń**.
 - **Niezawodne wyjście**: Stop działa w każdej fazie (przycisk, tray, klawiatura). Pominięcie przerwy wymaga przytrzymania
-  przycisku lub klawisza Esc przez 3 s. Jeśli okno przerwy nie wystartuje, powłoka sama je zamyka.
+  przycisku lub klawisza Esc przez 3 s. W tray zawsze są „Pomiń przerwę” i „Stop”. Okno przerwy, które nie wystartuje
+  albo przestanie odpowiadać (brak sygnału życia przez 5 s), powłoka sama zamyka.
 - **Tray** z menu (i czasem do końca: w tooltipie na Windows, w pozycji menu na Linuksie).
 - **Tryb demo**: `--demo` przy uruchomieniu lub przełącznik w ustawieniach (zmienna `FOCUSMODE_DEMO=1` tylko w dev).
 - **Instalator Windows od M1**, przetestowany poza katalogiem repo i bez sieci.
@@ -88,9 +89,10 @@ a skrócone ćwiczenia nie są zaleceniem ruchowym.
 - Ograniczenie komend IPC per typ okna (capabilities + manifest komend).
 
 ### Could (M3, stretch)
-- **Teams „Nie przeszkadzać”** przez Microsoft Graph (ADR-010): tylko ustawianie DND z wygaśnięciem,
-  z jawną polityką odpowiedzialności za status. Wymaga pozytywnego testu tenantu (T0-8).
-- **Eksperymentalna gamma ramp** na Windows (SDR), domyślnie wyłączona, poza ścieżką demo.
+- **Teams „Nie przeszkadzać”** przez Microsoft Graph (ADR-010): DND z krótkim wygaśnięciem (10 min), odnawiane w trakcie focusa;
+  bez automatycznego czyszczenia statusu (tylko przycisk „Wyczyść status” w UI). Wymaga pozytywnego testu tenantu (T0-8).
+- **Eksperymentalna gamma ramp** na Windows (SDR), domyślnie wyłączona, poza ścieżką demo. Rekomendacja z review: nie wdrażać
+  na hackathonie, bo poprawne przywracanie kalibracji wymaga kopii rampy per monitor (ARCHITECTURE §9.2).
 - Wykrywanie bezczynności (auto-pauza), radio internetowe (URL), harmonogram tint wg zachodu słońca,
   globalny skrót, autostart, wykres 7 dni i seria dni, dopracowanie macOS/Linux.
 
@@ -121,13 +123,16 @@ Zawsze możesz ją pominąć, przytrzymując przycisk lub Esc.”
    Potem następna sesja (auto-start) albo ekran „Wracamy?” i podsumowanie jednym zdaniem.
 
 ### 7.4 Tryb „Jestem na spotkaniu”
-Włączany w focusie lub z okienka ostrzeżenia, na 15/30/60 min. Jeśli focus się skończy w trakcie spotkania,
-przerwa czeka. UI pokazuje „Przerwa po spotkaniu, ok. 14:30”. Wyłączenie trybu po czasie focusa
-uruchamia ostrzeżenie od razu.
+Włączany w focusie lub z okienka ostrzeżenia, na 15/30/60 min. **W trakcie spotkania nie zaczyna się ani ostrzeżenie, ani przerwa**,
+a włączenie spotkania w czasie ostrzeżenia chowa ostrzeżenie. Jeśli focus się skończy w trakcie spotkania,
+przerwa czeka. UI pokazuje „Przerwa po spotkaniu, ok. 14:30”. Wyłączenie trybu (albo jego wygaśnięcie)
+po czasie focusa uruchamia od razu **pełne** ostrzeżenie (30 s), a dopiero po nim przerwę.
+Przycisk „Idę” nie wymusza przerwy w trakcie spotkania: najpierw trzeba je zakończyć.
 
 ### 7.5 Zasady bezpieczeństwa i uczciwości (kryteria odbioru — TASKS P-4)
 - **Nigdy nie więzimy**: Stop dostępny w każdej fazie i idempotentny; pominięcie przerwy zawsze możliwe;
-  niedziałający overlay zamykany przez powłokę po 5 s.
+  okno przerwy, które nie wystartowało albo przestało wysyłać sygnał życia, powłoka zamyka po 5 s; „Pomiń przerwę” i „Stop” w tray
+  działają niezależnie od okna przerwy. Nie obejmuje to zawieszenia całej aplikacji (wtedy: Alt+F4 / Menedżer zadań).
 - **Kolory ekranu**: tint przez overlay znika razem z procesem. Eksperymentalna gamma (Could) ma osobno opisane
   zachowanie przy zwykłym wyjściu, panice i zabiciu procesu i jest domyślnie wyłączona.
 - Ćwiczenia są ogólne i łagodne. Stopka: „To nie jest porada medyczna. Jeśli coś boli — przestań.”
@@ -149,7 +154,9 @@ i wysyła go do UI z pełną treścią. UI dokłada tylko ilustrację po `id`, z
 | `eye-rest` | Odpocznij wzrok: popatrz w dal | 20 s | |
 | `box-breathing` | Oddech 4-4-4-4 | 60 s | |
 
-Plan normalny: 2 losowane ćwiczenia (z jawnym seedem, żeby testy były deterministyczne) + `stand-walk` do końca przerwy.
+Plan normalny: do 2 losowanych ćwiczeń (z jawnym seedem, żeby testy były deterministyczne), ale tylko takie, które mieszczą się
+razem z minimum 30 s `stand-walk`; reszta przerwy to `stand-walk`. Krótka przerwa (np. 60 s) = 0–1 ćwiczenie + spacer.
+Czasów ćwiczeń nie skracamy. Ustawienia pilnują zakresów: przerwa 1–30 min, focus 5–120 min.
 Plan demo: **stały**, 2 × 5 s + `stand-walk` 10 s. Ilustracje: własne SVG/CSS lub CC0. Niczego nie kopiujemy z internetu.
 
 ## 9. Styl wizualny
