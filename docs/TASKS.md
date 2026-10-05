@@ -54,19 +54,19 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 ## M1 — MVP (zainstalowany build, Windows)
 
 ### Osoba A
-- [ ] **A-01** `timing.rs` + `clock.rs` + `session.rs`: maszyna stanów dokładnie wg tabeli ARCHITECTURE §5.4 (ostrzeżenie w focusie, Postpone raz, tryb spotkania, Stop wszędzie, SkipBreak z `break_id`, heurystyka przerwania). DoD: wszystkie testy z §5.5 zielone.
-- [ ] **A-02** `break_plan.rs`: planer (katalog + profil + seed) → `BreakPlan`, suma = `break_secs`, `stand-walk` na końcu; demo = stały plan. DoD: testy deterministyczne.
-- [ ] **A-03** `config.rs` (typy, `Default`, walidacja, TOML string) + `persistence.rs` w powłoce (config atomowo, `.bak` przy uszkodzeniu, katalog ćwiczeń z zasobów, `sessions.jsonl` append). DoD: core testowany bez systemu plików.
+- [ ] **A-01** `timing.rs` + `clock.rs` + `session.rs`: maszyna stanów dokładnie wg tabeli ARCHITECTURE §5.4 (ostrzeżenie w focusie, Postpone raz, tryb spotkania, Stop wszędzie, SkipBreak z `break_id`, heurystyka przerwania). DoD: wszystkie testy z §5.5 zielone. **+ review 2026-10-06:** reguła spotkania (R01), pauza zamraża `remaining` od ostatniego zaufanego ticka (R05), efekty Pause/Resume; testy z ARCHITECTURE §5.5.
+- [ ] **A-02** `break_plan.rs`: planer (katalog + profil + seed) → `BreakPlan`, suma = `break_secs`, `stand-walk` na końcu; demo = stały plan. DoD: testy deterministyczne. **+ R09:** maks. 2 ćwiczenia mieszczące się z `min_walk_secs`; testy: przerwa krótsza/równa/dłuższa od sumy, bez ujemnej reszty.
+- [ ] **A-03** `config.rs` (typy, `Default`, walidacja, TOML string) + `persistence.rs` w powłoce (config atomowo, `.bak` przy uszkodzeniu, katalog ćwiczeń z zasobów, `sessions.jsonl` append). DoD: core testowany bez systemu plików. **+ R09:** walidacja zakresów (ARCHITECTURE §5.1) → `AppError` z polem. **+ R02:** PersistenceWorker = jedna kolejka, zapisy po kolei; `RecordSession` trwałe, deduplikacja po `(session_id, cycle)`.
 - [ ] **A-04** Generatory szumu (brown/pink/white). DoD: próbki w [-1, 1], brak NaN.
-- [ ] **A-05** `focus-audio`: wątek, `AudioCmd`/`AudioEvent`, model głośności × fade, Stop przerywa fade, błędy urządzenia bez crasha; `genres.toml` z brown noise + **1 utwór CC0** + `assets/music/CREDITS.md`; `bundle.resources`.
-- [ ] **A-06** `session_actor.rs` + `effects.rs`: aktor (cmd / tick 1 s / wyniki efektów), dispatch bez await na wolnych operacjach, wyniki oznaczone `session_id`, spóźnione ignorowane; podmiana fałszywego aktora z T0-5. Zależy od: A-01, T0-5.
+- [ ] **A-05** `focus-audio`: wątek, `AudioCmd`/`AudioEvent`, model głośności × fade, Stop przerywa fade, błędy urządzenia bez crasha; `genres.toml` z brown noise + **1 utwór CC0** + `assets/music/CREDITS.md`; `bundle.resources`. **+ R04:** docelowy stan odtwarzania (Stopped/Playing/Paused + głośność + fade + generacja), reconnect odtwarza stan zamiast `Play`; test: odłączenie → Pause/Stop/przerwa → podłączenie, audio nie rusza ani nie zmienia wyciszenia.
+- [ ] **A-06** `session_actor.rs` + `effects.rs`: aktor (cmd / tick 1 s / wyniki efektów), dispatch bez await na wolnych operacjach, wyniki oznaczone `session_id`, spóźnione ignorowane; podmiana fałszywego aktora z T0-5. Zależy od: A-01, T0-5. **+ R02:** spóźniony wynik ignorowany tylko w stanie aktora; efekty przez wykonawców (seryjnie per zasób, docelowy stan z generacją dla DND); test: odwrotna kolejność zakończeń Start/Stop i dwóch zapisów configu → sprawdzamy pliki i stan zewnętrzny.
 
 ### Osoba B
 - [ ] **B-01** Okno główne: `TimerRing`, Start/Pauza/Stop, `GenrePicker`, głośność, now playing, „Jestem na spotkaniu ▾” z czasem następnej próby; store z rewizjami; wszystko przez `api.ts`.
-- [ ] **B-02** `windows.rs`: `break-{n}` per monitor wg protokołu gotowości (ADR-012), timeout 5 s → zamknięcie + powiadomienie; `hide_break` idempotentne. Na bazie T0-9.
+- [ ] **B-02** `windows.rs`: `break-{n}` per monitor wg protokołu gotowości (ADR-012), timeout 5 s → zamknięcie + powiadomienie; `hide_break` idempotentne. Na bazie T0-9. **+ R03:** `window_heartbeat(break_id)` co 1 s + watchdog w powłoce (5 s bez sygnału → zamknięcie okna i degradacja); bootstrap okien wg tabeli ARCHITECTURE §6.3.
 - [ ] **B-03** Widok `#/break`: karta ćwiczenia z pełną treścią ze snapshotu, ilustracja po `id` z fallbackiem, postęp całej przerwy, `HoldToSkip` (3 s) + przytrzymanie Esc; monitory drugorzędne: spokojne tło + odliczanie. Treść 3 ćwiczeń MVP w `assets/exercises.json` (DESIGN §8).
 - [ ] **B-04** Okienko `#/warning`: róg ekranu, always-on-top, bez fokusu; [Idę] [Jeszcze 2 min] [Jestem na spotkaniu ▾]. Toast `tauri-plugin-notification` tylko z tekstem.
-- [ ] **B-05** `tray.rs`: menu (Start/Pauza/Stop/Pokaż/Zakończ, pozycja z czasem), tooltip na Windows; zamknięcie okna = hide; `single-instance`.
+- [ ] **B-05** `tray.rs`: menu (Start/Pauza/Stop/Pokaż/Zakończ, pozycja z czasem), tooltip na Windows; zamknięcie okna = hide; `single-instance`. **+ R03:** w trakcie przerwy pozycje „Pomiń przerwę” i „Stop” zawsze aktywne (ścieżka niezależna od WebView).
 - [ ] **B-06** Tryb demo w zainstalowanej aplikacji: argument `--demo` + oznaczenie „skrócona prezentacja” w UI.
 - [ ] **B-07** **Pierwszy instalator Windows** (NSIS/MSI): instalacja, uruchomienie ze skrótu poza repo, bez sieci, z odrzuconymi powiadomieniami; muzyka i katalog ćwiczeń się ładują.
 
@@ -84,14 +84,14 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 - [ ] **B-09** Ustawienia `#/settings`: długości faz, auto-start, domyślny gatunek, głośność, tint (godziny, siła, podgląd na żywo), tryb demo.
 - [ ] **B-10** Widok podsumowania/statystyki dnia (zdanie podsumowania + kafelki).
 - [ ] **B-11** Styl lofi: ciemny ciepły motyw, animowany deszcz, ikona (`npm run tauri icon`); pozostałe ćwiczenia z DESIGN §8 + ilustracje. **Bez grafik Lofi Girl.**
-- [ ] **B-12** Izolacja komend per okno: manifest komend w `build.rs` + capabilities (`tint-*`: nic; `warning`/`break-*`: minimum). DoD: wywołanie z `tint-*` odrzucone.
+- [ ] **B-12** Izolacja komend per okno: manifest komend w `build.rs` + capabilities wg tabeli ARCHITECTURE §6.3 (`tint-*`: tylko `get_tint_state` + `window_ready`; `warning`/`break-*`: minimum). DoD: `stop` z `tint-*` odrzucone, `get_tint_state` z `tint-*` działa, nowe/odświeżone okno tint od razu ma poprawny kolor (R06).
 
 **Bramka M2:** tint overlay działa na Windows i znika po kill; przerwa z gongiem; podsumowanie i statystyka dnia się liczą. ✅/❌
 
 ## M3 — Stretch (tylko gdy M2 zielone; bierze ten, kto pierwszy wolny)
 
-- [ ] **S-01** (B) Teams DND (ADR-010): device code, `keyring`, `setUserPreferredPresence` z wygaśnięciem, czyszczenie tylko własnego DND, ostrzeżenie w ustawieniach. Warunek: T0-8 pozytywny. Testy: Pause/Resume/Postpone/Stop, ręczna zmiana statusu w Teams, brak sieci.
-- [ ] **S-02** (A) Eksperymentalna gamma (ADR-009): Windows SDR, domyślnie off, znacznik `gamma.active` i naprawa przy starcie. Testy: HDR on/off, Night Light on/off, podłączenie monitora, zwykłe wyjście, panika, kill, z weryfikacją widocznego efektu.
+- [ ] **S-01** (B) Teams DND (ADR-010): device code, `keyring`, `setUserPreferredPresence` z wygaśnięciem, wygaśnięcie 10 min odnawiane w trakcie Focus, **bez automatycznego clear** (R07), przycisk „Wyczyść status Teams teraz”. Warunek: T0-8 pozytywny. Testy: Pause/Resume/Postpone/Stop, ręczna zmiana statusu w Teams, brak sieci.
+- [ ] **S-02** (A) **Rekomendacja review R08: nie wdrażać.** Eksperymentalna gamma (ADR-009): Windows SDR, domyślnie off, kopia bazowej rampy per monitor (`GetDeviceGammaRamp`) zamiast resetu do liniowej. Testy: HDR on/off, Night Light on/off, podłączenie monitora, zwykłe wyjście, panika, kill, z weryfikacją widocznego efektu.
 - [ ] **S-03** (A) Wykrywanie bezczynności → auto-pauza.
 - [ ] **S-04** (A) Gatunek `stream` (radio z URL).
 - [ ] **S-05** (A) Harmonogram tint wg zachodu słońca.
@@ -107,7 +107,8 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 - [ ] **P-4** (A+B) Bug bash: każdy testuje funkcje drugiej osoby. Checklista (też przed bramkami M1/M2):
   - [ ] Stop w każdej fazie; dwukrotny Stop; Stop z tray przy przerwie
   - [ ] Esc przytrzymany 3 s pomija przerwę; zwykłe kliknięcie nie
-  - [ ] WebView opóźniony o 2 s → brak pustego overlay; niedziałający frontend → powłoka zamyka overlay po 5 s
+  - [ ] WebView opóźniony o 2 s → brak pustego overlay; brak `window_ready` → powłoka zamyka overlay po 5 s
+  - [ ] zawieszenie JS okna przerwy **po** `window_ready` (np. `while(true)` z devtools) → watchdog zamyka okno po 5 s; tray „Pomiń przerwę” działa
   - [ ] odświeżenie widoku przerwy w połowie → ten sam stan
   - [ ] „Pomiń” z dwóch monitorów naraz → jeden rekord w historii
   - [ ] uśpienie laptopa w Focus i w Break; zmiana zegara; przejście przez północ
@@ -116,6 +117,8 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
   - [ ] ukryte okno główne w czasie ostrzeżenia → okienko ostrzeżenia działa
   - [ ] instalator: poza repo, offline, odrzucone powiadomienia
   - [ ] kill procesu z włączonym tint → overlay znika
+  - [ ] spotkanie włączone w trakcie ostrzeżenia (demo 30 s na 15 s) → brak przerwy do końca spotkania, potem pełne ostrzeżenie
+  - [ ] odłączenie audio → Pause/Stop → podłączenie → muzyka nie wraca sama
   - [ ] 2 monitory, różne DPI, monitor po lewej, odłączenie monitora w trakcie przerwy
 
 ---

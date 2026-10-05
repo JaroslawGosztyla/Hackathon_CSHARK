@@ -19,7 +19,10 @@ Pomysł: design pisał Claude, więc drugi model (GPT, Gemini) robi krytyczny pr
 |---|---|---|
 | 2026-09-27 | [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) | F01–F16 przetworzone → DESIGN/ARCHITECTURE/TASKS v2; decyzje ADR-008…010 przyjęte, ADR-011/012 proponowane |
 
-Kolejny dobry moment na review: po M1 (na działającym kodzie, nie tylko na dokumentach).
+| 2026-10-06 | [reviews/codex-review-2026-10-06.md](reviews/codex-review-2026-10-06.md) | R01–R09 przyjęte → DESIGN/ARCHITECTURE v3, poprawki do ADR-003/009/010/011/012, DoD tasków A-01…A-06, B-02, B-05, B-12, S-01, S-02 i checklista P-4 |
+
+Kolejny dobry moment na review: po M1 (na działającym kodzie, nie tylko na dokumentach). Recenzent widzi tylko kopię dokumentów
+w `Z:\Hackathon_docs` (automatyczna synchronizacja), bez kodu. Do review kodu trzeba mu dać dostęp do repo.
 
 ## Prompt
 

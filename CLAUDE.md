@@ -53,16 +53,18 @@ Pełny zestaw kontroli przed zakończeniem taska: skill `/check`.
 2. **Wszystkie czasy pochodzą z `TimingProfile`** (`normal()`/`demo()`), bez magicznych liczb w logice ani w UI.
    Fazy liczy zegar monotoniczny, statystyki kalendarzowy (ADR-011). Zachowanie faz jest dokładnie takie jak w tabeli ARCHITECTURE §5.4.
 3. **Efekty uboczne wykonuje tylko powłoka** (`effects.rs`). Komendy Tauri są cienkie. **Aktor nigdy nie czeka na wolny efekt**:
-   I/O i sieć idą do osobnych zadań z timeoutem, wyniki są oznaczone `session_id`, a spóźnione są ignorowane.
+   efekty idą do kolejek wykonawców (jeden na zasób, operacje seryjnie; docelowy stan z generacją dla efektów zewnętrznych).
+   Ignorowanie spóźnionego wyniku chroni tylko stan aktora i **nie anuluje efektu** (ADR-012, R02).
 4. **Kod per OS tylko w `focus-platform`**, za traitem, z `#[cfg(target_os = "...")]` i implementacją `Noop`.
    Żadnego UI na surowym Win32/HWND — okna robi Tauri.
-5. **Kontrakt IPC zmieniasz tylko przez `/sync-contract`**. Snapshot musi odtwarzać **cały** widok każdego okna (ADR-012):
-   okno robi listen → `get_snapshot` → stosuje tylko nowszą `revision` → `window_ready`.
+5. **Kontrakt IPC zmieniasz tylko przez `/sync-contract`**. Każdy stan okna ma getter + event z rewizją (ADR-012):
+   okno robi listen → getter → stosuje tylko nowszą `revision` → `window_ready`. Okna `tint-*` mają tylko odczyt.
 6. **Tint robimy przez overlay** (ADR-009). Gamma ramp jest tylko eksperymentem (S-02), domyślnie wyłączonym, poza demo.
 7. **Przerwa nie może uwięzić użytkownika**: Stop działa w każdej fazie i jest idempotentny, pominięcie przez przytrzymanie przycisku lub Esc,
-   a niedziałający overlay powłoka zamyka po 5 s.
+   tray „Pomiń przerwę”/„Stop” niezależne od WebView, a okno przerwy bez `window_ready` albo bez heartbeatu przez 5 s powłoka zamyka.
 8. Błąd integracji (audio/tint/Teams/zapis) nie przerywa sesji: log + event `app://error` + degradacja.
    Audio działa na dedykowanym wątku z komunikacją przez kanały. Głośność = głośność użytkownika × fade.
+   Wątek audio trzyma docelowy stan odtwarzania; reconnect go odtwarza, nie jest nowym `Play` (R04).
 9. Brak `unwrap()`/`expect()` poza testami i setupem. Biblioteki: `thiserror`; powłoka: `anyhow`;
    granica IPC: `AppError { code, message }`.
 10. Muzyka i grafiki tylko z licencją pozwalającą na użycie (CC0/CC-BY), wpis w `assets/music/CREDITS.md`.
