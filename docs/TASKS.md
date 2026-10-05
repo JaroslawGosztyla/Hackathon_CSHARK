@@ -48,7 +48,8 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 - [ ] **T0-7** (A+B) Każdy tworzy lokalny `CLAUDE.local.md` z linią „Pracuję jako osoba A/B”.
 - [ ] **T0-8** (B, ≤ 1 h, informacyjne) Test tenantu M365: czy da się zarejestrować aplikację (public client, device code) i zgodzić na `Presence.ReadWrite`. Wynik zapisz w notatkach, bo decyduje o S-01.
 - [ ] **T0-9** (B) **Spike okien** na sprzęcie demo: okno tworzone ukryte → pokazane po `window_ready`; fullscreen na 2 monitorach (różne DPI, monitor po lewej); sztuczne opóźnienie WebView o 2 s; okienko ostrzeżenia bez kradzieży fokusu. Wynik: co działa, a co nie → notka + ewentualna korekta ARCHITECTURE §10.
-- [ ] **T0-10** (A) **Spike audio**: aktualne rodio, brown noise przez 40 min bez zacięć, odłączenie słuchawek, brak urządzenia. Przypiąć wersję; poprawić ARCHITECTURE §8 i nazwy API.
+- [x] **T0-10** (A) **Spike audio**: aktualne rodio, brown noise przez 40 min bez zacięć, odłączenie słuchawek, brak urządzenia. Przypiąć wersję; poprawić ARCHITECTURE §8 i nazwy API. → rodio `=0.22.2`, wyniki w ARCHITECTURE §8; pomiar czasu niemożliwy na VM → T0-11.
+- [ ] **T0-11** (A, 30 min + 40 min przebiegu) Powtórka pomiaru audio **na fizycznym Windows** (sprzęt demo): `spikes/audio-spike` → `rawcpal 60`, `diag 2400 60`, ewentualnie `--features boost`. Jeśli są pauzy > 100 ms, które boost usuwa, przenieść MMCSS/power throttling do A-05.
 
 ## M1 — MVP (zainstalowany build, Windows)
 
@@ -146,3 +147,4 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
 - [2026-09-27] Środowisko Rust na maszynie Jarka gotowe: rustc 1.98.1 (MSVC), clippy, rustfmt; VS 2022 Pro + MSVC 14.33 + Windows SDK 10.0.22621; Node.js 24.19.0 LTS + npm 11.17.0 (→ wpisać `24.19.0` do `.nvmrc` w T0-3).
 - [2026-10-05] (Jarek→druga osoba) Repo: https://github.com/JaroslawGosztyla/Hackathon_CSHARK. Środowisko: `powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1`. Flow i gałęzie: sekcja „Jak pracujemy” wyżej. Utwórz `CLAUDE.local.md` z linią „Pracuję jako osoba A/B”.
 - [2026-10-05] Rekomendacja: włączyć na GitHubie ochronę `main` (Settings → Branches: require PR + status checks) po T0-6 (CI).
+- [2026-10-05] (A→B) **Maszyna Jarka to VirtualBox VM** (emulowana karta HDA, wirtualna grafika). Zegar audio pływa 0,75–1,3× (T0-10). **T0-9 (okna, monitory, DPI) i wszystkie pomiary czasu/wydajności rób na fizycznym sprzęcie**, a demo też na fizycznym Windows. Funkcjonalnie VM jest OK do developmentu.

@@ -319,7 +319,8 @@ Runtime tokio (tauri::async_runtime)
  ├── TintService: interval(60 s) → core::tint → okna tint
  ├── zadania efektów: persystencja (spawn_blocking), Graph (Could) — z timeoutem, wynik oznaczony session_id
 Wątek audio (std::thread)
- └── urządzenie wyjściowe + odtwarzacz rodio; AudioCmd przez kanał; AudioEvent z powrotem
+ └── MixerDeviceSink + Player (rodio 0.22); AudioCmd przez kanał; AudioEvent z powrotem;
+     błędy urządzenia z wątku cpal → kanał → ponowne otwarcie urządzenia domyślnego
 ```
 
 - **Aktor nigdy nie czeka na wolny efekt.** Wysłanie `AudioCmd` jest nieblokujące, a I/O i sieć idą do osobnych zadań z timeoutem.
@@ -329,15 +330,37 @@ Wątek audio (std::thread)
 
 ## 8. Audio (`focus-audio`) (ADR-003)
 
-- Dedykowany wątek to **decyzja organizacyjna** (jeden właściciel urządzenia, prosty cykl życia), a nie wymóg typów.
-  Aktualna wersja rodio ma nowe API. Konkretne typy i ich `Send`/`Sync` potwierdzamy w spike'u T0-10 i przypinamy wersję w `Cargo.toml`.
+Ustalenia ze spike'a T0-10 (kod referencyjny: [spikes/audio-spike](../spikes/audio-spike/src/main.rs)):
+
+- **Wersja: `rodio = { version = "=0.22.2", features = ["noise"] }`** (cpal 0.17, backend WASAPI na Windows).
+  W spike'u dodatkowo `wav_output`, tylko do wygenerowania pliku testowego.
+- **API rodio 0.22** (inne niż w starszych tutorialach, gdzie było `OutputStream` / `Sink`):
+  - urządzenie: `DeviceSinkBuilder::from_default_device()?.with_error_callback(..).open_sink_or_fallback()?` → `MixerDeviceSink`
+    (odtwarzanie trwa, dopóki ten obiekt żyje; `log_on_drop(false)` wycisza komunikat przy drop),
+  - odtwarzacz: `Player::connect_new(sink.mixer())`, a potem `append`, `set_volume`, `pause`/`play`, `stop`,
+  - `Source` to `Iterator<Item = Sample>` (`f32`), a `channels()` / `sample_rate()` zwracają `NonZero` (`ChannelCount`, `SampleRate`),
+  - dekodowanie: `Decoder::try_from(File)` (symphonia: mp3/ogg/flac/wav/mp4 w domyślnych feature'ach).
+- `MixerDeviceSink` i `Player` są **`Send + Sync`** na Windows (sprawdzone kompilacją). Dedykowany wątek zostaje jako
+  **decyzja organizacyjna**: jeden właściciel urządzenia, prosty cykl życia i ponowne otwieranie urządzenia po błędzie.
 - API: `AudioHandle::spawn(assets_dir) -> (AudioHandle, Receiver<AudioEvent>)`; `AudioCmd`: `Play{genre}`, `Pause`, `Resume`,
   `Stop`, `SetVolume(f32)`, `FadeTo{factor, ms}`, `Gong`, `Next`.
-- **Model głośności**: `efektywna = głośność_użytkownika × współczynnik_fade`. `Resume` i `Play` przywracają fade do 1.0,
-  więc po Postpone muzyka nie zostaje wyciszona. Fade jest krokowy, a pętla wątku używa `recv_timeout`, więc `Stop` przerywa fade od razu.
+- **Model głośności**: `efektywna = głośność_użytkownika × współczynnik_fade`, ustawiane przez `Player::set_volume`.
+  `Resume` i `Play` przywracają fade do 1.0, więc po Postpone muzyka nie zostaje wyciszona. Pętla wątku robi `recv_timeout(20 ms)` i w każdym obiegu
+  przesuwa fade. **Stop w trakcie 10-sekundowego fade'u jest obsłużony od razu** (zmierzone: < 20 ms opóźnienia pętli + ~2 µs sam Stop).
 - Gatunki w `assets/music/genres.toml`: `kind = "noise"` (`brown | pink | white`) albo `"files"` (katalog; shuffle + pętla). M1: brown noise + 1 utwór CC0.
-- Szum: własne źródło `Iterator<Item = f32>` (brown = zintegrowany biały z wyciekiem, pink = filtr Paula Kelleta).
-- Błędy urządzenia (brak wyjścia, odłączenie słuchawek) → `AudioEvent::Error`. Sesja trwa dalej, UI pokazuje „brak dźwięku”, a wątek próbuje ponownie przy kolejnym `Play`.
+- **Szum**: rodio ma wbudowane `source::noise::{white, pink}` (feature `noise`) i ich używamy. **Brown noise rodio nie ma**,
+  więc mamy własny `Source`: biały szum z rodio, całkowany z wyciekiem (`last = (last + 0.02·w) / 1.02`, wyjście ×3.5, clamp do [-1, 1]).
+- **Błędy urządzenia**: callback z `with_error_callback` działa na wątku cpal, więc tylko przekazuje błąd kanałem do wątku audio.
+  Wątek audio porzuca `Player` i `MixerDeviceSink`, co 2 s próbuje otworzyć **aktualne** urządzenie domyślne, a po sukcesie wznawia bieżący gatunek
+  i wysyła `AudioEvent::Reconnected`. Sesja trwa dalej, a UI pokazuje „brak dźwięku” do czasu ponownego połączenia. rodio samo się nie łączy ponownie.
+  **Sprawdzone (Windows 10, WASAPI):** wyłączenie urządzenia w `mmsys.cpl` → błąd „device is no longer available” w callbacku; potem „Could not find any output device” przy każdej próbie (brak urządzenia nie crashuje); po ponownym włączeniu szum wraca w ≤ 2 s.
+- **Stabilność czasowa (40 min): niepotwierdzona na prawdziwym sprzęcie.** Spike działał w VirtualBoxie z emulowaną kartą HDA.
+  40 min bez crasha i bez wycieku, ale emulowany zegar audio pływa: urządzenie pobierało od 0,75× do 1,3× nominalnego tempa,
+  także w surowym cpal bez rodio, więc to nie wina rodio ani naszego kodu. Wątek callbacku działał regularnie (~20 ms), z 2 pauzami ~180 ms na 5 min.
+  **Na VM nie mierzymy czasu audio ani okien.** Powtórka na fizycznym Windows: `audio-spike rawcpal 60` (oczekiwane ratio ≈ 1,000)
+  i `audio-spike diag 2400 60` (metronom + pauzy callbacku); przy pauzach > 100 ms porównać z wariantem `--features boost`
+  (MMCSS przez feature cpal `audio_thread_priority` + wyłączenie power throttlingu procesu) — task T0-11.
+- Brak pliku / błąd dekodowania → `AudioEvent::Error`, bez crasha (sprawdzone).
 - Zasoby dołączane przez `bundle.resources`; ścieżkę rozwiązuje powłoka (`BaseDirectory::Resource`).
 
 ## 9. Tint i integracje
@@ -436,7 +459,7 @@ AI: Claude Code (CLAUDE.md + skille w `.claude/`) i drugi model do review ([CROS
 | `serde`, `serde_json`, `toml`, `ts-rs`, `thiserror`, `time` | core | typy, kontrakt |
 | `rand` (z seedem, np. `rand_chacha`) | core | deterministyczne losowanie planu |
 | `tokio` (przez `tauri::async_runtime`), `anyhow`, `tracing` | src-tauri | aktor, błędy, logi |
-| `rodio` (wersja przypięta po T0-10) | audio | odtwarzanie |
+| `rodio` `=0.22.2` (feature `noise`) | audio | odtwarzanie, dekodowanie, szum white/pink |
 | `reqwest` (rustls), `oauth2`, `keyring` | platform (Could) | Teams |
 | `windows` | platform (Could) | gamma |
 | `svelte` 5, `vite`, `typescript`, `@tauri-apps/api` | frontend | UI |
