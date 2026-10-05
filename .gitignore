@@ -8,11 +8,17 @@
 # Node / frontend
 node_modules/
 /dist/
+/build/
+/.svelte-kit/
+/package/
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
 .vite/
 
 # Secrets & local
 .env
 .env.*
+!.env.example
 CLAUDE.local.md
 .claude/settings.local.json
 

@@ -15,13 +15,24 @@ Na Windows wszystko instaluje skrypt (sprawdza, co już jest, i doinstalowuje re
 powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
-Potem (po scaffoldzie aplikacji w T0-2):
+Potem:
 
 ```bash
-npm install
+npm install                          # na VM: przy „Assertion failed … loop->time” usuń node_modules i powtórz
 npm run tauri dev
 # tryb demo (skrócone czasy): FOCUSMODE_DEMO=1 npm run tauri dev
 ```
+
+Z [`just`](https://github.com/casey/just): `just dev`, `just demo`, `just check`, `just build` (lista: `just`).
+
+| Katalog | Zawartość |
+|---|---|
+| `crates/focus-core` | czysta logika domenowa (kontrakt IPC w `api.rs`) |
+| `crates/focus-audio` | wątek audio (rodio) |
+| `crates/focus-platform` | integracje OS (stretch) |
+| `src-tauri/` | powłoka Tauri: komendy, aktor, okna, tray |
+| `src/` | frontend SvelteKit (SPA) |
+| `spikes/` | wyrzucalne eksperymenty z M0 |
 
 ## Dokumentacja
 

@@ -43,7 +43,9 @@ npm run check                        # svelte-check / TypeScript
 npm run tauri build                  # instalator release
 ```
 
+Skróty w `justfile`: `just dev`, `just demo`, `just check`, `just test`, `just bindings`, `just build`.
 Pełny zestaw kontroli przed zakończeniem taska: skill `/check`.
+Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szablonu Tauri.
 
 ## Twarde zasady (nie łam bez nowego ADR)
 

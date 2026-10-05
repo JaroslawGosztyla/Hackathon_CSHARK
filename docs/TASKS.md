@@ -40,8 +40,8 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 ## M0 — Setup, kontrakt, spike'i
 
 - [~] **T0-1** (A+B) Repo na GitHubie ✅ (https://github.com/JaroslawGosztyla/Hackathon_CSHARK), brakuje jeszcze push dla drugiej osoby. Wpisać godziny do tabeli wyżej; sprzęt demo (monitory, DPI, HDR) → DESIGN §13.
-- [ ] **T0-2** (B) Scaffold: `npm create tauri-app@latest` (Svelte + TypeScript), identyfikator `com.focusmode.app`, nazwa `FocusMode`. DoD: `npm run tauri dev` działa u A i B.
-- [ ] **T0-3** (A) Cargo workspace (`members = ["crates/*", "src-tauri"]`), puste crate'y `focus-*`; `rust-toolchain.toml` (1.98.1), `.nvmrc`; `.cargo/config.toml` z `TS_RS_EXPORT_DIR` (relative); `justfile` (dev, check, test, fmt, bindings). Zależy od: T0-2.
+- [x] **T0-2** (B → zrobione przez A) Scaffold: `npm create tauri-app@latest` (Svelte + TypeScript), identyfikator `com.focusmode.app`, nazwa `FocusMode`. DoD: `npm run tauri dev` działa u A i B. → u A działa; B: sprawdź `npm install` + `npm run tauri dev` po pullu.
+- [x] **T0-3** (A) Cargo workspace (`members = ["crates/*", "src-tauri"]`), puste crate'y `focus-*`; `rust-toolchain.toml` (1.98.1), `.nvmrc`; `.cargo/config.toml` z `TS_RS_EXPORT_DIR` (relative); `justfile` (dev, check, test, fmt, bindings). Zależy od: T0-2. → `just` instaluje setup-windows.ps1.
 - [ ] **T0-4** (A+B, razem) **Kontrakt MVP** w `api.rs` wg ARCHITECTURE §6: DTO + przykłady JSON, enumy, `AppError`, ID (`SessionId`, `BreakId`) i `revision`, komendy i eventy MVP jako stałe, interfejs okien (`show_break/hide_break/show_warning/window_ready`), `TimingProfile`. Zatwierdzić ADR-001…007, 011, 012. **Bez przyszłych komend Teams/stats.** Merge ASAP.
 - [ ] **T0-5** (B) Stuby komend + **fałszywy aktor** odgrywający oś czasu demo (0/35/40/60 s) na tych samych DTO → UI da się robić bez core.
 - [ ] **T0-6** (A) CI (GitHub Actions): Windows obowiązkowo + ubuntu/macos best-effort: `npm ci`, `cargo fmt --check`, `cargo clippy --locked -- -D warnings`, `cargo test --locked --workspace`, **brak dryfu bindings** (`git diff --exit-code src/lib/bindings`), `npm run check`.
@@ -148,3 +148,9 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
 - [2026-10-05] (Jarek→druga osoba) Repo: https://github.com/JaroslawGosztyla/Hackathon_CSHARK. Środowisko: `powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1`. Flow i gałęzie: sekcja „Jak pracujemy” wyżej. Utwórz `CLAUDE.local.md` z linią „Pracuję jako osoba A/B”.
 - [2026-10-05] Rekomendacja: włączyć na GitHubie ochronę `main` (Settings → Branches: require PR + status checks) po T0-6 (CI).
 - [2026-10-05] (A→B) **Maszyna Jarka to VirtualBox VM** (emulowana karta HDA, wirtualna grafika). Zegar audio pływa 0,75–1,3× (T0-10). **T0-9 (okna, monitory, DPI) i wszystkie pomiary czasu/wydajności rób na fizycznym sprzęcie**, a demo też na fizycznym Windows. Funkcjonalnie VM jest OK do developmentu.
+- [2026-10-05] (A→B) **Scaffold T0-2 zrobiłem za ciebie** (uzgodnione), razem z T0-3. Od teraz `src/`, `src-tauri/` (poza plikami A z tabeli Role), `tauri.conf.json`, `capabilities/` są twoje. Co zastaniesz:
+  - szablon `create-tauri-app` **svelte-ts = SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`), a nie goły Svelte z `App.svelte`, jak zakładała ARCHITECTURE §2. Okna mają wejść na `index.html#/break` itd., więc do decyzji: router SvelteKit w trybie hash (`kit.router.type = "hash"`) albo zostawienie samego Svelte. Po decyzji popraw ARCHITECTURE §2/§10.
+  - w `src-tauri/src/lib.rs` zostało demo z szablonu (`greet`, plugin `opener`) — usuń przy T0-5.
+  - `productName`/tytuł okna = `FocusMode`, identyfikator `com.focusmode.app`; profil `release` przeniesiony do root `Cargo.toml` (workspace).
+  - `npm audit`: 3 × low (cookie w SvelteKit, dotyczy serwera; my jesteśmy statycznym SPA) — świadomie bez `audit fix --force` (SvelteKit 3 = breaking).
+- [2026-10-05] Na VM (VirtualBox) `npm install` potrafi paść na `Assertion failed: new_time >= loop->time` (libuv + niestabilny zegar). Objaw: brak `package-lock.json` albo uszkodzony plik `.node` („not a valid Win32 application”). Lekarstwo: `rm -rf node_modules` i ponowny `npm install`.
