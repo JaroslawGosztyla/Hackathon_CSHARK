@@ -1,0 +1,13 @@
+[package]
+name = "audio-spike"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpal = "0.17"
+rodio = { version = "0.22.2", features = ["noise", "wav_output"] }
+windows = { version = "0.62.2", features = ["Win32_System_Threading"], optional = true }
+
+[features]
+# MMCSS for cpal's audio thread + process power throttling opt-out (diagnostics)
+boost = ["dep:windows", "cpal/audio_thread_priority"]
