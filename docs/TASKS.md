@@ -39,7 +39,7 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 
 ## M0 — Setup, kontrakt, spike'i
 
-- [ ] **T0-1** (A+B) Repo na GitHubie, obaj mają push. Wpisać godziny do tabeli wyżej; sprzęt demo (monitory, DPI, HDR) → DESIGN §13.
+- [~] **T0-1** (A+B) Repo na GitHubie ✅ (https://github.com/JaroslawGosztyla/Hackathon_CSHARK), brakuje jeszcze push dla drugiej osoby. Wpisać godziny do tabeli wyżej; sprzęt demo (monitory, DPI, HDR) → DESIGN §13.
 - [ ] **T0-2** (B) Scaffold: `npm create tauri-app@latest` (Svelte + TypeScript), identyfikator `com.focusmode.app`, nazwa `FocusMode`. DoD: `npm run tauri dev` działa u A i B.
 - [ ] **T0-3** (A) Cargo workspace (`members = ["crates/*", "src-tauri"]`), puste crate'y `focus-*`; `rust-toolchain.toml` (1.98.1), `.nvmrc`; `.cargo/config.toml` z `TS_RS_EXPORT_DIR` (relative); `justfile` (dev, check, test, fmt, bindings). Zależy od: T0-2.
 - [ ] **T0-4** (A+B, razem) **Kontrakt MVP** w `api.rs` wg ARCHITECTURE §6: DTO + przykłady JSON, enumy, `AppError`, ID (`SessionId`, `BreakId`) i `revision`, komendy i eventy MVP jako stałe, interfejs okien (`show_break/hide_break/show_warning/window_ready`), `TimingProfile`. Zatwierdzić ADR-001…007, 011, 012. **Bez przyszłych komend Teams/stats.** Merge ASAP.
@@ -119,6 +119,20 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 
 ---
 
+## Jak pracujemy (flow)
+
+1. **Start dnia**: `git switch main && git pull --ff-only`.
+2. **Task**: w Claude Code `/next-task A` (lub `B`, opcjonalnie z ID). Claude tworzy gałąź `a/<ID>-<slug>`, pokazuje plan,
+   implementuje, uruchamia `/check`, aktualizuje ten plik i proponuje commit.
+3. **Review i PR**: przejrzyj diff, poproś Claude o commit + push + PR (albo zrób to sam). Merge do `main` po zielonym CI
+   i przeglądzie drugiej osoby lub `/code-review`; squash merge.
+4. **Kontrakt IPC**: zmiany przez `/sync-contract`, osobny PR, mergowany pierwszy; druga osoba robi `git pull` od razu.
+5. **Sync codzienny (15 min)**: przegląd otwartych PR-ów, merge, wspólny przebieg demo, aktualizacja statusów w tym pliku.
+6. **Przed bramką milestone'u**: checklista P-4 na `main` (najlepiej na zainstalowanym buildzie).
+
+Narzędzia: skille projektu `/next-task`, `/check`, `/sync-contract`; wbudowane `/code-review`, `/simplify`, `/security-review`.
+Nowa maszyna: `scripts\setup-windows.ps1`.
+
 ## Punkty zapalne konfliktów (merge)
 
 - `src-tauri/src/lib.rs`: właścicielem jest B. A prosi o rejestrację komend/serwisów albo dodaje jedną linię i zostawia notkę.
@@ -130,3 +144,5 @@ Checkpoint na koniec dnia 7: czy M2 zdąży? Jeśli nie, tniemy zakres, a nie fr
 
 <!-- Format: - [data godz] (A→B) treść -->
 - [2026-09-27] Środowisko Rust na maszynie Jarka gotowe: rustc 1.98.1 (MSVC), clippy, rustfmt; VS 2022 Pro + MSVC 14.33 + Windows SDK 10.0.22621; Node.js 24.19.0 LTS + npm 11.17.0 (→ wpisać `24.19.0` do `.nvmrc` w T0-3).
+- [2026-10-05] (Jarek→druga osoba) Repo: https://github.com/JaroslawGosztyla/Hackathon_CSHARK. Środowisko: `powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1`. Flow i gałęzie: sekcja „Jak pracujemy” wyżej. Utwórz `CLAUDE.local.md` z linią „Pracuję jako osoba A/B”.
+- [2026-10-05] Rekomendacja: włączyć na GitHubie ochronę `main` (Settings → Branches: require PR + status checks) po T0-6 (CI).

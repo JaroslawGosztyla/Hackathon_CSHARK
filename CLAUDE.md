@@ -80,6 +80,19 @@ Pełny zestaw kontroli przed zakończeniem taska: skill `/check`.
 - Ścieżki przez `std::path` / API Tauri (`app.path()`), nigdy sklejane z `\` — pracujemy na różnych OS.
 - Hackathon: działające MVP > kompletność. Świadome skróty oznaczaj `// TODO(hackathon): …`.
 
+## Git i gałęzie
+
+- **Nie commitujemy prosto do `main`.** Jeden task = jedna krótka gałąź: `a/<ID>-<slug>` albo `b/<ID>-<slug>`
+  (np. `a/T0-3-workspace`, `b/B-02-break-windows`). Gałąź żyje najwyżej 1–2 dni.
+- Start taska: `git switch main && git pull --ff-only && git switch -c <gałąź>`. Brudne drzewo robocze → najpierw zapytaj.
+- Koniec: `/check` zielony → commit(y) → `git push -u origin <gałąź>` → **PR do `main`**. Merge po zielonym CI
+  i przeglądzie (druga osoba albo `/code-review`), **squash merge**, gałąź usuwana po merge'u.
+- **Kontrakt IPC** (`api.rs`, bindings) idzie osobnym, małym PR-em i jest mergowany jako pierwszy.
+- Przed PR-em: `git pull --rebase origin main` (albo merge `main` do gałęzi) i ponowny `/check`.
+- Nigdy: `push --force` na `main`, `reset --hard` cudzych zmian, commit wygenerowanych plików z ręcznymi poprawkami.
+- Commit, push i PR robisz tylko na prośbę użytkownika. PR przez `gh pr create`, a gdy `gh` nie ma — podaj link
+  `https://github.com/JaroslawGosztyla/Hackathon_CSHARK/compare/main...<gałąź>`.
+
 ## Workflow z TASKS.md
 
 - Bierzesz task → ustaw `[~] (A|B)`; skończony i sprawdzony (`/check`) → `[x]`. Skill `/next-task` robi to za ciebie.
@@ -91,3 +104,5 @@ Pełny zestaw kontroli przed zakończeniem taska: skill `/check`.
 ## Środowisko
 
 Co najmniej jedna maszyna deweloperska to Windows 10 (PowerShell). Wymagania narzędziowe: ARCHITECTURE §14.
+Nowa maszyna Windows: `powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1` (`-CheckOnly` tylko sprawdza).
+Końce linii normalizuje `.gitattributes` (LF w repo; `.ps1` w CRLF).

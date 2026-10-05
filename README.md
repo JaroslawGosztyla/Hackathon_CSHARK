@@ -9,6 +9,13 @@ Rust + Tauri 2 · Windows (pełne wsparcie), macOS / Linux (best-effort) · proj
 
 Wymagania: Rust stable (`rustup`), Node.js LTS, zależności systemowe Tauri — lista w
 [docs/ARCHITECTURE.md §14](docs/ARCHITECTURE.md#14-narzędzia-i-środowisko).
+Na Windows wszystko instaluje skrypt (sprawdza, co już jest, i doinstalowuje resztę):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
+```
+
+Potem (po scaffoldzie aplikacji w T0-2):
 
 ```bash
 npm install
@@ -31,5 +38,6 @@ npm run tauri dev
 
 - `CLAUDE.md` ładuje się automatycznie i zawiera zasady projektu.
 - Stwórz lokalny `CLAUDE.local.md` (nie trafia do gita) z jedną linią: `Pracuję jako osoba A` albo `… B`.
-- Skille: `/next-task A` (bierze i realizuje kolejny task), `/check` (fmt, clippy, testy),
+- Skille: `/next-task A` (bierze kolejny task, robi go na własnej gałęzi), `/check` (fmt, clippy, testy),
   `/sync-contract <opis>` (spójna zmiana kontraktu UI↔Rust).
+- Flow: gałąź na task → PR do `main` → review → squash merge. Szczegóły: [docs/TASKS.md — „Jak pracujemy”](docs/TASKS.md).
