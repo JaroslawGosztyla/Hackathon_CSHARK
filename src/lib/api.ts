@@ -1,0 +1,207 @@
+// The only module that talks to the Tauri shell (invoke / listen / plugins).
+// Command and event names come from the generated `bindings/names.ts`, DTO types from ts-rs bindings.
+import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { disable as autostartDisable, enable as autostartEnable, isEnabled as autostartIsEnabled } from "@tauri-apps/plugin-autostart";
+import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
+import { openUrl as openerOpenUrl } from "@tauri-apps/plugin-opener";
+import { COMMANDS, EVENTS } from "./bindings/names";
+import type {
+  AppError,
+  BridgeInfo,
+  ChimeKind,
+  Config,
+  DeviceCodePrompt,
+  MediaAction,
+  MediaWindowStatus,
+  Nudge,
+  PhaseChange,
+  SessionSnapshot,
+  SessionSummary,
+  ShieldStatus,
+  TeamsStatus,
+  Track,
+  UsageReport,
+} from "./types";
+
+export type { UnlistenFn };
+
+/** Error code used when the page runs outside the Tauri WebView (plain `vite dev` in a browser). */
+export const ERR_NO_SHELL = "ipc.unavailable";
+/** Error code used when the shell rejected a call without an `AppError` payload. */
+export const ERR_IPC = "ipc.failed";
+
+export function inShell(): boolean {
+  try {
+    return isTauri();
+  } catch {
+    return false;
+  }
+}
+
+/** Normalizes anything thrown by `invoke` (an `AppError` object, a string, an `Error`) into an `AppError`. */
+export function toAppError(e: unknown): AppError {
+  if (e !== null && typeof e === "object" && "code" in e && "message" in e) {
+    const field = "field" in e && typeof e.field === "string" ? e.field : null;
+    return { code: String(e.code), message: String(e.message), field };
+  }
+  if (typeof e === "string") return { code: ERR_IPC, message: e, field: null };
+  if (e instanceof Error) return { code: ERR_IPC, message: e.message, field: null };
+  return { code: ERR_IPC, message: String(e), field: null };
+}
+
+async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!inShell()) {
+    throw { code: ERR_NO_SHELL, message: `command ${cmd} needs the FocusMode shell`, field: null } satisfies AppError;
+  }
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (e) {
+    throw toAppError(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+export const getSnapshot = () => call<SessionSnapshot>(COMMANDS.getSnapshot);
+export const startSession = () => call<void>(COMMANDS.startSession);
+export const pauseSession = () => call<void>(COMMANDS.pauseSession);
+export const resumeSession = () => call<void>(COMMANDS.resumeSession);
+export const stopSession = () => call<void>(COMMANDS.stopSession);
+export const skipPhase = () => call<void>(COMMANDS.skipPhase);
+
+export const getConfig = () => call<Config>(COMMANDS.getConfig);
+export const updateConfig = (config: Config) => call<Config>(COMMANDS.updateConfig, { config });
+
+export const listFolderTracks = (path: string) => call<Track[]>(COMMANDS.listFolderTracks, { path });
+
+export const getShieldStatus = () => call<ShieldStatus>(COMMANDS.getShieldStatus);
+export const getCurrentUsage = () => call<UsageReport>(COMMANDS.getCurrentUsage);
+export const getLastSummary = () => call<SessionSummary | null>(COMMANDS.getLastSummary);
+export const listHistory = (limit: number) => call<SessionSummary[]>(COMMANDS.listHistory, { limit });
+
+export const getTeamsStatus = () => call<TeamsStatus>(COMMANDS.getTeamsStatus);
+export const teamsConnect = () => call<DeviceCodePrompt>(COMMANDS.teamsConnect);
+export const teamsDisconnect = () => call<void>(COMMANDS.teamsDisconnect);
+
+export const getBridgeInfo = () => call<BridgeInfo>(COMMANDS.getBridgeInfo);
+export const openExtensionDir = () => call<void>(COMMANDS.openExtensionDir);
+export const testChime = (chime: ChimeKind) => call<void>(COMMANDS.testChime, { chime });
+
+/** Opens (or navigates) the separate YouTube window for a link that cannot play in the embedded player. */
+export const openMediaWindow = (url: string, play: boolean) => call<void>(COMMANDS.openMediaWindow, { url, play });
+/** Controls the YouTube window (no-op in the shell when it is closed). `volume` (0..1) is used only by `setVolume`. */
+export const controlMediaWindow = (action: MediaAction, volume: number | null = null) =>
+  call<void>(COMMANDS.controlMediaWindow, { action, volume });
+export const getMediaWindow = () => call<MediaWindowStatus>(COMMANDS.getMediaWindow);
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+/** Listens to a shell event. Outside the shell it is a no-op. */
+export async function on<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
+  if (!inShell()) return () => {};
+  return listen<T>(event, (e) => handler(e.payload));
+}
+
+/** `a` is newer than `b` in u32 serial-number arithmetic (survives wrap-around). */
+export function isNewerRevision(a: number, b: number): boolean {
+  const diff = (a - b) >>> 0;
+  return diff !== 0 && diff < 0x8000_0000;
+}
+
+/**
+ * Window state protocol (ADR-012): listen first, then read the getter, and apply only strictly newer revisions,
+ * so neither an event emitted during the getter call nor a stale getter result can roll the state back.
+ */
+export async function subscribe<T extends { revision: number }>(
+  event: string,
+  getter: () => Promise<T>,
+  apply: (value: T) => void,
+  onError?: (error: AppError) => void,
+): Promise<UnlistenFn> {
+  let last: number | null = null;
+  const offer = (value: T) => {
+    if (last === null || isNewerRevision(value.revision, last)) {
+      last = value.revision;
+      apply(value);
+    }
+  };
+  const unlisten = await on<T>(event, offer);
+  try {
+    offer(await getter());
+  } catch (e) {
+    onError?.(toAppError(e));
+  }
+  return unlisten;
+}
+
+export const subscribeSnapshot = (apply: (s: SessionSnapshot) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.sessionSnapshot, getSnapshot, apply, onError);
+export const subscribeShields = (apply: (s: ShieldStatus) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.shieldsStatus, getShieldStatus, apply, onError);
+export const subscribeTeams = (apply: (s: TeamsStatus) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.teamsStatus, getTeamsStatus, apply, onError);
+export const subscribeMediaWindow = (apply: (s: MediaWindowStatus) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.mediaWindow, getMediaWindow, apply, onError);
+
+export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
+export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);
+export const onNudge = (handler: (n: Nudge) => void) => on<Nudge>(EVENTS.focusNudge, handler);
+export const onAppError = (handler: (e: AppError) => void) =>
+  on<unknown>(EVENTS.appError, (payload) => handler(toAppError(payload)));
+
+// ---------------------------------------------------------------------------
+// Files, dialogs, opener, autostart
+// ---------------------------------------------------------------------------
+
+/** URL the WebView can load a local file from (asset protocol; the shell must allow the folder first). */
+export function fileSrc(path: string): string {
+  return inShell() ? convertFileSrc(path) : path;
+}
+
+/** Native folder picker. Resolves `null` when cancelled. */
+export async function pickFolder(title: string, defaultPath?: string | null): Promise<string | null> {
+  if (!inShell()) return null;
+  try {
+    const picked = await dialogOpen({ directory: true, multiple: false, title, defaultPath: defaultPath ?? undefined });
+    return typeof picked === "string" ? picked : null;
+  } catch (e) {
+    throw toAppError(e);
+  }
+}
+
+/** Opens an http(s) URL in the user's default browser. */
+export async function openExternal(url: string): Promise<void> {
+  if (!inShell()) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  try {
+    await openerOpenUrl(url);
+  } catch (e) {
+    throw toAppError(e);
+  }
+}
+
+export async function getAutostart(): Promise<boolean> {
+  if (!inShell()) return false;
+  try {
+    return await autostartIsEnabled();
+  } catch (e) {
+    throw toAppError(e);
+  }
+}
+
+export async function setAutostart(enabled: boolean): Promise<void> {
+  if (!inShell()) return;
+  try {
+    if (enabled) await autostartEnable();
+    else await autostartDisable();
+  } catch (e) {
+    throw toAppError(e);
+  }
+}

@@ -1,156 +1,157 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import BreakCard from "$lib/components/BreakCard.svelte";
+  import LiveUsage from "$lib/components/LiveUsage.svelte";
+  import MusicSourcePicker from "$lib/components/MusicSourcePicker.svelte";
+  import ShieldChips from "$lib/components/ShieldChips.svelte";
+  import TimerRing from "$lib/components/TimerRing.svelte";
+  import TimingEditor from "$lib/components/TimingEditor.svelte";
+  import { formatDuration } from "$lib/format";
+  import { config } from "$lib/state/config.svelte";
+  import { session } from "$lib/state/session.svelte";
+  import { strings } from "$lib/strings";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  const snap = $derived(session.snapshot);
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
-  }
+  // Idle: preview the configured focus length (or the demo profile reported by the shell).
+  const idleSecs = $derived.by(() => {
+    if (snap.demo && snap.focusSecs > 0) return snap.focusSecs;
+    const minutes = config.value?.focusMinutes;
+    if (minutes !== undefined && Number.isFinite(minutes) && minutes > 0) return minutes * 60;
+    return snap.focusSecs;
+  });
+  const remaining = $derived(session.isIdle ? idleSecs : snap.remainingSecs);
+  const total = $derived(session.isIdle ? idleSecs : snap.phaseTotalSecs);
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+<svelte:head>
+  <title>{session.isIdle ? strings.appName : `${strings.phase[snap.phase]} · ${strings.appName}`}</title>
+</svelte:head>
 
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
+<h1 class="sr-only">{strings.nav.focus}</h1>
+
+<section class="hero">
+  {#key `${snap.phase}-${snap.cycle}`}
+    <TimerRing
+      remainingSecs={remaining}
+      totalSecs={total}
+      phase={snap.phase}
+      paused={snap.paused}
+      cycle={snap.cycle}
+      demo={snap.demo}
+    />
+  {/key}
+
+  <div class="controls" role="group" aria-label={strings.controls.sessionControls}>
+    {#if session.isIdle}
+      <button
+        type="button"
+        class="btn btn-primary btn-lg start"
+        disabled={session.busy || !config.ready}
+        onclick={() => session.start()}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M7 4.5v15l12.5-7.5z" fill="currentColor" />
+        </svg>
+        {strings.controls.start}
+      </button>
+    {:else}
+      <button
+        type="button"
+        class="btn btn-lg"
+        class:btn-primary={snap.paused}
+        disabled={session.busy}
+        onclick={() => session.togglePause()}
+      >
+        {#if snap.paused}
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path d="M7 4.5v15l12.5-7.5z" fill="currentColor" />
+          </svg>
+          {strings.controls.resume}
+        {:else}
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
+            <rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
+          </svg>
+          {strings.controls.pause}
+        {/if}
+      </button>
+      <button
+        type="button"
+        class="btn btn-lg"
+        class:btn-break={snap.phase === "focus"}
+        disabled={session.busy}
+        onclick={() => session.skip()}
+        title={strings.controls.skip}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M5 5l9 7-9 7z" fill="currentColor" />
+          <rect x="15.5" y="5" width="3" height="14" rx="1.2" fill="currentColor" />
+        </svg>
+        {snap.phase === "focus" ? strings.controls.skipToBreak : strings.controls.skipToFocus}
+      </button>
+      <button type="button" class="btn btn-lg btn-danger" onclick={() => session.stop()}>
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor" />
+        </svg>
+        {strings.controls.stop}
+      </button>
+    {/if}
   </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
 
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
-</main>
+  {#if session.isIdle}
+    <p class="hint">{strings.timer.idleHint}</p>
+  {:else}
+    <p class="secondary small tabular">{strings.timer.focusedSoFar(formatDuration(snap.focusedSecs))}</p>
+  {/if}
+</section>
+
+{#if session.isIdle}
+  <div class="grid">
+    <TimingEditor />
+    <MusicSourcePicker />
+  </div>
+{:else if snap.phase === "focus"}
+  <div class="grid">
+    <LiveUsage />
+    <ShieldChips />
+  </div>
+{:else}
+  <BreakCard />
+{/if}
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    padding: 8px 0 28px;
+    text-align: center;
   }
 
-  a:hover {
-    color: #24c8db;
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
   }
 
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+  .start {
+    min-width: 200px;
   }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
 
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+    gap: 16px;
+    align-items: start;
+  }
+
+  @media (max-width: 560px) {
+    .controls :global(.btn-lg) {
+      min-height: 46px;
+      padding: 10px 18px;
+      font-size: 1rem;
+    }
+  }
 </style>
