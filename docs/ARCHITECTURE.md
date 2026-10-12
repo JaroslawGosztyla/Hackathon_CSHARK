@@ -2,6 +2,9 @@
 
 > Status: **wersja 3** — po dwóch cross-review ([2026-09-27](reviews/codex-crosscheck-2026-09-27.md), [2026-10-06](reviews/codex-review-2026-10-06.md); poprawki R01–R09).
 > Decyzje: [DECISIONS.md](DECISIONS.md). Produkt i profil czasów: [DESIGN.md](DESIGN.md).
+>
+> **Uwaga (2026-10-13):** aktualny zakres to [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu) (speedrun). Aktualny jest §6 (kontrakt IPC, zgodny z `api.rs`).
+> Pozostałe sekcje są sprzed pivotu (okna przerwy, ostrzeżenie, tryb spotkania, tint, muzyka w rodio). Tam, gdzie różnią się od ADR-013, wygrywa ADR-013 (task SR-09).
 
 ## 1. Stos technologiczny w skrócie
 
@@ -253,105 +256,144 @@ a Resume z `remaining ≤ warning_secs` pokazuje je ponownie.
 **Planer i config (R09):** przerwa krótsza od, równa i dłuższa od sumy ćwiczeń + `min_walk_secs`; suma planu = `break_secs`, bez ujemnej reszty;
 config spoza zakresów → błąd walidacji.
 
-## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012)
+## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
+
+> Stan na 2026-10-13, zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
-`#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS).
+`#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu `startedAtMs` / `endedAtMs`
+(`i64` eksportowane jako `number`).
 Eksport: `cargo test -p focus-core` zapisuje do `TS_RS_EXPORT_DIR` (ustawione w `.cargo/config.toml` względem workspace).
 **CI sprawdza, czy po regeneracji `src/lib/bindings/` nie ma zmian** (`git diff --exit-code`).
-Nazwy komend i eventów są stałymi w `api.rs` eksportowanymi do TS (test eksportu), więc `api.ts` nie wpisuje ich ręcznie.
-Zmiany kontraktu przechodzą przez skill `/sync-contract`.
+Nazwy komend i eventów są stałymi w `api.rs` (`commands::*`, `events::*`), które test `export_names` zapisuje do `src/lib/bindings/names.ts`
+(`COMMANDS`, `EVENTS`, `BRIDGE_PORT`), więc `api.ts` nie wpisuje ich ręcznie. Zmiany kontraktu przechodzą przez skill `/sync-contract`.
 
-### 6.1 Komendy (MVP)
+### 6.1 Komendy
 
-Adapter w `commands.rs`: B. Logika w aktorze/core: A.
+Cienkie adaptery w `src-tauri/src/commands.rs`; logika w aktorze sesji, w wykonawcach efektów i w core.
+Każda komenda zwraca `Result<T, AppError>`, gdzie `AppError { code, message, field }`: `code` to stabilny kod (`config.invalid`, `audio.device`,
+`shields.notifications`, `teams.auth`, `media.url`…), `message` to szczegół po angielsku do logów (UI mapuje `code` na polski tekst),
+a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `music.volume`…). Argumenty `invoke` są w camelCase.
 
-| Komenda | Argumenty | Zwraca |
-|---|---|---|
-| `get_snapshot` | – | `SessionSnapshot` |
-| `start_focus` | `genre: GenreId` | `()` |
-| `pause` / `resume` / `stop` | – | `()` |
-| `accept_break` / `postpone_break` | – | `()` |
-| `set_meeting_mode` | `minutes: number \| null` | `()` |
-| `skip_break` | `breakId: BreakId` | `()` |
-| `window_ready` | – (etykieta okna z kontekstu) | `()` |
-| `window_heartbeat` | `breakId: BreakId` | `()` — co 1 s z okien przerwy (§6.3, R03) |
-| `get_now_playing` | – | `NowPlaying \| null` |
-| `get_tint_state` | – | `TintState` (M2) |
-| `list_genres` | – | `GenreDto[]` |
-| `set_volume` | `volume: number (0..1)` | `()` |
-| `get_config` | – | `Config` |
-| `update_config` | `config: Config` | `Config` (po walidacji) |
-| `preview_tint` | `kelvin: number \| null` | `()` (M2) |
-| `get_stats` | – | `StatsDto` (M2) |
+| Komenda | Argumenty | Zwraca | Uwagi |
+|---|---|---|---|
+| `get_snapshot` | – | `SessionSnapshot` | |
+| `start_session` | – | `()` | sesja z bieżącym configiem (albo z profilem demo) |
+| `pause_session` | – | `()` | zamraża pozostały czas bieżącej fazy (Focus albo Przerwa) |
+| `resume_session` | – | `()` | |
+| `stop_session` | – | `()` | idempotentna, działa w każdej fazie |
+| `skip_phase` | – | `()` | Focus → Przerwa od razu, Przerwa → następny Focus od razu |
+| `get_config` | – | `Config` | |
+| `update_config` | `config: Config` | `Config` | znormalizowany, zwalidowany i zapisany |
+| `list_folder_tracks` | `path: string` | `Track[]` | skan folderu; znalezione pliki audio trafiają do scope asset protocol |
+| `get_shield_status` | – | `ShieldStatus` | |
+| `get_current_usage` | – | `UsageReport` | użycie aplikacji w trwającej sesji (puste w Idle) |
+| `get_last_summary` | – | `SessionSummary \| null` | |
+| `list_history` | `limit: number` | `SessionSummary[]` | od najnowszej |
+| `get_teams_status` | – | `TeamsStatus` | |
+| `teams_connect` | – | `DeviceCodePrompt` | start logowania device code; postęp przychodzi jako `teams://status` |
+| `teams_disconnect` | – | `()` | zapomina zapisany token |
+| `get_bridge_info` | – | `BridgeInfo` | port mostu, folder rozszerzenia, kiedy rozszerzenie ostatnio pytało |
+| `open_extension_dir` | – | `()` | otwiera folder dołączonego rozszerzenia w menedżerze plików |
+| `test_chime` | `chime: ChimeKind` | `()` | dzwonek z głośnością dzwonków z configu |
+| `open_media_window` | `url: string, play: boolean` | `()` | otwiera (albo przekierowuje) osobne okno YouTube, które gra link jako stronę najwyższego poziomu. Dla linków odmawiających osadzania (błędy YouTube 101/150/153) albo takich, których nie da się osadzić (ADR-013 pkt 2). Tylko https YouTube / YouTube Music, inaczej `media.url` |
+| `control_media_window` | `action: MediaAction, volume: number \| null` | `()` | `MediaAction`: `play` / `pause` / `setVolume` / `show` (pokazuje, przywraca i aktywuje okno, np. do akceptacji strony zgody YouTube) / `close`. `volume` (0..1) tylko dla `setVolume`. Przy zamkniętym oknie no-op |
+| `get_media_window` | – | `MediaWindowStatus` | |
 
-Komendy zwracają `Result<T, AppError>`, gdzie `AppError { code, message }: Serialize`.
-Teams (Could) dostaje własne komendy dopiero w M3, poza kontraktem MVP.
+Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, phase, remainingSecs }`
+(port to stała `BRIDGE_PORT` w `api.rs`).
 
 ### 6.2 Eventy
+
+Emituje tylko powłoka; nazwy `obszar://nazwa`.
 
 | Event | Payload | Kiedy |
 |---|---|---|
 | `session://snapshot` | `SessionSnapshot` | co tick (1 s) i po każdej zmianie |
-| `audio://now-playing` | `NowPlaying` | zmiana utworu/gatunku |
-| `tint://changed` | `TintState` | zmiana tint (M2) |
-| `app://error` | `AppError` | błąd warty pokazania |
+| `session://phase-changed` | `PhaseChange { from, to, cycle }` | przy każdym przejściu fazy |
+| `session://summary` | `SessionSummary` | raz, gdy sesja się kończy (Stop) |
+| `shields://status` | `ShieldStatus` | gdy któraś osłona zmienia stan |
+| `teams://status` | `TeamsStatus` | gdy zmienia się połączenie z Teams (także postęp logowania) |
+| `focus://nudge` | `Nudge` | awaryjny nudge: tracker wykrył stronę z blocklisty w tytule okna przeglądarki (bez rozszerzenia) |
+| `app://error` | `AppError` | integracja zawiodła; sesja trwa (degradacja) |
+| `media://window` | `MediaWindowStatus` | okno YouTube się otwiera, zamyka, przechodzi na inny adres albo zmienia tytuł |
 
-Nie ma osobnego eventu z planem przerwy: plan jest w snapshocie.
-**Każdy stan pokazywany w oknie ma parę getter + event z rewizją** (R06): sesja → `get_snapshot` / `session://snapshot`,
-odtwarzanie → `get_now_playing` / `audio://now-playing`, tint → `get_tint_state` / `tint://changed`. `NowPlaying` i `TintState` też mają pole `revision`.
+**Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
-### 6.3 Snapshot odtwarza widok sesji + protokół gotowości i żywotności okien
+| Stan | Getter | Event |
+|---|---|---|
+| `SessionSnapshot` | `get_snapshot` | `session://snapshot` |
+| `ShieldStatus` | `get_shield_status` | `shields://status` |
+| `TeamsStatus` | `get_teams_status` | `teams://status` |
+| `MediaWindowStatus` | `get_media_window` | `media://window` |
+
+Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
+1. **najpierw** rejestruje `listen(...)`,
+2. potem wywołuje getter,
+3. stosuje dane tylko wtedy, gdy `revision` jest większa od już posiadanej (chroni przed starszą odpowiedzią gettera).
+
+`session://phase-changed`, `session://summary`, `focus://nudge` i `app://error` to zdarzenia jednorazowe, bez rewizji
+(ostatnie podsumowanie da się też pobrać przez `get_last_summary`).
+
+### 6.3 Snapshot sesji i okna
 
 ```rust
 pub struct SessionSnapshot {
-    pub revision: u32,                 // rośnie przy każdej zmianie stanu
-    pub session_id: Option<SessionId>, pub cycle: u32,
-    pub phase: Phase,                  // Idle | Focus | Paused | Break
-    pub pause_reason: Option<PauseReason>, // User | Interrupted
-    pub remaining_secs: u32, pub total_secs: u32,
-    pub warning: bool, pub postpone_available: bool,
-    pub meeting_until: Option<String>, // ISO, do wyświetlenia
-    pub active_break: Option<ActiveBreak>, // { break_id, plan: BreakPlan, elapsed_secs, current_step }
-    pub genre: Option<GenreId>, pub demo: bool,
+    pub revision: u32,              // ustawia powłoka; rośnie z każdym wysłanym snapshotem
+    pub session_id: Option<String>,
+    pub phase: Phase,               // Idle | Focus | Break
+    pub paused: bool,               // pauza użytkownika albo automatyczna po luce zegara; ma sens tylko w Focus/Break
+    pub cycle: u32,                 // numer bieżącego cyklu skupienia od 1 (0 w Idle)
+    pub remaining_secs: u32,        // pozostało w bieżącej fazie (zamrożone w pauzie)
+    pub phase_total_secs: u32,      // długość bieżącej fazy (0 w Idle)
+    pub focus_secs: u32,            // profil w użyciu (z configu albo demo)
+    pub break_secs: u32,
+    pub focused_secs: u32,          // czas skupienia faktycznie spędzony w tej sesji (bez pauz i luk)
+    pub demo: bool,                 // profil demo (`--demo` / `FOCUSMODE_DEMO=1`)
 }
-pub struct BreakPlan { pub total_secs: u32, pub steps: Vec<BreakStep> } // BreakStep: pełna treść ćwiczenia + secs
 ```
 
-Każde okno (także nowo utworzone), dla każdego swojego stanu (getter + event z listy w §6.2):
-1. **najpierw** rejestruje `listen(...)`,
-2. potem wywołuje getter,
-3. stosuje dane tylko wtedy, gdy `revision` jest większa od już posiadanej (chroni przed starszą odpowiedzią),
-4. na końcu wywołuje `window_ready`.
-
-| Okno | Bootstrap | Może wywoływać (B-12) |
+| Okno | Zawartość | Uprawnienia IPC |
 |---|---|---|
-| `main` | `get_snapshot`, `get_now_playing`, `list_genres`, `get_config` | wszystkie komendy |
-| `warning` | `get_snapshot` | `accept_break`, `postpone_break`, `set_meeting_mode`, `window_ready` |
-| `break-{n}` | `get_snapshot` | `skip_break`, `stop`, `window_ready`, `window_heartbeat` |
-| `tint-{n}` | `get_tint_state` | **tylko** `get_tint_state`, `window_ready` (żadnych komend zmieniających stan) |
+| `main` | SPA (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie; zamknięcie = ukrycie | wszystkie komendy (capability `default`) |
+| `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
 
-**Start okna przerwy:** powłoka tworzy okna **ukryte** i pokazuje je dopiero po `window_ready`. Gdy okno nie zgłosi gotowości w 5 s,
-powłoka je zamyka, loguje `app://error` i degraduje przerwę do powiadomienia + stanu w tray (przerwa trwa, a Stop działa).
+Okien przerwy, ostrzeżenia i `tint-*` nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
 
-**Żywotność po starcie (R03):** widoczne okno przerwy wysyła `window_heartbeat(break_id)` co 1 s (z `setInterval` w JS).
-Watchdog w powłoce: brak heartbeatu przez 5 s → zamknięcie **tego** okna i ta sama degradacja co wyżej. Mechanizm jest niezależny od JS okna,
-bo działa w powłoce. Obejmuje zawieszenie WebView/JS okna, ale **nie** zawieszenie całego procesu: wtedy zostaje Alt+F4 / Menedżer zadań.
-Niezależna od WebView ścieżka wyjścia to tray: pozycje „Pomiń przerwę” i „Stop” są zawsze aktywne w trakcie przerwy.
+### 6.4 Przykłady JSON
 
-Komendy z okien przerwy niosą `break_id`, więc klik „Pomiń” z dwóch monitorów daje jeden efekt.
-
-### 6.4 Przykłady JSON (uzupełnić w T0-4)
+`SessionSnapshot` (demo, przerwa po pierwszym cyklu):
 
 ```json
-{ "revision": 42, "sessionId": "s-01", "cycle": 1, "phase": "break", "pauseReason": null,
-  "remainingSecs": 12, "totalSecs": 20, "warning": false, "postponeAvailable": false,
-  "meetingUntil": null, "genre": "brown-noise", "demo": true,
-  "activeBreak": { "breakId": "b-01", "elapsedSecs": 8, "currentStep": 1,
-    "plan": { "totalSecs": 20, "steps": [
-      { "id": "neck-tilt", "name": "Skłony szyi", "steps": ["…"], "secs": 5 },
-      { "id": "shoulder-rolls", "name": "Krążenia barków", "steps": ["…"], "secs": 5 },
-      { "id": "stand-walk", "name": "Wstań i się przejdź", "steps": ["…"], "secs": 10 } ] } } }
+{ "revision": 42, "sessionId": "1760350000000-12345-1", "phase": "break", "paused": false, "cycle": 1,
+  "remainingSecs": 12, "phaseTotalSecs": 20, "focusSecs": 40, "breakSecs": 20, "focusedSecs": 40, "demo": true }
+```
+
+`ShieldStatus` (Focus, Teams wyłączone w ustawieniach):
+
+```json
+{ "revision": 7, "active": true,
+  "notifications": { "state": "on", "detail": null },
+  "teams": { "state": "off", "detail": null },
+  "sites": { "state": "on", "detail": null },
+  "keepAwake": { "state": "on", "detail": null },
+  "extensionConnected": true }
+```
+
+`MediaWindowStatus` (okno YouTube z domyślnym streamem):
+
+```json
+{ "revision": 3, "open": true, "url": "https://www.youtube.com/@LofiGirl/live",
+  "title": "lofi hip hop radio - beats to relax/study to" }
+```
+
+Argumenty komend okna YouTube: `open_media_window` → `{ "url": "https://www.youtube.com/@LofiGirl/live", "play": true }`,
+`control_media_window` → `{ "action": "setVolume", "volume": 0.4 }` albo `{ "action": "pause", "volume": null }`.
+
+`AppError` (walidacja configu):
+
+```json
+{ "code": "config.invalid", "message": "focusMinutes must be between 1 and 240, got 300", "field": "focusMinutes" }
 ```
 
 ## 7. Model wątków i współbieżności

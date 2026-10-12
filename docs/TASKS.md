@@ -1,9 +1,51 @@
 # FocusMode — Taski i podział pracy
 
-> Wersja 2 — po cross-review (2026-09-27). Decyzje: ADR-008…012 w [DECISIONS.md](DECISIONS.md).
+> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu)); wersja 2 po cross-review (2026-09-27).
+> Decyzje: ADR-008…013 w [DECISIONS.md](DECISIONS.md).
 
 **Legenda statusu:** `[ ]` do zrobienia · `[~]` w toku · `[x]` zrobione · `[-]` porzucone
 Przy braniu taska wpisz obok statusu kto: `[~] (A)`. Edytuj **tylko swoje linie** (mniej konfliktów).
+
+## Speedrun (ADR-013) — obowiązuje teraz
+
+Termin: **2026-10-13**. Produkt: czasy ustawiane przez użytkownika (domyślnie 45/15 min) w pętli Focus ⇄ Przerwa aż do Stop,
+muzyka w WebView (stream / linki YouTube / folder / szum), dzwonek i toast przy każdej zmianie fazy, osłony skupienia
+(wyciszenie powiadomień Windows, Teams DND, blokada stron, nieusypianie ekranu) zdejmowane w przerwie, wykres produktywności według procesu.
+Całość powstaje w jednej gałęzi `b/speedrun-mvp` (równoległe agenty AI pod nadzorem B). Sekcje M0–M4 niżej są sprzed pivotu:
+zadania z oknami przerwy, ćwiczeniami, ostrzeżeniem, trybem spotkania, tint i gammą są odłożone. Ich statusy zostawiamy do decyzji obu osób.
+
+- [~] **SR-01** (B) Kontrakt IPC od nowa (`crates/focus-core/src/api.rs`): DTO configu (czasy, muzyka, osłony), snapshot sesji, `ShieldStatus`,
+  użycie aplikacji i `SessionSummary`, Teams, most dla rozszerzenia (`BRIDGE_PORT = 47615`), stałe komend i eventów. Bindingi w `src/lib/bindings/`
+  napisane ręcznie w formacie ts-rs. DoD: `cargo test -p focus-core` daje pusty `git diff src/lib/bindings`.
+- [~] **SR-02** (B) `focus-core`: `timing.rs` (45/15, demo 40/20 s), `session.rs` (pętla faz, pauza, pomiń, idempotentny Stop, luka > 90 s → auto-pauza,
+  kolejność efektów), `config.rs` (domyślne wartości + walidacja zakresów), `blocklist.rs` (normalizacja domen, procesy przeglądarek, dopasowanie tytułów),
+  `stats.rs` (sumy per proces, podsumowanie). DoD: testy jednostkowe z ADR-013 zielone.
+- [~] **SR-03** (B) `focus-audio`: `ChimePlayer`, syntetyczne dzwonki BreakStart/FocusStart na wątku rodio, leniwe otwarcie urządzenia, błędy bez paniki.
+- [~] **SR-04** (B) `focus-platform`: aktywne okno + bezczynność, wyciszenie powiadomień Windows (COM `IQuietHoursSettings`, stan sprzed focusa awaryjnie z WNF;
+  DND włączamy tylko, gdy było wyłączone, i potem wyłączamy z powrotem),
+  keep-awake (`PowerSetRequest`), Teams DND przez Graph (device code, token DPAPI), implementacje `Noop` poza Windows.
+- [~] **SR-05** (B) Powłoka `src-tauri/`: aktor sesji, efekty, osłony (wątek z generacją, `shields-restore.json` + RunOnce `--restore-shields`), tracker (próbkowanie + awaryjny nudge),
+  most HTTP `127.0.0.1:47615`, persystencja (`config.json`, `history.jsonl`), tray, Teams, skan folderu muzyki, NSIS per-user z rozszerzeniem jako zasobem.
+- [~] **SR-06** (B) Frontend `src/`: Skupienie (pierścień czasu, sterowanie, edytor czasów z presetami, wybór muzyki), odtwarzacz (YouTube/stream/linki/folder/szum),
+  Podsumowanie (wykres według procesu + historia), Ustawienia (osłony, Teams, blokada stron, dźwięk, autostart), motyw lofi, teksty w `strings.ts`.
+- [~] **SR-07** (B) Rozszerzenie MV3 `browser-extension/`: odpytywanie mostu, reguły `declarativeNetRequest`, strona „Wracaj do pracy”, popup, README.
+- [~] **SR-08** (B) Dokumentacja: ADR-013 (+ statusy ADR-003, 009–012), README (funkcje, instalacja, rozszerzenie, prywatność), CLAUDE.md, ten plik.
+- [ ] **SR-09** (A+B, po merge'u) Zaktualizować DESIGN.md i ARCHITECTURE.md do ADR-013 (tabela faz, wątki, kontrakt, okna). ARCHITECTURE §6 (kontrakt IPC) zaktualizowany 2026-10-13.
+- [~] **SR-10** (B) Okno YouTube jako fallback (ADR-013 pkt 2): gdy YouTube odmawia osadzania (błędy 101/150/153; m.in. live Lofi Girl i część YouTube Music)
+  albo linku nie da się osadzić (`/@kanał/live`, `/channel/<id>/live`, `/@kanał`), link gra w ukrytym oknie Tauri `media` ze stroną YouTube (odtwarzacz w tle, bez uprawnień IPC,
+  sterowany przez powłokę; widoczne tylko do pierwszego wyboru ciasteczek YouTube). Domyślny stream: `@LofiGirl/live`. E2E release 2026-10-13: 12/12 + zgoda 5/5. Kontrakt: `open_media_window` / `control_media_window` / `get_media_window` + `media://window`; dokumentacja: ADR-013, ARCHITECTURE §6, README.
+  DoD: domyślny stream Lofi Girl gra z zainstalowanego buildu; Pauza / Wznów / Stop / głośność działają na okno.
+
+**Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
+- [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
+- [ ] `--demo`: Start → 40 s → dzwonek + toast, osłony w dół, muzyka gra dalej → 20 s → dzwonek, osłony w górę → Stop → podsumowanie z wykresem
+- [ ] Pauza / Wznów / Pomiń fazę / Stop z UI i z traya; dwukrotny Stop = jedno podsumowanie; zamknięcie okna nie przerywa muzyki
+- [ ] muzyka: stream Lofi Girl (w oknie YouTube), link YouTube Music, playlista, folder z mp3, szum; link YouTube bez zgody na osadzanie → okno YouTube; link nieodtwarzalny → następny + komunikat
+- [ ] rozszerzenie w Chrome i Edge: `reddit.com` w Focus → „Wracaj do pracy”, w przerwie otwiera się normalnie; bez rozszerzenia (brak odpytania mostu przez 90 s) → nudge po tytule okna
+- [ ] powiadomienia Windows: wyciszone w Focus, włączone z powrotem w przerwie, po Stop, po „Zakończ”, po kill + ponownym starcie i po kill + ponownym logowaniu (RunOnce); DND włączone przed focusem zostaje nietknięte
+- [ ] Teams (jeśli tenant pozwala): logowanie kodem, DND w Focus, wyczyszczone w przerwie i po Stop
+- [ ] uśpienie laptopa w Focus i w przerwie → auto-pauza, czas luki nie liczy się do skupienia
+- [ ] instalator NSIS: instalacja per-user poza repo, skrót, start bez sieci (szum/folder), folder rozszerzenia otwiera się z Ustawień, autostart startuje zminimalizowany do zasobnika
 
 ## Role
 
@@ -157,3 +199,11 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   - `productName`/tytuł okna = `FocusMode`, identyfikator `com.focusmode.app`; profil `release` przeniesiony do root `Cargo.toml` (workspace).
   - `npm audit`: 3 × low (cookie w SvelteKit, dotyczy serwera; my jesteśmy statycznym SPA) — świadomie bez `audit fix --force` (SvelteKit 3 = breaking).
 - [2026-10-05] Na VM (VirtualBox) `npm install` potrafi paść na `Assertion failed: new_time >= loop->time` (libuv + niestabilny zegar). Objaw: brak `package-lock.json` albo uszkodzony plik `.node` („not a valid Win32 application”). Lekarstwo: `rm -rf node_modules` i ponowny `npm install`.
+- [2026-10-12] (B→A) **Pivot produktu: speedrun, termin jutro** ([ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu), sekcja „Speedrun” na górze tego pliku). Co się zmieniło:
+  - Nowy zakres od właściciela produktu: czasy ustawia użytkownik (domyślnie 45/15) w pętli Focus ⇄ Przerwa do Stop; muzyka ze streamu (Lofi Girl na YouTube), linków YouTube/YouTube Music, folderu albo szumu; na czas focusa osłony (wyciszenie powiadomień Windows, Teams DND, blokada stron przez rozszerzenie przeglądarki, nieusypianie), zdejmowane w przerwie; muzyka w przerwie gra dalej; wykres produktywności według procesu po Stop.
+  - Odpadają (odłożone): pełnoekranowe okna przerwy, ćwiczenia i planer, ostrzeżenie, tryb spotkania, tint/gamma, gatunki w rodio. Muzyka gra w WebView, rodio zostaje tylko do dzwonków.
+  - **Crate'y `focus-core`, `focus-audio`, `focus-platform` i twoje moduły w `src-tauri/src/` (`session_actor.rs`, `effects.rs`, `persistence.rs`) zostały zaimplementowane w gałęzi `b/speedrun-mvp`**, razem z nowym `api.rs`. Kontrakt nie poszedł osobnym PR-em (wyjątek opisany w ADR-013). Proszę o review, zwłaszcza `session.rs` (tabela faz i kolejność efektów), DND Windows (COM `IQuietHoursSettings` + odczyt WNF) w `focus-platform/src/notifications.rs` i Teams.
+  - Nowe zależności (już w manifestach i lockfile'ach): `windows` 0.62 + `reqwest` 0.13 w `focus-platform`; pluginy Tauri dialog/notification/single-instance/autostart/log, `tokio`, `tiny_http`, `anyhow`, `log` w `src-tauri`; pluginy JS dialog/notification/autostart/log.
+  - **Kompilacja nie jest zweryfikowana**: na maszynie B moduł antywirusa ESET (`ebehmoni.dll`) wywala procesy przy wyjściu, w tym build scripty cargo. Po pullu uruchom `/check` (fmt, clippy, testy); `cargo test -p focus-core` zregeneruje `src/lib/bindings/` (na razie pisane ręcznie w formacie ts-rs), więc `git diff src/lib/bindings` powinien być pusty.
+  - Do wspólnej decyzji: statusy starych tasków M0–M4 (porzucić albo przenieść po demo) i aktualizacja DESIGN/ARCHITECTURE (SR-09).
+- [2026-10-13] (B→A) Kontrakt: okno YouTube — komendy open_media_window / control_media_window / get_media_window, event media://window (MediaWindowStatus z rewizją); powód: Lofi Girl i część YouTube Music odmawia osadzania (błąd 150).
