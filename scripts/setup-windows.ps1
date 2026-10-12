@@ -9,6 +9,7 @@
     - Rust (rustup, stable toolchain, clippy, rustfmt)
     - Node.js LTS
     - GitHub CLI (gh) - optional, for pull requests from the terminal
+    - just - optional task runner (justfile in the repo root)
     - WebView2 runtime (check only; it ships with Windows 10/11)
 
   Run from PowerShell:
@@ -147,6 +148,15 @@ if (-not $SkipGh) {
         $missing += 'gh'
         if (-not $CheckOnly) { Install-Winget 'GitHub.cli'; Write-Ok 'gh installed - run: gh auth login' }
     }
+}
+
+# --- just (task runner) ---------------------------------------------------
+Write-Step 'just (task runner, optional)'
+if (Test-Command just) { Write-Ok "$(just --version)" }
+else {
+    Write-Miss 'just'
+    $missing += 'just'
+    if (-not $CheckOnly) { Install-Winget 'Casey.Just'; Write-Ok 'just installed' }
 }
 
 # --- WebView2 -------------------------------------------------------------

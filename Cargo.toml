@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/*", "src-tauri"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+
+# Profiles must live in the workspace root (ignored in member crates).
+# Release settings from the Tauri template: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
