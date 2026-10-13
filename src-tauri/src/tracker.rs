@@ -3,22 +3,24 @@
 //! - While focus runs (`Tracking(true)`) and `track_apps` is on, each sample adds the elapsed time to
 //!   the foreground process (or idle / unknown) in a shared `UsageAccumulator`.
 //! - While the sites shield is up and the browser extension is not connected, the foreground
-//!   browser window title is matched against the blocklist → `focus://nudge`, the main window is
-//!   brought to front and a "Wracaj do pracy" toast is shown (at most once per 30 s per domain).
+//!   browser window title is matched against `websiteblacklist.txt` (domains, then regexes) →
+//!   `focus://nudge`, the main window is brought to front and a "Wracaj do pracy" toast is shown
+//!   (at most once per 30 s per matched entry). Titles are never logged or stored.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use focus_core::api::{Nudge, UsageReport, events};
-use focus_core::blocklist::{is_browser_process, title_matches};
+use focus_core::blocklist::is_browser_process;
 use focus_core::stats::UsageAccumulator;
 use focus_core::timing::TimingProfile;
 use focus_platform::foreground::ForegroundInfo;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
+use crate::blocklist::SharedBlocklist;
 use crate::bridge::SharedBridge;
 use crate::{SharedConfig, lock, read_config, show_main_window, texts};
 
@@ -82,6 +84,8 @@ pub struct TrackerContext {
     pub app: AppHandle,
     pub config: SharedConfig,
     pub bridge: SharedBridge,
+    /// The parsed `websiteblacklist.txt` (window-title fallback).
+    pub blocklist: SharedBlocklist,
 }
 
 pub fn spawn(ctx: TrackerContext) -> anyhow::Result<TrackerHandle> {
@@ -175,17 +179,9 @@ impl Tracker {
 
     fn tick(&mut self) {
         let track = self.enabled && read_config(&self.ctx.config).track_apps;
-        let (watch_sites, blocklist) = {
+        let watch_sites = {
             let bridge = lock(&self.ctx.bridge);
-            let watch = bridge.block_active && !bridge.extension_connected();
-            (
-                watch,
-                if watch {
-                    bridge.blocklist.clone()
-                } else {
-                    Vec::new()
-                },
-            )
+            bridge.block_active && !bridge.extension_connected()
         };
         if !track {
             // Keep the clock fresh so re-enabling `track_apps` does not count the gap.
@@ -217,7 +213,7 @@ impl Tracker {
                     self.probe_failing = false;
                 }
                 if watch_sites {
-                    self.check_sites(&info, &blocklist);
+                    self.check_sites(&info);
                 }
             }
             Err(err) => {
@@ -229,37 +225,49 @@ impl Tracker {
         }
     }
 
-    fn check_sites(&mut self, info: &ForegroundInfo, blocklist: &[String]) {
+    fn check_sites(&mut self, info: &ForegroundInfo) {
         let Some(process) = info.process.as_deref() else {
             return;
         };
         if !is_browser_process(process) {
             return;
         }
-        let Some(domain) = title_matches(&info.title, blocklist) else {
+        // `(entry, is_pattern)`: a domain, else the source of the first matching regex.
+        let matched = {
+            let list = self
+                .ctx
+                .blocklist
+                .read()
+                .unwrap_or_else(PoisonError::into_inner);
+            list.match_title(&info.title).map(|entry| {
+                let is_pattern = !list.domains().contains(&entry);
+                (entry, is_pattern)
+            })
+        };
+        let Some((entry, is_pattern)) = matched else {
             return;
         };
         let due = self
             .last_nudge
-            .get(&domain)
+            .get(&entry)
             .is_none_or(|at| at.elapsed() >= NUDGE_EVERY);
         if !due {
             return;
         }
-        self.last_nudge.insert(domain.clone(), Instant::now());
-        // Debug only: browsing activity does not belong in the default (info) log file.
-        log::debug!("blocked site in the foreground: {domain} ({process})");
+        self.last_nudge.insert(entry.clone(), Instant::now());
+        // No title, URL or entry in the log (privacy rule 11): browsing activity stays private.
+        log::debug!("blocked site in the foreground ({process})");
 
+        let toast = texts::nudge_toast(&entry, is_pattern);
         let nudge = Nudge {
             process: process.to_owned(),
-            matched: domain.clone(),
+            matched: entry,
             title: info.title.clone(),
         };
         if let Err(err) = self.ctx.app.emit(events::FOCUS_NUDGE, nudge) {
             log::warn!("cannot emit nudge: {err}");
         }
         show_main_window(&self.ctx.app);
-        let toast = texts::nudge_toast(&domain);
         if let Err(err) = self
             .ctx
             .app

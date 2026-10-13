@@ -60,9 +60,15 @@ pub fn interrupted_toast() -> Toast {
     )
 }
 
-/// A blocked site was detected in the foreground browser window.
-pub fn nudge_toast(domain: &str) -> Toast {
-    Toast::new("Wracaj do pracy", format!("{domain} poczeka do przerwy."))
+/// A blocked site was detected in the foreground browser window. `matched` is a domain, or a regex
+/// source when `is_pattern` (not readable as a site name, so it is not shown).
+pub fn nudge_toast(matched: &str, is_pattern: bool) -> Toast {
+    let body = if is_pattern {
+        "Ta strona jest na liście blokowanych i poczeka do przerwy.".to_owned()
+    } else {
+        format!("{matched} poczeka do przerwy.")
+    };
+    Toast::new("Wracaj do pracy", body)
 }
 
 pub fn phase_label(phase: Phase) -> &'static str {
@@ -156,6 +162,9 @@ mod tests {
     fn toasts_contain_numbers() {
         assert!(break_toast(15 * 60).body.contains("15 min"));
         assert!(focus_toast(45 * 60, 2).body.contains("Cykl 2"));
-        assert!(nudge_toast("reddit.com").body.contains("reddit.com"));
+        assert!(nudge_toast("reddit.com", false).body.contains("reddit.com"));
+        let pattern = nudge_toast(r"youtube\.com/shorts", true);
+        assert!(!pattern.body.contains("youtube"));
+        assert!(pattern.body.contains("na liście blokowanych"));
     }
 }

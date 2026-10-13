@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use focus_core::api::{AppError, BRIDGE_PORT, BridgeState, Phase};
+use focus_core::blocklist::Blocklist;
 use tauri::AppHandle;
 use tiny_http::{Header, Method, Request, Response, Server};
 
@@ -17,31 +18,43 @@ use crate::shields::ShieldsHandle;
 /// The extension counts as connected when it polled within this window.
 const EXTENSION_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// State shared between the session actor, the shields worker, the tracker and the HTTP thread.
+/// State shared between the session actor, the shields worker, the blocklist service, the tracker
+/// and the HTTP thread.
 #[derive(Debug, Clone)]
 pub struct BridgeShared {
     pub phase: Phase,
     pub remaining_secs: u32,
     /// Sites shield is up (focus running or paused and `block_sites` on). Set by the shields worker.
     pub block_active: bool,
-    pub blocklist: Vec<String>,
+    /// Normalized domains of `websiteblacklist.txt`. Set by `crate::blocklist`.
+    pub domains: Vec<String>,
+    /// Regex sources of `websiteblacklist.txt`. Set by `crate::blocklist`.
+    pub patterns: Vec<String>,
     /// Last request from the extension.
     pub last_seen: Option<Instant>,
 }
 
 pub type SharedBridge = Arc<Mutex<BridgeShared>>;
 
-pub fn new_shared(blocklist: Vec<String>) -> SharedBridge {
+/// Empty list until `crate::blocklist` loads `websiteblacklist.txt`.
+pub fn new_shared() -> SharedBridge {
     Arc::new(Mutex::new(BridgeShared {
         phase: Phase::Idle,
         remaining_secs: 0,
         block_active: false,
-        blocklist,
+        domains: Vec::new(),
+        patterns: Vec::new(),
         last_seen: None,
     }))
 }
 
 impl BridgeShared {
+    /// The list served to the extension while blocking.
+    pub fn set_blocklist(&mut self, list: &Blocklist) {
+        self.domains = list.domains().to_vec();
+        self.patterns = list.pattern_sources();
+    }
+
     pub fn extension_connected(&self) -> bool {
         self.last_seen
             .is_some_and(|seen| seen.elapsed() < EXTENSION_TIMEOUT)
@@ -53,13 +66,15 @@ impl BridgeShared {
     }
 
     fn state(&self) -> BridgeState {
+        let (blocklist, patterns) = if self.block_active {
+            (self.domains.clone(), self.patterns.clone())
+        } else {
+            (Vec::new(), Vec::new())
+        };
         BridgeState {
             active: self.block_active,
-            blocklist: if self.block_active {
-                self.blocklist.clone()
-            } else {
-                Vec::new()
-            },
+            blocklist,
+            patterns,
             phase: self.phase,
             remaining_secs: self.remaining_secs,
         }
@@ -233,14 +248,16 @@ mod tests {
 
     #[test]
     fn inactive_state_hides_blocklist() {
-        let shared = new_shared(vec!["reddit.com".into()]);
+        let shared = new_shared();
+        let (list, _issues) = Blocklist::parse("reddit.com\n/youtube\\.com/shorts/\n");
+        lock(&shared).set_blocklist(&list);
         let state = lock(&shared).state();
         assert!(!state.active);
         assert!(state.blocklist.is_empty());
+        assert!(state.patterns.is_empty());
         lock(&shared).block_active = true;
-        assert_eq!(
-            lock(&shared).state().blocklist,
-            vec!["reddit.com".to_owned()]
-        );
+        let state = lock(&shared).state();
+        assert_eq!(state.blocklist, vec!["reddit.com".to_owned()]);
+        assert_eq!(state.patterns, vec![r"youtube\.com/shorts".to_owned()]);
     }
 }

@@ -4,6 +4,7 @@
 //! (`focus-platform`) to the WebView UI. Side effects run only here (ADR-012):
 //! the session actor owns the state machine, workers own the slow integrations.
 
+mod blocklist;
 mod bridge;
 mod commands;
 mod effects;
@@ -60,6 +61,8 @@ pub struct AppState {
     pub tracker: tracker::TrackerHandle,
     pub teams: teams::TeamsHandle,
     pub bridge: bridge::SharedBridge,
+    /// `websiteblacklist.txt` (the list of sites to block).
+    pub blocklist: blocklist::BlocklistService,
     pub chime: effects::ChimeHandle,
     pub last_summary: Arc<Mutex<Option<SessionSummary>>>,
     pub extension_dir: Option<PathBuf>,
@@ -131,6 +134,9 @@ pub fn run() {
             commands::open_media_window,
             commands::control_media_window,
             commands::get_media_window,
+            commands::get_blocklist,
+            commands::open_blocklist_file,
+            commands::reload_blocklist,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");
@@ -163,7 +169,6 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         emit_startup_error(&handle, err);
     }
     music::allow_configured_folder(&handle, config.music.folder.as_deref());
-    let blocklist = config.shields.blocklist.clone();
     let config: SharedConfig = Arc::new(RwLock::new(config));
 
     let last_summary = match persistence.list_history(1) {
@@ -175,7 +180,9 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     };
     let last_summary = Arc::new(Mutex::new(last_summary));
 
-    let bridge = bridge::new_shared(blocklist);
+    let bridge = bridge::new_shared();
+    // Creates websiteblacklist.txt on first run, loads it into the bridge and watches it.
+    let blocklist = blocklist::BlocklistService::start(&handle, &persistence, Arc::clone(&bridge));
     let (chime_player, audio_events) = focus_audio::ChimePlayer::spawn();
     effects::forward_audio_errors(handle.clone(), audio_events)
         .context("spawn audio event thread")?;
@@ -212,6 +219,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         app: handle.clone(),
         config: Arc::clone(&config),
         bridge: Arc::clone(&bridge),
+        blocklist: blocklist.shared(),
     })
     .context("spawn tracker")?;
 
@@ -261,6 +269,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         tracker,
         teams,
         bridge,
+        blocklist,
         chime,
         last_summary,
         extension_dir,
@@ -389,6 +398,16 @@ fn find_extension_dir(app: &AppHandle) -> Option<PathBuf> {
         .into_iter()
         .flatten()
         .find(|dir| dir.join("manifest.json").is_file())
+        .map(without_verbatim_prefix)
+}
+
+/// `resource_dir` is a verbatim path (`\\?\C:\…`) on Windows; users see and copy this path, and
+/// browsers' "Load unpacked" dialogs do not accept the prefix.
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
+        _ => path,
+    }
 }
 
 /// Keeps the OS autostart entry in line with `launch_on_login`.
@@ -463,4 +482,26 @@ pub(crate) fn read_config(config: &SharedConfig) -> Config {
 
 pub(crate) fn write_config(config: &SharedConfig, value: Config) {
     *config.write().unwrap_or_else(PoisonError::into_inner) = value;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_verbatim_prefix;
+    use std::path::PathBuf;
+
+    #[test]
+    fn strips_only_the_drive_verbatim_prefix() {
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(r"\\?\C:\Apps\FocusMode\browser-extension")),
+            PathBuf::from(r"C:\Apps\FocusMode\browser-extension")
+        );
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share\x")),
+            PathBuf::from(r"\\?\UNC\server\share\x")
+        );
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(r"C:\plain")),
+            PathBuf::from(r"C:\plain")
+        );
+    }
 }

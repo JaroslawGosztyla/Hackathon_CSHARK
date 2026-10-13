@@ -1,4 +1,5 @@
 //! All file IO of the app: config, session history, shields crash-restore token, Teams token path.
+//! `websiteblacklist.txt` lives next to `config.json`, but `crate::blocklist` reads and watches it.
 //!
 //! Every method is blocking. Callers on the async runtime use `spawn_blocking`; the shields
 //! and Teams workers call it from their own threads. Writes are serialized by one lock.
@@ -10,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use focus_core::api::{AppError, Config, SessionSummary};
+use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use focus_platform::notifications::MuteToken;
 use tauri::{AppHandle, Manager};
 
@@ -29,6 +31,7 @@ pub struct Persistence {
 struct Inner {
     config_path: PathBuf,
     config_backup_path: PathBuf,
+    blocklist_path: PathBuf,
     history_path: PathBuf,
     restore_path: PathBuf,
     teams_token_path: PathBuf,
@@ -55,6 +58,7 @@ impl Persistence {
             inner: Arc::new(Inner {
                 config_path: config_dir.join(CONFIG_FILE),
                 config_backup_path: config_dir.join(CONFIG_BACKUP_FILE),
+                blocklist_path: config_dir.join(BLACKLIST_FILE_NAME),
                 history_path: data_dir.join(HISTORY_FILE),
                 restore_path: data_dir.join(SHIELDS_RESTORE_FILE),
                 teams_token_path: data_dir.join(TEAMS_TOKEN_FILE),
@@ -65,6 +69,11 @@ impl Persistence {
 
     pub fn teams_token_path(&self) -> PathBuf {
         self.inner.teams_token_path.clone()
+    }
+
+    /// `websiteblacklist.txt` in the config directory (user-editable; see `crate::blocklist`).
+    pub fn blocklist_path(&self) -> PathBuf {
+        self.inner.blocklist_path.clone()
     }
 
     /// Loads `config.json`. A missing file gives defaults silently; a corrupted or invalid file is
@@ -195,7 +204,7 @@ impl Persistence {
 }
 
 /// Writes `bytes` to `<path>.tmp`, syncs it and renames it over `path`.
-fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())

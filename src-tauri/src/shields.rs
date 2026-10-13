@@ -54,7 +54,7 @@ const RESTORE_RETRY_DELAY: Duration = Duration::from_secs(5);
 pub enum ShieldsCmd {
     /// Desired state: `up` during focus (running or paused).
     Apply { generation: u64, up: bool },
-    /// Config changed: re-apply with the new switches/blocklist.
+    /// Config changed: re-apply with the new switches.
     ConfigChanged,
     /// Show a toast after everything queued before it was applied.
     Toast(Toast),
@@ -326,7 +326,7 @@ impl Worker {
         let config = read_config(&self.ctx.config);
         let shields = &config.shields;
         self.reconcile_keep_awake(shields.keep_awake);
-        self.reconcile_sites(shields.block_sites, shields.blocklist.clone());
+        self.reconcile_sites(shields.block_sites);
         self.reconcile_teams(
             shields.teams_dnd,
             config.focus_minutes.saturating_add(TEAMS_EXTRA_MINUTES),
@@ -447,13 +447,10 @@ impl Worker {
         self.keep_awake = if want { on() } else { off() };
     }
 
-    fn reconcile_sites(&mut self, enabled: bool, blocklist: Vec<String>) {
+    /// Only the switch: the list itself comes from `websiteblacklist.txt` (`crate::blocklist`).
+    fn reconcile_sites(&mut self, enabled: bool) {
         let want = self.up && enabled;
-        {
-            let mut bridge = lock(&self.ctx.bridge);
-            bridge.block_active = want;
-            bridge.blocklist = blocklist;
-        }
+        lock(&self.ctx.bridge).block_active = want;
         self.sites = if want { on() } else { off() };
     }
 
@@ -471,7 +468,7 @@ impl Worker {
         let config = read_config(&self.ctx.config);
         self.reconcile_notifications(config.shields.mute_notifications);
         self.reconcile_keep_awake(config.shields.keep_awake);
-        self.reconcile_sites(config.shields.block_sites, config.shields.blocklist.clone());
+        self.reconcile_sites(config.shields.block_sites);
         self.ctx.teams.exit_blocking(TEAMS_EXIT_TIMEOUT);
         self.publish();
     }

@@ -6,10 +6,11 @@
 use std::path::PathBuf;
 
 use focus_core::api::{
-    AppError, BRIDGE_PORT, BridgeInfo, ChimeKind, Config, DeviceCodePrompt, MediaAction,
-    MediaWindowStatus, Phase, SessionSnapshot, SessionSummary, ShieldStatus, TeamsStatus, Track,
-    UsageReport,
+    AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, ChimeKind, Config, DeviceCodePrompt,
+    MediaAction, MediaWindowStatus, Phase, SessionSnapshot, SessionSummary, ShieldStatus,
+    TeamsStatus, Track, UsageReport,
 };
+use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -226,4 +227,47 @@ pub async fn control_media_window(
 #[tauri::command]
 pub async fn get_media_window(state: State<'_, AppState>) -> Result<MediaWindowStatus, AppError> {
     Ok(state.media.status())
+}
+
+#[tauri::command]
+pub async fn get_blocklist(state: State<'_, AppState>) -> Result<BlocklistInfo, AppError> {
+    Ok(state.blocklist.info())
+}
+
+#[tauri::command]
+pub async fn open_blocklist_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let blocklist = state.blocklist.clone();
+    let open_error = |detail: String| {
+        AppError::new(
+            "blocklist.open",
+            format!("cannot open {BLACKLIST_FILE_NAME}: {detail}"),
+        )
+    };
+    // Recreating a deleted file and starting the editor touch the disk: keep it off the async workers.
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = blocklist
+            .ensure_file()
+            .map_err(|err| open_error(format!("{err:#}")))?;
+        app.opener()
+            .open_path(path.to_string_lossy(), None::<&str>)
+            .map_err(|err| open_error(err.to_string()))
+    })
+    .await
+    .map_err(|err| open_error(err.to_string()))?
+}
+
+#[tauri::command]
+pub async fn reload_blocklist(state: State<'_, AppState>) -> Result<BlocklistInfo, AppError> {
+    let blocklist = state.blocklist.clone();
+    tauri::async_runtime::spawn_blocking(move || blocklist.reload())
+        .await
+        .map_err(|err| {
+            AppError::new(
+                "blocklist.read",
+                format!("cannot reload {BLACKLIST_FILE_NAME}: {err}"),
+            )
+        })
 }
