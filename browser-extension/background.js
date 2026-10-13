@@ -40,6 +40,7 @@ import {
   parseWebUrl,
   phaseLabel,
   ruleRegexFilter,
+  t,
 } from './common.js';
 
 const ALARM_NAME = 'focusmode-poll';
@@ -821,15 +822,15 @@ async function updateBadge(state) {
   try {
     let text = '';
     let color = BADGE_FOCUS_COLOR;
-    let title = 'FocusMode — brak połączenia z aplikacją';
+    let title = t('badgeOffline');
     if (state.connected) {
-      title = `FocusMode — ${phaseLabel(state.phase)}`;
+      title = t('badgePhase', phaseLabel(state.phase));
       if (state.phase === 'focus' || state.phase === 'break') {
         const minutes = Math.max(1, Math.ceil(state.remainingSecs / 60));
         text = `${minutes}m`;
         color = state.phase === 'focus' ? BADGE_FOCUS_COLOR : BADGE_BREAK_COLOR;
-        title += `, zostało ${formatClock(state.remainingSecs)}`;
-        if (isBlocking(state)) title += ' · blokada stron włączona';
+        const key = isBlocking(state) ? 'badgeTimerBlocking' : 'badgeTimer';
+        title = t(key, phaseLabel(state.phase), formatClock(state.remainingSecs));
       }
     }
     await chrome.action.setBadgeText({ text });

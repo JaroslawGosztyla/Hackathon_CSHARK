@@ -3,6 +3,9 @@
 // Nothing in this module talks to the network. The only network peer of the whole extension is the
 // FocusMode desktop app on the loopback interface (BRIDGE_STATE_URL, BRIDGE_REPORT_URL), and only
 // background.js calls it.
+//
+// Texts come from _locales/<language>/messages.json through chrome.i18n (the browser's UI language,
+// English when it is not translated): t() in scripts, data-i18n attributes in the HTML pages.
 
 /** Loopback port of the FocusMode bridge (`BRIDGE_PORT` in crates/focus-core/src/api.rs). */
 export const BRIDGE_PORT = 47615;
@@ -64,19 +67,85 @@ export const INITIAL_STATE = Object.freeze({
   skippedPatterns: [],
 });
 
-/** Polish UI texts shared by the popup and the blocked page. */
+/**
+ * A text from _locales in the browser's language; `substitutions` fill the message's placeholders in order.
+ * Falls back to the key itself, so a missing message is visible instead of an empty element.
+ * @param {string} key
+ * @param {...(string | number)} substitutions
+ * @returns {string}
+ */
+export function t(key, ...substitutions) {
+  try {
+    const text = chrome.i18n.getMessage(key, substitutions.map(String));
+    return text !== '' ? text : key;
+  } catch {
+    return key;
+  }
+}
+
+/** Texts shared by the popup, the blocked page and the toolbar button (read on use, in the browser's language). */
 export const TEXT = Object.freeze({
   phase: Object.freeze({
-    idle: 'Brak sesji',
-    focus: 'Skupienie',
-    break: 'Przerwa',
-    unknown: 'Nieznana faza',
+    get idle() {
+      return t('phaseIdle');
+    },
+    get focus() {
+      return t('phaseFocus');
+    },
+    get break() {
+      return t('phaseBreak');
+    },
+    get unknown() {
+      return t('phaseUnknown');
+    },
   }),
-  connected: 'Połączono z aplikacją FocusMode',
-  disconnected: 'Brak połączenia z aplikacją FocusMode',
-  checking: 'Sprawdzam połączenie…',
-  paused: 'pauza',
+  get connected() {
+    return t('connected');
+  },
+  get disconnected() {
+    return t('disconnected');
+  },
+  get checking() {
+    return t('checking');
+  },
+  get paused() {
+    return t('paused');
+  },
 });
+
+/** Marker in a message (data-i18n-code) replaced by a <code> element with the attribute's value. */
+const CODE_MARKER = '{{file}}';
+
+/**
+ * Fills a page from _locales: `data-i18n="key"` sets an element's text, `data-i18n-title` its tooltip,
+ * `data-i18n-code="text"` puts <code>text</code> where the message has {{file}} (never as HTML), and
+ * `data-i18n-doc-title` on <html> the document title. Sets <html lang> to the language of the texts.
+ * @param {Document} doc
+ */
+export function localizePage(doc) {
+  const root = doc.documentElement;
+  root.lang = t('lang');
+  const docTitle = root.getAttribute('data-i18n-doc-title');
+  if (docTitle) doc.title = t(docTitle);
+  for (const element of doc.querySelectorAll('[data-i18n]')) {
+    const key = element.getAttribute('data-i18n');
+    if (!key) continue;
+    const text = t(key);
+    const code = element.getAttribute('data-i18n-code');
+    const at = code === null ? -1 : text.indexOf(CODE_MARKER);
+    if (code === null || at === -1) {
+      element.textContent = text;
+      continue;
+    }
+    const codeElement = doc.createElement('code');
+    codeElement.textContent = code;
+    element.replaceChildren(text.slice(0, at), codeElement, text.slice(at + CODE_MARKER.length));
+  }
+  for (const element of doc.querySelectorAll('[data-i18n-title]')) {
+    const key = element.getAttribute('data-i18n-title');
+    if (key) element.setAttribute('title', t(key));
+  }
+}
 
 /**
  * Normalizes a blocklist entry to a lowercase ASCII (punycode) host name, or returns null.
@@ -372,7 +441,7 @@ export function formatClock(totalSecs) {
 }
 
 /**
- * Polish label of a phase.
+ * Label of a phase in the browser's language.
  * @param {unknown} phase
  */
 export function phaseLabel(phase) {

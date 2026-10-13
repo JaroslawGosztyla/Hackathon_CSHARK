@@ -1,0 +1,374 @@
+{
+  "extName": {
+    "message": "FocusMode — 分心网站屏蔽",
+    "description": "Extension name (store list and chrome://extensions). \"FocusMode\" is never translated."
+  },
+  "extDescription": {
+    "message": "在 FocusMode 应用的专注期间，把分散注意力的网站替换为“回到工作吧”。只在本地运行。",
+    "description": "Extension description."
+  },
+  "lang": {
+    "message": "zh-Hans",
+    "description": "BCP 47 code of this translation, for <html lang> (not shown; zh_CN uses zh-Hans)."
+  },
+  "phaseIdle": {
+    "message": "没有进行中的时段",
+    "description": "Phase name: no session running."
+  },
+  "phaseFocus": {
+    "message": "专注",
+    "description": "Phase name."
+  },
+  "phaseBreak": {
+    "message": "休息",
+    "description": "Phase name."
+  },
+  "phaseUnknown": {
+    "message": "未知阶段",
+    "description": "Phase name when the app sends an unknown one."
+  },
+  "connected": {
+    "message": "已连接到 FocusMode 应用",
+    "description": "Popup: connection status."
+  },
+  "disconnected": {
+    "message": "未连接到 FocusMode 应用",
+    "description": "Popup: connection status."
+  },
+  "checking": {
+    "message": "正在检查连接…",
+    "description": "Popup: connection status while checking."
+  },
+  "paused": {
+    "message": "已暂停",
+    "description": "Popup: added after the phase name while paused."
+  },
+  "badgeOffline": {
+    "message": "FocusMode — 未连接到应用",
+    "description": "Toolbar button tooltip without the app."
+  },
+  "badgePhase": {
+    "message": "FocusMode — $PHASE$",
+    "description": "Toolbar button tooltip.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      }
+    }
+  },
+  "badgeTimer": {
+    "message": "FocusMode — $PHASE$，剩余 $TIME$",
+    "description": "Toolbar button tooltip with the time left.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      },
+      "time": {
+        "content": "$2",
+        "example": "12:34"
+      }
+    }
+  },
+  "badgeTimerBlocking": {
+    "message": "FocusMode — $PHASE$，剩余 $TIME$ · 网站屏蔽已开启",
+    "description": "Toolbar button tooltip while sites are blocked.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      },
+      "time": {
+        "content": "$2",
+        "example": "12:34"
+      }
+    }
+  },
+  "factBlocking": {
+    "message": "网站屏蔽",
+    "description": "Popup: label of the blocking state."
+  },
+  "factDomains": {
+    "message": "屏蔽的域名",
+    "description": "Popup: label of the number of blocked domains."
+  },
+  "factPatterns": {
+    "message": "表达式（正则）",
+    "description": "Popup: label of the number of regex patterns."
+  },
+  "showList": {
+    "message": "显示屏蔽列表",
+    "description": "Popup: expands the list of blocked entries."
+  },
+  "listNote": {
+    "message": "列表保存在文件 {{file}} 中，可以在 FocusMode 应用的设置里打开它。",
+    "description": "Popup note; {{file}} becomes the file name websiteblacklist.txt in code style (keep the marker, never translate the file name)."
+  },
+  "refresh": {
+    "message": "刷新",
+    "description": "Popup button."
+  },
+  "privacy": {
+    "message": "此扩展只连接这台电脑上的 FocusMode 应用（127.0.0.1），不会向互联网发送任何内容。",
+    "description": "Popup privacy note."
+  },
+  "skippedHint": {
+    "message": "浏览器不支持这个表达式，或已达到规则数量上限，因此它没有被屏蔽。",
+    "description": "Popup: tooltip of a pattern the browser rejected."
+  },
+  "patternCountSkipped": {
+    "message": "$TOTAL$（已跳过：$SKIPPED$）",
+    "description": "Popup: number of patterns with the skipped ones.",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "12"
+      },
+      "skipped": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "blockingOff": {
+    "message": "屏蔽已关闭",
+    "description": "Heading when blocking is off (no app)."
+  },
+  "hintReadFailed": {
+    "message": "无法读取扩展状态。请尝试刷新。",
+    "description": "Popup hint."
+  },
+  "hintStartApp": {
+    "message": "请启动 FocusMode 应用。没有它，就不会屏蔽任何网站。",
+    "description": "Popup hint without the app."
+  },
+  "stateOff": {
+    "message": "已关闭",
+    "description": "Popup: blocking state."
+  },
+  "stateOn": {
+    "message": "已开启",
+    "description": "Popup: blocking state."
+  },
+  "stateOffBreak": {
+    "message": "已关闭（休息中）",
+    "description": "Popup: blocking state during a break."
+  },
+  "hintFocus": {
+    "message": "距离休息的剩余时间",
+    "description": "Popup: under the countdown during focus."
+  },
+  "hintFocusNoBlocking": {
+    "message": "距离休息的剩余时间 · 应用中的网站屏蔽已关闭",
+    "description": "Popup: under the countdown when blocking is off in the app."
+  },
+  "hintBreak": {
+    "message": "休息剩余时间 · 网站已解除屏蔽",
+    "description": "Popup: under the countdown during a break."
+  },
+  "hintIdle": {
+    "message": "请在 FocusMode 应用中开始一个专注时段。",
+    "description": "Popup hint when no session runs."
+  },
+  "blockedPageTitle": {
+    "message": "回到工作吧 — FocusMode",
+    "description": "Tab title of the blocked page while it loads."
+  },
+  "headlineFocus": {
+    "message": "回到工作吧",
+    "description": "Blocked page headline during focus."
+  },
+  "siteWaits": {
+    "message": "这个网站可以等到休息时再看。",
+    "description": "Blocked page, address unknown."
+  },
+  "siteHostWaits": {
+    "message": "$HOST$ 可以等到休息时再看。",
+    "description": "Blocked page.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "matchLabel": {
+    "message": "屏蔽列表中的条目：",
+    "description": "Blocked page: label before the matching list entry."
+  },
+  "matchDomain": {
+    "message": "屏蔽列表中的域名：",
+    "description": "Blocked page: label before the matching domain."
+  },
+  "matchPattern": {
+    "message": "屏蔽列表中的表达式：",
+    "description": "Blocked page: label before the matching pattern."
+  },
+  "timerFocus": {
+    "message": "距离休息还有",
+    "description": "Blocked page: above the countdown during focus."
+  },
+  "timerFocusPaused": {
+    "message": "距离休息还有（已暂停）",
+    "description": "Blocked page: above the countdown, paused."
+  },
+  "openSite": {
+    "message": "打开网站",
+    "description": "Blocked page button."
+  },
+  "back": {
+    "message": "返回",
+    "description": "Blocked page button."
+  },
+  "titleFocus": {
+    "message": "回到工作吧 · $CLOCK$ — FocusMode",
+    "description": "Tab title during focus.",
+    "placeholders": {
+      "clock": {
+        "content": "$1",
+        "example": "12:34"
+      }
+    }
+  },
+  "headlineBreak": {
+    "message": "休息时间到了，可以打开这个网站了",
+    "description": "Blocked page headline during a break."
+  },
+  "siteHostBreak": {
+    "message": "休息结束前，$HOST$ 已解除屏蔽。",
+    "description": "Blocked page during a break.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "siteBreak": {
+    "message": "休息结束前，网站已解除屏蔽。",
+    "description": "Blocked page during a break, address unknown."
+  },
+  "timerBreak": {
+    "message": "休息剩余时间",
+    "description": "Blocked page: above the countdown during a break."
+  },
+  "timerBreakPaused": {
+    "message": "休息剩余时间（已暂停）",
+    "description": "Blocked page: above the countdown during a paused break."
+  },
+  "titleBreak": {
+    "message": "休息 · $CLOCK$ — FocusMode",
+    "description": "Tab title during a break.",
+    "placeholders": {
+      "clock": {
+        "content": "$1",
+        "example": "04:59"
+      }
+    }
+  },
+  "headlineIdle": {
+    "message": "专注结束了，可以打开这个网站了",
+    "description": "Blocked page headline after the session."
+  },
+  "siteHostNotBlocked": {
+    "message": "$HOST$ 目前没有被屏蔽。",
+    "description": "Blocked page.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "sitesNotBlocked": {
+    "message": "网站目前没有被屏蔽。",
+    "description": "Blocked page, address unknown."
+  },
+  "thisSiteNotBlocked": {
+    "message": "这个网站目前没有被屏蔽。",
+    "description": "Blocked page, address unknown."
+  },
+  "titleUnblocked": {
+    "message": "网站已解除屏蔽 — FocusMode",
+    "description": "Tab title when the site may open."
+  },
+  "headlineUnblocked": {
+    "message": "可以打开这个网站了",
+    "description": "Blocked page headline when the site is no longer on the list."
+  },
+  "titleOffline": {
+    "message": "屏蔽已关闭 — FocusMode",
+    "description": "Tab title without the app."
+  },
+  "focusLine1": {
+    "message": "这个标签页可以等一等。现在，你的任务更重要。",
+    "description": "Blocked page: one encouraging line, picked at random."
+  },
+  "focusLine2": {
+    "message": "再专注一会儿，休息越来越近了。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine3": {
+    "message": "一次只做一件事。现在：工作。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine4": {
+    "message": "表情包不会跑掉，休息也不会。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine5": {
+    "message": "回到刚才打开的内容吧，进展就在那里。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine6": {
+    "message": "在任务上迈出一小步，胜过长时间刷屏。",
+    "description": "Blocked page: encouraging line."
+  },
+  "lineBreak": {
+    "message": "离开屏幕一会儿，或者看看这里也行，休息时间属于你。",
+    "description": "Blocked page line during a break."
+  },
+  "lineIdle": {
+    "message": "没有进行中的专注时段，所以不会屏蔽任何内容。",
+    "description": "Blocked page line after the session."
+  },
+  "lineOffline": {
+    "message": "FocusMode 应用没有响应，所以网站目前没有被屏蔽。",
+    "description": "Blocked page line without the app."
+  },
+  "lineUnblocked": {
+    "message": "这个网站已经不在屏蔽列表中了。",
+    "description": "Blocked page line when the site left the list."
+  },
+  "statusBackToFocus": {
+    "message": "回到专注，网站已重新屏蔽。",
+    "description": "Screen reader notice."
+  },
+  "statusNoAddress": {
+    "message": "没有保存网站地址，请从历史记录或书签中重新打开它。",
+    "description": "Blocked page notice."
+  },
+  "statusReturnHost": {
+    "message": "马上带你回到 $HOST$…",
+    "description": "Blocked page notice before going back.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "statusReturn": {
+    "message": "马上带你回到网站…",
+    "description": "Blocked page notice before going back, address unknown."
+  },
+  "statusLoop": {
+    "message": "网站一直被送回这里。等浏览器不再屏蔽它时，请用“打开网站”按钮打开。",
+    "description": "Blocked page notice; names the \"openSite\" button."
+  },
+  "statusReturning": {
+    "message": "正在返回网站…",
+    "description": "Blocked page notice while going back."
+  }
+}

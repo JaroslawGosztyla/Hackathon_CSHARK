@@ -1,7 +1,9 @@
 // Toolbar popup: connection with the app, current phase with a live countdown, how many domains and regex
 // patterns are blocked (and the list itself).
 
-import { TEXT, formatClock, isBlocking, phaseLabel, watchState } from './common.js';
+import { TEXT, formatClock, isBlocking, localizePage, phaseLabel, t, watchState } from './common.js';
+
+localizePage(document);
 
 /** @param {string} id */
 function byId(id) {
@@ -24,7 +26,7 @@ const ui = {
   refresh: /** @type {HTMLButtonElement} */ (byId('refresh')),
 };
 
-const SKIPPED_HINT = 'Przeglądarka nie obsługuje tego wzorca albo przekroczono limit reguł — nie jest blokowany.';
+const SKIPPED_HINT = t('skippedHint');
 
 let renderedListKey = '';
 
@@ -67,7 +69,7 @@ function renderList(domains, patterns, skipped) {
 
 /** @param {number} total @param {number} skipped */
 function patternCountText(total, skipped) {
-  return skipped > 0 ? `${total} (pominięte: ${skipped})` : String(total);
+  return skipped > 0 ? t('patternCountSkipped', total, skipped) : String(total);
 }
 
 /**
@@ -77,15 +79,13 @@ function render({ state, remainingSecs, paused }) {
   if (state === null || !state.connected) {
     ui.main.dataset.mode = 'offline';
     setText(ui.connectionText, TEXT.disconnected);
-    setText(ui.phase, 'Blokada wyłączona');
+    setText(ui.phase, t('blockingOff'));
     setText(ui.clock, '--:--');
     setText(
       ui.hint,
-      state === null
-        ? 'Nie udało się odczytać stanu rozszerzenia. Spróbuj odświeżyć.'
-        : 'Uruchom aplikację FocusMode. Bez niej żadna strona nie jest blokowana.',
+      state === null ? t('hintReadFailed') : t('hintStartApp'),
     );
-    setText(ui.blocking, 'wyłączone');
+    setText(ui.blocking, t('stateOff'));
     setText(ui.domainCount, '—');
     setText(ui.patternCount, '—');
     ui.patternCount.title = '';
@@ -101,17 +101,14 @@ function render({ state, remainingSecs, paused }) {
 
   const blocking = isBlocking(state);
   if (phase === 'focus') {
-    setText(
-      ui.hint,
-      blocking ? 'pozostało do przerwy' : 'pozostało do przerwy · blokowanie stron wyłączone w aplikacji',
-    );
+    setText(ui.hint, blocking ? t('hintFocus') : t('hintFocusNoBlocking'));
   } else if (phase === 'break') {
-    setText(ui.hint, 'pozostało do końca przerwy · strony są odblokowane');
+    setText(ui.hint, t('hintBreak'));
   } else {
-    setText(ui.hint, 'Rozpocznij sesję skupienia w aplikacji FocusMode.');
+    setText(ui.hint, t('hintIdle'));
   }
 
-  setText(ui.blocking, blocking ? 'aktywne' : phase === 'break' ? 'wyłączone (przerwa)' : 'wyłączone');
+  setText(ui.blocking, blocking ? t('stateOn') : phase === 'break' ? t('stateOffBreak') : t('stateOff'));
   // The app sends the list only while it blocks, so outside focus both counts are 0.
   const patterns = Array.isArray(state.patterns) ? state.patterns : [];
   const skipped = Array.isArray(state.skippedPatterns) ? state.skippedPatterns : [];

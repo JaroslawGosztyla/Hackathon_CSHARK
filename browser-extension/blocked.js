@@ -12,23 +12,21 @@ import {
   hasUncheckablePatterns,
   hostOf,
   isBlocking,
+  localizePage,
   matchBlockedEntry,
   parseWebUrl,
+  t,
   watchState,
 } from './common.js';
 
-const FOCUS_LINES = [
-  'Ta karta poczeka. Twoje zadanie jest teraz ważniejsze.',
-  'Jeszcze trochę skupienia — przerwa jest coraz bliżej.',
-  'Jedna rzecz naraz. Teraz: praca.',
-  'Memy nie uciekną. Przerwa też nie.',
-  'Wróć do tego, co było otwarte przed chwilą — tam jest postęp.',
-  'Mały krok w zadaniu daje więcej niż długie przewijanie.',
-];
-const BREAK_LINE = 'Odejdź na chwilę od ekranu albo zajrzyj tutaj — przerwa jest Twoja.';
-const IDLE_LINE = 'Sesja skupienia nie trwa, więc nic nie jest blokowane.';
-const OFFLINE_LINE = 'Aplikacja FocusMode nie odpowiada, więc strony nie są teraz blokowane.';
-const UNBLOCKED_LINE = 'Ta strona nie jest już na liście blokowanych.';
+localizePage(document);
+
+/** One of these encouraging lines (_locales: focusLine1…6) is picked per page. */
+const FOCUS_LINES = [1, 2, 3, 4, 5, 6].map((n) => t(`focusLine${n}`));
+const BREAK_LINE = t('lineBreak');
+const IDLE_LINE = t('lineIdle');
+const OFFLINE_LINE = t('lineOffline');
+const UNBLOCKED_LINE = t('lineUnblocked');
 
 /** @param {string} id */
 function byId(id) {
@@ -55,7 +53,7 @@ const ui = {
 };
 
 /**
- * After "Wróć", close the tab only if no navigation started by then (history.go() silently does nothing
+ * After "Go back" (`back`), close the tab only if no navigation started by then (history.go() silently does nothing
  * when there is no entry that far back).
  */
 const LEAVE_FALLBACK_MS = 1200;
@@ -71,7 +69,7 @@ const AUTO_RETURN_POLLS = 2;
 const AUTO_RETURN_STORAGE_KEY = 'focusmode:auto-return';
 /**
  * The same address landing back here this soon after an automatic return means it is still being
- * redirected (a rule the worker could not remove); stop and leave the "Otwórz stronę" link instead.
+ * redirected (a rule the worker could not remove); stop and leave the "Open the site" link (`openSite`) instead.
  */
 const AUTO_RETURN_LOOP_MS = 20000;
 
@@ -106,7 +104,7 @@ let autoReturnTimer;
 let autoReturnStarted = false;
 /** The loop guard said no; stays until focus comes back. */
 let autoReturnRefused = false;
-/** The user chose where to go ("Wróć" or "Otwórz stronę"); never navigate on top of that. */
+/** The user chose where to go ("Go back" or "Open the site"); never navigate on top of that. */
 let userLeft = false;
 
 /** @returns {string | null} */
@@ -159,7 +157,7 @@ function renderMatch(state, mode) {
       : null;
   ui.match.hidden = match === null;
   if (match === null) return;
-  setText(ui.matchLabel, match.kind === 'domain' ? 'Domena z listy blokowanych:' : 'Wzorzec z listy blokowanych:');
+  setText(ui.matchLabel, match.kind === 'domain' ? t('matchDomain') : t('matchPattern'));
   const shown =
     match.entry.length > MAX_ENTRY_CHARS ? `${match.entry.slice(0, MAX_ENTRY_CHARS - 1)}…` : match.entry;
   setText(ui.matchEntry, shown);
@@ -182,44 +180,41 @@ function render(view) {
 
   switch (mode) {
     case 'focus':
-      setText(ui.headline, 'Wracaj do pracy');
+      setText(ui.headline, t('headlineFocus'));
       setText(ui.emoji, '🎧');
-      setText(ui.site, host !== null ? `Strona ${host} poczeka do przerwy.` : 'Ta strona poczeka do przerwy.');
-      setText(ui.timerLabel, view.paused ? 'Do przerwy zostało (pauza)' : 'Do przerwy zostało');
+      setText(ui.site, host !== null ? t('siteHostWaits', host) : t('siteWaits'));
+      setText(ui.timerLabel, view.paused ? t('timerFocusPaused') : t('timerFocus'));
       setText(ui.line, focusLine);
-      document.title = `Wracaj do pracy · ${clock} — FocusMode`;
+      document.title = t('titleFocus', clock);
       break;
     case 'break':
-      setText(ui.headline, 'Przerwa! Możesz otworzyć stronę');
+      setText(ui.headline, t('headlineBreak'));
       setText(ui.emoji, '☕');
-      setText(
-        ui.site,
-        host !== null ? `Strona ${host} jest odblokowana do końca przerwy.` : 'Strony są odblokowane do końca przerwy.',
-      );
-      setText(ui.timerLabel, view.paused ? 'Przerwa potrwa jeszcze (pauza)' : 'Przerwa potrwa jeszcze');
+      setText(ui.site, host !== null ? t('siteHostBreak', host) : t('siteBreak'));
+      setText(ui.timerLabel, view.paused ? t('timerBreakPaused') : t('timerBreak'));
       setText(ui.line, BREAK_LINE);
-      document.title = `Przerwa · ${clock} — FocusMode`;
+      document.title = t('titleBreak', clock);
       break;
     case 'idle':
-      setText(ui.headline, 'Koniec skupienia — możesz otworzyć stronę');
+      setText(ui.headline, t('headlineIdle'));
       setText(ui.emoji, '🌙');
-      setText(ui.site, host !== null ? `Strona ${host} nie jest teraz blokowana.` : 'Strony nie są teraz blokowane.');
+      setText(ui.site, host !== null ? t('siteHostNotBlocked', host) : t('sitesNotBlocked'));
       setText(ui.line, IDLE_LINE);
-      document.title = 'Strona odblokowana — FocusMode';
+      document.title = t('titleUnblocked');
       break;
     case 'unblocked':
-      setText(ui.headline, 'Możesz otworzyć stronę');
+      setText(ui.headline, t('headlineUnblocked'));
       setText(ui.emoji, '🌙');
-      setText(ui.site, host !== null ? `Strona ${host} nie jest teraz blokowana.` : 'Ta strona nie jest teraz blokowana.');
+      setText(ui.site, host !== null ? t('siteHostNotBlocked', host) : t('thisSiteNotBlocked'));
       setText(ui.line, UNBLOCKED_LINE);
-      document.title = 'Strona odblokowana — FocusMode';
+      document.title = t('titleUnblocked');
       break;
     default:
-      setText(ui.headline, 'Blokada wyłączona');
+      setText(ui.headline, t('blockingOff'));
       setText(ui.emoji, '🌙');
-      setText(ui.site, host !== null ? `Strona ${host} nie jest teraz blokowana.` : 'Strony nie są teraz blokowane.');
+      setText(ui.site, host !== null ? t('siteHostNotBlocked', host) : t('sitesNotBlocked'));
       setText(ui.line, OFFLINE_LINE);
-      document.title = 'Blokada wyłączona — FocusMode';
+      document.title = t('titleOffline');
       break;
   }
 
@@ -249,16 +244,16 @@ function render(view) {
  */
 function announce(mode, previous) {
   if (mode === 'focus') {
-    setText(ui.status, previous === 'loading' ? '' : 'Wracamy do skupienia — strona znowu jest blokowana.');
+    setText(ui.status, previous === 'loading' ? '' : t('statusBackToFocus'));
     return;
   }
   if (originalUrl === null) {
-    setText(ui.status, 'Adres strony nie został zapamiętany — otwórz ją ponownie z historii lub zakładek.');
+    setText(ui.status, t('statusNoAddress'));
     return;
   }
   if (autoReturnStarted || autoReturnRefused) return; // keeps "Wracasz na stronę…" or the loop-guard notice
   const host = displayHost();
-  setText(ui.status, host !== null ? `Za chwilę wrócisz na stronę ${host}…` : 'Za chwilę wrócisz na stronę…');
+  setText(ui.status, host !== null ? t('statusReturnHost', host) : t('statusReturn'));
 }
 
 // ---------------------------------------------------------------------------
@@ -303,14 +298,11 @@ function maybeAutoReturn() {
   if (target === null) return;
   if (!claimAutoReturn(target.href)) {
     autoReturnRefused = true;
-    setText(
-      ui.status,
-      'Strona wciąż trafia tutaj — otwórz ją przyciskiem „Otwórz stronę”, gdy przeglądarka przestanie ją blokować.',
-    );
+    setText(ui.status, t('statusLoop'));
     return;
   }
   autoReturnStarted = true;
-  setText(ui.status, 'Wracasz na stronę…');
+  setText(ui.status, t('statusReturning'));
   watcher?.stop();
   // replace(): the blocked page leaves the history, so "back" from the site does not land here again.
   location.replace(target.href);

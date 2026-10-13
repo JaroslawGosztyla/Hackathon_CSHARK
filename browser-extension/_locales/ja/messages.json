@@ -1,0 +1,374 @@
+{
+  "extName": {
+    "message": "FocusMode — 気が散るサイトをブロック",
+    "description": "Extension name (store list and chrome://extensions). \"FocusMode\" is never translated."
+  },
+  "extDescription": {
+    "message": "FocusMode アプリで集中している間、気が散るサイトを「作業に戻りましょう」に置き換えます。ローカルでのみ動作します。",
+    "description": "Extension description."
+  },
+  "lang": {
+    "message": "ja",
+    "description": "BCP 47 code of this translation, for <html lang> (not shown; zh_CN uses zh-Hans)."
+  },
+  "phaseIdle": {
+    "message": "セッションなし",
+    "description": "Phase name: no session running."
+  },
+  "phaseFocus": {
+    "message": "集中",
+    "description": "Phase name."
+  },
+  "phaseBreak": {
+    "message": "休憩",
+    "description": "Phase name."
+  },
+  "phaseUnknown": {
+    "message": "不明なフェーズ",
+    "description": "Phase name when the app sends an unknown one."
+  },
+  "connected": {
+    "message": "FocusMode アプリに接続済み",
+    "description": "Popup: connection status."
+  },
+  "disconnected": {
+    "message": "FocusMode アプリに接続されていません",
+    "description": "Popup: connection status."
+  },
+  "checking": {
+    "message": "接続を確認しています…",
+    "description": "Popup: connection status while checking."
+  },
+  "paused": {
+    "message": "一時停止中",
+    "description": "Popup: added after the phase name while paused."
+  },
+  "badgeOffline": {
+    "message": "FocusMode — アプリに接続されていません",
+    "description": "Toolbar button tooltip without the app."
+  },
+  "badgePhase": {
+    "message": "FocusMode — $PHASE$",
+    "description": "Toolbar button tooltip.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      }
+    }
+  },
+  "badgeTimer": {
+    "message": "FocusMode — $PHASE$、残り $TIME$",
+    "description": "Toolbar button tooltip with the time left.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      },
+      "time": {
+        "content": "$2",
+        "example": "12:34"
+      }
+    }
+  },
+  "badgeTimerBlocking": {
+    "message": "FocusMode — $PHASE$、残り $TIME$ · サイトをブロック中",
+    "description": "Toolbar button tooltip while sites are blocked.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      },
+      "time": {
+        "content": "$2",
+        "example": "12:34"
+      }
+    }
+  },
+  "factBlocking": {
+    "message": "サイトのブロック",
+    "description": "Popup: label of the blocking state."
+  },
+  "factDomains": {
+    "message": "ブロックするドメイン",
+    "description": "Popup: label of the number of blocked domains."
+  },
+  "factPatterns": {
+    "message": "パターン（正規表現）",
+    "description": "Popup: label of the number of regex patterns."
+  },
+  "showList": {
+    "message": "ブロックリストを表示",
+    "description": "Popup: expands the list of blocked entries."
+  },
+  "listNote": {
+    "message": "リストはファイル {{file}} で変更します。FocusMode アプリの設定から開けます。",
+    "description": "Popup note; {{file}} becomes the file name websiteblacklist.txt in code style (keep the marker, never translate the file name)."
+  },
+  "refresh": {
+    "message": "更新",
+    "description": "Popup button."
+  },
+  "privacy": {
+    "message": "この拡張機能は、このパソコン上の FocusMode アプリ（127.0.0.1）にだけ接続します。インターネットには何も送信しません。",
+    "description": "Popup privacy note."
+  },
+  "skippedHint": {
+    "message": "ブラウザーがこのパターンに対応していないか、ルール数の上限に達したため、ブロックされていません。",
+    "description": "Popup: tooltip of a pattern the browser rejected."
+  },
+  "patternCountSkipped": {
+    "message": "$TOTAL$（スキップ：$SKIPPED$）",
+    "description": "Popup: number of patterns with the skipped ones.",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "12"
+      },
+      "skipped": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "blockingOff": {
+    "message": "ブロックはオフです",
+    "description": "Heading when blocking is off (no app)."
+  },
+  "hintReadFailed": {
+    "message": "拡張機能の状態を読み取れませんでした。更新してみてください。",
+    "description": "Popup hint."
+  },
+  "hintStartApp": {
+    "message": "FocusMode アプリを起動してください。アプリがないと、どのサイトもブロックされません。",
+    "description": "Popup hint without the app."
+  },
+  "stateOff": {
+    "message": "オフ",
+    "description": "Popup: blocking state."
+  },
+  "stateOn": {
+    "message": "オン",
+    "description": "Popup: blocking state."
+  },
+  "stateOffBreak": {
+    "message": "オフ（休憩中）",
+    "description": "Popup: blocking state during a break."
+  },
+  "hintFocus": {
+    "message": "休憩までの残り時間",
+    "description": "Popup: under the countdown during focus."
+  },
+  "hintFocusNoBlocking": {
+    "message": "休憩までの残り時間 · アプリでサイトのブロックがオフになっています",
+    "description": "Popup: under the countdown when blocking is off in the app."
+  },
+  "hintBreak": {
+    "message": "休憩の残り時間 · サイトのブロックは解除中",
+    "description": "Popup: under the countdown during a break."
+  },
+  "hintIdle": {
+    "message": "FocusMode アプリで集中セッションを開始してください。",
+    "description": "Popup hint when no session runs."
+  },
+  "blockedPageTitle": {
+    "message": "作業に戻りましょう — FocusMode",
+    "description": "Tab title of the blocked page while it loads."
+  },
+  "headlineFocus": {
+    "message": "作業に戻りましょう",
+    "description": "Blocked page headline during focus."
+  },
+  "siteWaits": {
+    "message": "このサイトは休憩まで待ってくれます。",
+    "description": "Blocked page, address unknown."
+  },
+  "siteHostWaits": {
+    "message": "$HOST$ は休憩まで待ってくれます。",
+    "description": "Blocked page.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "matchLabel": {
+    "message": "ブロックリストの項目：",
+    "description": "Blocked page: label before the matching list entry."
+  },
+  "matchDomain": {
+    "message": "ブロックリストのドメイン：",
+    "description": "Blocked page: label before the matching domain."
+  },
+  "matchPattern": {
+    "message": "ブロックリストのパターン：",
+    "description": "Blocked page: label before the matching pattern."
+  },
+  "timerFocus": {
+    "message": "休憩までの残り時間",
+    "description": "Blocked page: above the countdown during focus."
+  },
+  "timerFocusPaused": {
+    "message": "休憩までの残り時間（一時停止中）",
+    "description": "Blocked page: above the countdown, paused."
+  },
+  "openSite": {
+    "message": "サイトを開く",
+    "description": "Blocked page button."
+  },
+  "back": {
+    "message": "戻る",
+    "description": "Blocked page button."
+  },
+  "titleFocus": {
+    "message": "作業に戻りましょう · $CLOCK$ — FocusMode",
+    "description": "Tab title during focus.",
+    "placeholders": {
+      "clock": {
+        "content": "$1",
+        "example": "12:34"
+      }
+    }
+  },
+  "headlineBreak": {
+    "message": "休憩です。サイトを開けます",
+    "description": "Blocked page headline during a break."
+  },
+  "siteHostBreak": {
+    "message": "休憩が終わるまで、$HOST$ のブロックは解除されています。",
+    "description": "Blocked page during a break.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "siteBreak": {
+    "message": "休憩が終わるまで、サイトのブロックは解除されています。",
+    "description": "Blocked page during a break, address unknown."
+  },
+  "timerBreak": {
+    "message": "休憩の残り時間",
+    "description": "Blocked page: above the countdown during a break."
+  },
+  "timerBreakPaused": {
+    "message": "休憩の残り時間（一時停止中）",
+    "description": "Blocked page: above the countdown during a paused break."
+  },
+  "titleBreak": {
+    "message": "休憩 · $CLOCK$ — FocusMode",
+    "description": "Tab title during a break.",
+    "placeholders": {
+      "clock": {
+        "content": "$1",
+        "example": "04:59"
+      }
+    }
+  },
+  "headlineIdle": {
+    "message": "集中が終わりました。サイトを開けます",
+    "description": "Blocked page headline after the session."
+  },
+  "siteHostNotBlocked": {
+    "message": "$HOST$ は今ブロックされていません。",
+    "description": "Blocked page.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "sitesNotBlocked": {
+    "message": "今はサイトがブロックされていません。",
+    "description": "Blocked page, address unknown."
+  },
+  "thisSiteNotBlocked": {
+    "message": "このサイトは今ブロックされていません。",
+    "description": "Blocked page, address unknown."
+  },
+  "titleUnblocked": {
+    "message": "サイトのブロック解除 — FocusMode",
+    "description": "Tab title when the site may open."
+  },
+  "headlineUnblocked": {
+    "message": "サイトを開けます",
+    "description": "Blocked page headline when the site is no longer on the list."
+  },
+  "titleOffline": {
+    "message": "ブロックはオフ — FocusMode",
+    "description": "Tab title without the app."
+  },
+  "focusLine1": {
+    "message": "このタブは待ってくれます。今はあなたのタスクのほうが大切です。",
+    "description": "Blocked page: one encouraging line, picked at random."
+  },
+  "focusLine2": {
+    "message": "もう少しだけ集中しましょう。休憩はだんだん近づいています。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine3": {
+    "message": "一度にひとつずつ。今は作業の時間です。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine4": {
+    "message": "ミームは逃げません。休憩も逃げません。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine5": {
+    "message": "さっきまで開いていたものに戻りましょう。進み具合はそこにあります。",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine6": {
+    "message": "長いスクロールより、タスクの小さな一歩。",
+    "description": "Blocked page: encouraging line."
+  },
+  "lineBreak": {
+    "message": "少し画面から離れるか、ここを見てもかまいません。休憩はあなたのものです。",
+    "description": "Blocked page line during a break."
+  },
+  "lineIdle": {
+    "message": "集中セッションが行われていないので、何もブロックされていません。",
+    "description": "Blocked page line after the session."
+  },
+  "lineOffline": {
+    "message": "FocusMode アプリが応答しないため、今はサイトがブロックされていません。",
+    "description": "Blocked page line without the app."
+  },
+  "lineUnblocked": {
+    "message": "このサイトはもうブロックリストに入っていません。",
+    "description": "Blocked page line when the site left the list."
+  },
+  "statusBackToFocus": {
+    "message": "集中に戻りました。サイトはまたブロックされています。",
+    "description": "Screen reader notice."
+  },
+  "statusNoAddress": {
+    "message": "サイトのアドレスが保存されていません。履歴かブックマークから、もう一度開いてください。",
+    "description": "Blocked page notice."
+  },
+  "statusReturnHost": {
+    "message": "まもなく $HOST$ に戻ります…",
+    "description": "Blocked page notice before going back.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "statusReturn": {
+    "message": "まもなくサイトに戻ります…",
+    "description": "Blocked page notice before going back, address unknown."
+  },
+  "statusLoop": {
+    "message": "サイトが何度もここに戻ってきます。ブラウザーがブロックを解除したら、「サイトを開く」で開いてください。",
+    "description": "Blocked page notice; names the \"openSite\" button."
+  },
+  "statusReturning": {
+    "message": "サイトに戻っています…",
+    "description": "Blocked page notice while going back."
+  }
+}

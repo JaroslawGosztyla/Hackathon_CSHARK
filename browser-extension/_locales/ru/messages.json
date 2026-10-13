@@ -1,0 +1,374 @@
+{
+  "extName": {
+    "message": "FocusMode — блокировщик отвлечений",
+    "description": "Extension name (store list and chrome://extensions). \"FocusMode\" is never translated."
+  },
+  "extDescription": {
+    "message": "Во время фокуса в приложении FocusMode заменяет отвлекающие сайты страницей «Вернемся к работе». Работает только локально.",
+    "description": "Extension description."
+  },
+  "lang": {
+    "message": "ru",
+    "description": "BCP 47 code of this translation, for <html lang> (not shown; zh_CN uses zh-Hans)."
+  },
+  "phaseIdle": {
+    "message": "Нет сессии",
+    "description": "Phase name: no session running."
+  },
+  "phaseFocus": {
+    "message": "Фокус",
+    "description": "Phase name."
+  },
+  "phaseBreak": {
+    "message": "Перерыв",
+    "description": "Phase name."
+  },
+  "phaseUnknown": {
+    "message": "Неизвестная фаза",
+    "description": "Phase name when the app sends an unknown one."
+  },
+  "connected": {
+    "message": "Подключено к приложению FocusMode",
+    "description": "Popup: connection status."
+  },
+  "disconnected": {
+    "message": "Нет подключения к приложению FocusMode",
+    "description": "Popup: connection status."
+  },
+  "checking": {
+    "message": "Проверка подключения…",
+    "description": "Popup: connection status while checking."
+  },
+  "paused": {
+    "message": "на паузе",
+    "description": "Popup: added after the phase name while paused."
+  },
+  "badgeOffline": {
+    "message": "FocusMode — нет подключения к приложению",
+    "description": "Toolbar button tooltip without the app."
+  },
+  "badgePhase": {
+    "message": "FocusMode — $PHASE$",
+    "description": "Toolbar button tooltip.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      }
+    }
+  },
+  "badgeTimer": {
+    "message": "FocusMode — $PHASE$, осталось $TIME$",
+    "description": "Toolbar button tooltip with the time left.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      },
+      "time": {
+        "content": "$2",
+        "example": "12:34"
+      }
+    }
+  },
+  "badgeTimerBlocking": {
+    "message": "FocusMode — $PHASE$, осталось $TIME$ · блокировка сайтов включена",
+    "description": "Toolbar button tooltip while sites are blocked.",
+    "placeholders": {
+      "phase": {
+        "content": "$1",
+        "example": "Focus"
+      },
+      "time": {
+        "content": "$2",
+        "example": "12:34"
+      }
+    }
+  },
+  "factBlocking": {
+    "message": "Блокировка сайтов",
+    "description": "Popup: label of the blocking state."
+  },
+  "factDomains": {
+    "message": "Заблокированные домены",
+    "description": "Popup: label of the number of blocked domains."
+  },
+  "factPatterns": {
+    "message": "Шаблоны (regex)",
+    "description": "Popup: label of the number of regex patterns."
+  },
+  "showList": {
+    "message": "Показать список блокировки",
+    "description": "Popup: expands the list of blocked entries."
+  },
+  "listNote": {
+    "message": "Список меняется в файле {{file}} — откройте его в настройках приложения FocusMode.",
+    "description": "Popup note; {{file}} becomes the file name websiteblacklist.txt in code style (keep the marker, never translate the file name)."
+  },
+  "refresh": {
+    "message": "Обновить",
+    "description": "Popup button."
+  },
+  "privacy": {
+    "message": "Расширение подключается только к приложению FocusMode на этом компьютере (127.0.0.1). Ничего не отправляется в интернет.",
+    "description": "Popup privacy note."
+  },
+  "skippedHint": {
+    "message": "Браузер не поддерживает этот шаблон или достигнут лимит правил — он не блокируется.",
+    "description": "Popup: tooltip of a pattern the browser rejected."
+  },
+  "patternCountSkipped": {
+    "message": "$TOTAL$ (пропущено: $SKIPPED$)",
+    "description": "Popup: number of patterns with the skipped ones.",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "12"
+      },
+      "skipped": {
+        "content": "$2",
+        "example": "2"
+      }
+    }
+  },
+  "blockingOff": {
+    "message": "Блокировка выключена",
+    "description": "Heading when blocking is off (no app)."
+  },
+  "hintReadFailed": {
+    "message": "Не удалось прочитать состояние расширения. Попробуйте обновить.",
+    "description": "Popup hint."
+  },
+  "hintStartApp": {
+    "message": "Запустите приложение FocusMode. Без него ни один сайт не блокируется.",
+    "description": "Popup hint without the app."
+  },
+  "stateOff": {
+    "message": "выключена",
+    "description": "Popup: blocking state."
+  },
+  "stateOn": {
+    "message": "включена",
+    "description": "Popup: blocking state."
+  },
+  "stateOffBreak": {
+    "message": "выключена (перерыв)",
+    "description": "Popup: blocking state during a break."
+  },
+  "hintFocus": {
+    "message": "осталось до перерыва",
+    "description": "Popup: under the countdown during focus."
+  },
+  "hintFocusNoBlocking": {
+    "message": "осталось до перерыва · блокировка сайтов выключена в приложении",
+    "description": "Popup: under the countdown when blocking is off in the app."
+  },
+  "hintBreak": {
+    "message": "осталось до конца перерыва · сайты разблокированы",
+    "description": "Popup: under the countdown during a break."
+  },
+  "hintIdle": {
+    "message": "Начните сессию фокуса в приложении FocusMode.",
+    "description": "Popup hint when no session runs."
+  },
+  "blockedPageTitle": {
+    "message": "Вернемся к работе — FocusMode",
+    "description": "Tab title of the blocked page while it loads."
+  },
+  "headlineFocus": {
+    "message": "Вернемся к работе",
+    "description": "Blocked page headline during focus."
+  },
+  "siteWaits": {
+    "message": "Этот сайт подождет до перерыва.",
+    "description": "Blocked page, address unknown."
+  },
+  "siteHostWaits": {
+    "message": "$HOST$ подождет до перерыва.",
+    "description": "Blocked page.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "matchLabel": {
+    "message": "В списке блокировки:",
+    "description": "Blocked page: label before the matching list entry."
+  },
+  "matchDomain": {
+    "message": "Домен из списка блокировки:",
+    "description": "Blocked page: label before the matching domain."
+  },
+  "matchPattern": {
+    "message": "Шаблон из списка блокировки:",
+    "description": "Blocked page: label before the matching pattern."
+  },
+  "timerFocus": {
+    "message": "До перерыва осталось",
+    "description": "Blocked page: above the countdown during focus."
+  },
+  "timerFocusPaused": {
+    "message": "До перерыва осталось (пауза)",
+    "description": "Blocked page: above the countdown, paused."
+  },
+  "openSite": {
+    "message": "Открыть сайт",
+    "description": "Blocked page button."
+  },
+  "back": {
+    "message": "Назад",
+    "description": "Blocked page button."
+  },
+  "titleFocus": {
+    "message": "Вернемся к работе · $CLOCK$ — FocusMode",
+    "description": "Tab title during focus.",
+    "placeholders": {
+      "clock": {
+        "content": "$1",
+        "example": "12:34"
+      }
+    }
+  },
+  "headlineBreak": {
+    "message": "Перерыв — можно открыть сайт",
+    "description": "Blocked page headline during a break."
+  },
+  "siteHostBreak": {
+    "message": "$HOST$ разблокирован до конца перерыва.",
+    "description": "Blocked page during a break.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "siteBreak": {
+    "message": "Сайты разблокированы до конца перерыва.",
+    "description": "Blocked page during a break, address unknown."
+  },
+  "timerBreak": {
+    "message": "До конца перерыва",
+    "description": "Blocked page: above the countdown during a break."
+  },
+  "timerBreakPaused": {
+    "message": "До конца перерыва (пауза)",
+    "description": "Blocked page: above the countdown during a paused break."
+  },
+  "titleBreak": {
+    "message": "Перерыв · $CLOCK$ — FocusMode",
+    "description": "Tab title during a break.",
+    "placeholders": {
+      "clock": {
+        "content": "$1",
+        "example": "04:59"
+      }
+    }
+  },
+  "headlineIdle": {
+    "message": "Фокус окончен — можно открыть сайт",
+    "description": "Blocked page headline after the session."
+  },
+  "siteHostNotBlocked": {
+    "message": "$HOST$ сейчас не заблокирован.",
+    "description": "Blocked page.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "sitesNotBlocked": {
+    "message": "Сайты сейчас не блокируются.",
+    "description": "Blocked page, address unknown."
+  },
+  "thisSiteNotBlocked": {
+    "message": "Этот сайт сейчас не заблокирован.",
+    "description": "Blocked page, address unknown."
+  },
+  "titleUnblocked": {
+    "message": "Сайт разблокирован — FocusMode",
+    "description": "Tab title when the site may open."
+  },
+  "headlineUnblocked": {
+    "message": "Можно открыть сайт",
+    "description": "Blocked page headline when the site is no longer on the list."
+  },
+  "titleOffline": {
+    "message": "Блокировка выключена — FocusMode",
+    "description": "Tab title without the app."
+  },
+  "focusLine1": {
+    "message": "Эта вкладка подождет. Ваша задача сейчас важнее.",
+    "description": "Blocked page: one encouraging line, picked at random."
+  },
+  "focusLine2": {
+    "message": "Еще немного фокуса — перерыв все ближе.",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine3": {
+    "message": "Одно дело за раз. Сейчас — работа.",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine4": {
+    "message": "Мемы никуда не убегут. Перерыв тоже.",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine5": {
+    "message": "Вернитесь к тому, что было открыто минуту назад, — там и есть прогресс.",
+    "description": "Blocked page: encouraging line."
+  },
+  "focusLine6": {
+    "message": "Маленький шаг в задаче дает больше, чем долгая прокрутка ленты.",
+    "description": "Blocked page: encouraging line."
+  },
+  "lineBreak": {
+    "message": "Отойдите ненадолго от экрана или загляните сюда — перерыв ваш.",
+    "description": "Blocked page line during a break."
+  },
+  "lineIdle": {
+    "message": "Сессия фокуса не идет, поэтому ничего не блокируется.",
+    "description": "Blocked page line after the session."
+  },
+  "lineOffline": {
+    "message": "Приложение FocusMode не отвечает, поэтому сайты сейчас не блокируются.",
+    "description": "Blocked page line without the app."
+  },
+  "lineUnblocked": {
+    "message": "Этого сайта больше нет в списке блокировки.",
+    "description": "Blocked page line when the site left the list."
+  },
+  "statusBackToFocus": {
+    "message": "Снова фокус — сайт снова заблокирован.",
+    "description": "Screen reader notice."
+  },
+  "statusNoAddress": {
+    "message": "Адрес сайта не сохранился — откройте его снова из истории или закладок.",
+    "description": "Blocked page notice."
+  },
+  "statusReturnHost": {
+    "message": "Сейчас вы вернетесь на $HOST$…",
+    "description": "Blocked page notice before going back.",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "reddit.com"
+      }
+    }
+  },
+  "statusReturn": {
+    "message": "Сейчас вы вернетесь на сайт…",
+    "description": "Blocked page notice before going back, address unknown."
+  },
+  "statusLoop": {
+    "message": "Сайт постоянно попадает сюда — откройте его кнопкой «Открыть сайт», когда браузер перестанет его блокировать.",
+    "description": "Blocked page notice; names the \"openSite\" button."
+  },
+  "statusReturning": {
+    "message": "Возвращаемся на сайт…",
+    "description": "Blocked page notice while going back."
+  }
+}

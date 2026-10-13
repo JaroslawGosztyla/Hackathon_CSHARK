@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pl">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,6 +9,7 @@
     <script type="module" src="popup.js"></script>
   </head>
   <body class="popup">
+    <!-- Texts: data-i18n keys in _locales/<language>/messages.json (filled by localizePage in common.js). -->
     <main class="popup__main" data-mode="loading">
       <header class="popup__header">
         <img src="icons/icon-32.png" alt="" width="28" height="28" />
@@ -17,7 +18,7 @@
 
       <p class="connection" id="connection" role="status" aria-live="polite">
         <span class="connection__dot" aria-hidden="true"></span>
-        <span id="connection-text">Sprawdzam połączenie…</span>
+        <span id="connection-text" data-i18n="checking"></span>
       </p>
 
       <section class="phase-card" aria-labelledby="phase">
@@ -28,34 +29,29 @@
 
       <dl class="facts">
         <div class="facts__row">
-          <dt>Blokowanie stron</dt>
+          <dt data-i18n="factBlocking"></dt>
           <dd id="blocking">—</dd>
         </div>
         <div class="facts__row">
-          <dt>Blokowane domeny</dt>
+          <dt data-i18n="factDomains"></dt>
           <dd id="domain-count">—</dd>
         </div>
         <div class="facts__row">
-          <dt>Wzorce (regex)</dt>
+          <dt data-i18n="factPatterns"></dt>
           <dd id="pattern-count">—</dd>
         </div>
       </dl>
 
       <details class="domains" id="domains" hidden>
-        <summary>Pokaż listę blokowanych</summary>
+        <summary data-i18n="showList"></summary>
         <ul class="domains__list" id="domain-list"></ul>
       </details>
 
-      <p class="popup__note">
-        Listę zmieniasz w pliku <code>websiteblacklist.txt</code> — otworzysz go w ustawieniach aplikacji FocusMode.
-      </p>
+      <p class="popup__note" data-i18n="listNote" data-i18n-code="websiteblacklist.txt"></p>
 
-      <button type="button" class="btn btn--ghost popup__refresh" id="refresh">Odśwież</button>
+      <button type="button" class="btn btn--ghost popup__refresh" id="refresh" data-i18n="refresh"></button>
 
-      <p class="popup__privacy">
-        Rozszerzenie łączy się tylko z aplikacją FocusMode na tym komputerze (127.0.0.1).
-        Nic nie jest wysyłane do internetu.
-      </p>
+      <p class="popup__privacy" data-i18n="privacy"></p>
     </main>
   </body>
 </html>

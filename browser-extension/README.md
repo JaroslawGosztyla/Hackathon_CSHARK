@@ -155,6 +155,13 @@ instalowanych spoza sklepu.
 - **Firefox** nie jest obsługiwany (rozszerzenie korzysta z API Chromium). Tam działa tylko awaryjne
   wykrywanie po tytule okna.
 
+## Języki
+
+Rozszerzenie mówi w języku interfejsu przeglądarki (`chrome.i18n`), niezależnie od języka aplikacji: angielski,
+polski, niemiecki, francuski, włoski, ukraiński, rosyjski, hiszpański, chiński (uproszczony) i japoński; dla innych
+języków — angielski. Teksty są w `_locales/<język>/messages.json` (wspólne terminy: `docs/i18n-glossary.md`), a strony
+wypełniają je z atrybutów `data-i18n` (`localizePage` w `common.js`).
+
 ## Pliki
 
 | Plik                                   | Rola                                                                     |
@@ -166,3 +173,4 @@ instalowanych spoza sklepu.
 | `popup.html`, `popup.css`, `popup.js`  | okienko po kliknięciu ikony                                              |
 | `theme.css`                            | wspólny motyw kolorystyczny                                              |
 | `icons/`                               | ikony 16/32/48/128 px                                                    |
+| `_locales/<język>/messages.json`       | teksty w 10 językach (chrome.i18n); `en` to język domyślny               |
