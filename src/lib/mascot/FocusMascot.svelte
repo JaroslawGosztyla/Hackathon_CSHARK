@@ -1,85 +1,172 @@
 <script lang="ts">
-  // Skupienie page: the axolotl beside the timer. Idle, it says the top "Co dalej?" suggestion (when a tool is
-  // connected and has one) or the good practice of the day; it winks at Start and cheers a completed cycle. During a
-  // break it moves into the break card (BreakCard), so one axolotl is on screen at a time.
-  // Absolutely positioned next to the timer ring: showing, hiding or talking never moves the page.
-  import { MediaQuery } from "svelte/reactivity";
+  // Skupienie page: the axolotl beside the timer, in every phase. Its face follows the session (`sessionMood`) and
+  // it reacts to what happens: a wink at Start, a smile when a break starts, a cheer for a completed cycle, an angry
+  // look at a blocked site. What it says appears in its bubble letter by letter (MascotSpeech):
+  //   idle   — a meeting that would fall into a break, else the top "Co dalej?" item, else the good practice of the day;
+  //   events — a short line at Start, when a break starts and when a cycle is completed (urgent, at once);
+  //   break  — the user's reminder for this break and the break tip (again after "Inna propozycja").
+  // Absolutely positioned in its own lane right of the ring, from the ring's top to its bottom line: the bubble grows
+  // upwards above the axolotl and scrolls inside when the text is long, so it never covers the ring or the buttons.
   import { untrack } from "svelte";
+  import { breakTip } from "$lib/state/breakTip.svelte";
+  import { calendar, calendarEnabled } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
+  import { nudge } from "$lib/state/nudge.svelte";
   import { session } from "$lib/state/session.svelte";
   import { work, workEnabled } from "$lib/state/work.svelte";
   import { strings } from "$lib/strings";
-  import { workingTipOfDay, workingTipText } from "$lib/tips";
+  import { breakTipText, workingTipOfDay, workingTipText } from "$lib/tips";
   import Axolotl from "./Axolotl.svelte";
   import { useMascot } from "./controller.svelte";
-  import { followCues, mascotEnabled } from "./cues.svelte";
+  import { followCues, mascotEnabled, sessionMood } from "./cues.svelte";
+  import type { MascotReaction } from "./frames";
+  import { useSpeech, type MascotLine } from "./speech.svelte";
   import SpeechBubble from "./SpeechBubble.svelte";
 
-  /** Beside the ring on a wide window; smaller, in the ring's corner and without the bubble on a narrow one. */
-  const SIZE_WIDE = 140;
-  const SIZE_NARROW = 84;
+  /** Height of the axolotl in CSS pixels. */
+  const SIZE = 140;
 
-  const narrow = new MediaQuery("(max-width: 719px)");
   const mascot = useMascot("main");
-  followCues(mascot, ["start", "cycle"]);
+  const speech = useSpeech(mascot);
 
   // Read once per mount, like the "Dobra praktyka" card below.
   const tip = workingTipOfDay(new Date());
 
-  const show = $derived(mascotEnabled(config.value) && session.phase !== "break");
+  const show = $derived(mascotEnabled(config.value));
+
+  function pick(lines: readonly string[]): string {
+    return lines[Math.floor(Math.random() * lines.length)] ?? lines[0] ?? "";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Face: the session decides the mood; events play a reaction on top of it.
+  // ---------------------------------------------------------------------------
+
+  const mood = $derived(sessionMood(session.snapshot));
+  $effect(() => {
+    const next = mood;
+    untrack(() => mascot.setMood(next));
+  });
+
+  const EVENT_LINES: Partial<Record<MascotReaction, () => readonly string[]>> = {
+    start: () => strings.mascot.startLines,
+    break: () => strings.mascot.breakLines,
+    cycle: () => strings.mascot.cycleLines,
+  };
+
+  followCues(mascot, ["start", "break", "cycle"], (reaction) => {
+    const lines = EVENT_LINES[reaction]?.();
+    if (show && lines) speech.say({ text: pick(lines), urgent: true, tag: "event" });
+  });
+
+  // Every nudge (a new object, also while the banner is already shown) gets an angry look.
+  $effect(() => {
+    if (nudge.current && show) untrack(() => mascot.react("nudge"));
+  });
+
+  // ---------------------------------------------------------------------------
+  // What it says about the current state (not urgent: at most one message per gap, the newest wins).
+  // ---------------------------------------------------------------------------
+
+  /** First meeting of an idle session's plan that falls into a break and has no choice yet. */
+  const undecided = $derived.by(() => {
+    if (!session.isIdle || !calendarEnabled(config.value)) return null;
+    return calendar.status?.conflicts.find((c) => c.choice === null) ?? null;
+  });
   const topItem = $derived(workEnabled(config.value) ? (work.status?.items[0] ?? null) : null);
-  const speech = $derived.by((): { label: string; text: string } | null => {
+
+  const idleLine = $derived.by((): MascotLine | null => {
     if (!session.isIdle) return null;
-    if (topItem) return { label: strings.mascot.nextUpLabel, text: strings.work.itemName(topItem.key, topItem.title) };
-    if (tip) return { label: strings.mascot.practiceLabel, text: workingTipText(tip) };
+    if (undecided) {
+      const subject = undecided.meeting.subject.trim() || strings.calendar.untitled;
+      return { label: strings.calendar.cardTitle, text: strings.mascot.conflictHint(subject), tag: "idle" };
+    }
+    if (topItem) {
+      return { label: strings.mascot.nextUpLabel, text: strings.work.itemName(topItem.key, topItem.title), tag: "idle" };
+    }
+    if (tip) return { label: strings.mascot.practiceLabel, text: workingTipText(tip), tag: "idle" };
     return null;
   });
 
-  /** The bubble is shown (it does not fit next to the ring on a narrow window). */
-  const bubble = $derived(show && !narrow.current ? speech : null);
+  const breakLine = $derived.by((): MascotLine | null => {
+    if (session.phase !== "break") return null;
+    const reminder = breakTip.reminder;
+    const current = breakTip.tip;
+    // The user's reminder on its own line (it often has no full stop), then the tip.
+    const text = [reminder, current ? breakTipText(current) : null].filter((part) => part !== null).join("\n");
+    if (text === "") return null;
+    const label = reminder ? strings.breakView.reminderLabel(session.snapshot.cycle) : strings.breakView.suggestionLabel;
+    return { label, text, tag: "break" };
+  });
 
-  // A string, so a refresh with the same text (e.g. the same top work item after a sync) does not talk again.
-  const bubbleText = $derived(bubble?.text ?? null);
-
-  // Says the text when the bubble appears or changes; stops when it goes away (Start, hidden mascot, narrow window).
+  /**
+   * The calendar and the work items answer right after the page opens: wait a moment, so the first message is the
+   * right one (not the good practice replaced by a meeting hint a gap later).
+   */
+  const SETTLE_MS = 1200;
+  let settled = $state(false);
   $effect(() => {
-    const text = bubbleText;
-    untrack(() => (text ? mascot.talk(text) : mascot.hush()));
+    const timer = setTimeout(() => (settled = true), SETTLE_MS);
+    return () => clearTimeout(timer);
+  });
+
+  /** Says `line` when its text changes; takes the tag's message back when there is nothing to say. */
+  function sayWhenChanged(tag: string, line: () => MascotLine | null): void {
+    let said: string | null = null;
+    $effect(() => {
+      const next = show && settled ? line() : null;
+      const text = next?.text ?? null;
+      if (text === said) return;
+      said = text;
+      untrack(() => (next ? speech.say(next) : speech.withdraw(tag)));
+    });
+  }
+
+  sayWhenChanged("idle", () => idleLine);
+  sayWhenChanged("break", () => breakLine);
+
+  // Hidden in Settings: no bubble either.
+  $effect(() => {
+    if (!show) untrack(() => speech.clear());
   });
 </script>
 
 {#if show}
   <div class="focus-mascot">
-    {#if bubble}
-      <div class="bubble-spot">
-        <SpeechBubble label={bubble.label} text={bubble.text} live />
-      </div>
-    {/if}
-    <Axolotl size={narrow.current ? SIZE_NARROW : SIZE_WIDE} frame={mascot.frame} sit />
+    <div class="bubble-spot">
+      <SpeechBubble {speech} />
+    </div>
+    <Axolotl size={SIZE} frame={mascot.frame} sit />
   </div>
 {/if}
 
 <style>
-  /* Next to the ring (its wrapper is the positioning box), feet on the ring's bottom line. */
+  /*
+   * The lane right of the ring (its wrapper is the positioning box), as tall as the ring: the axolotl stands on the
+   * ring's bottom line and the bubble fills the room above it. 150px is half the ring (TimerRing: 300px wide); the
+   * lane ends a little before the page gutter, so it fits from the minimum window width (960px) up.
+   */
   .focus-mascot {
     position: absolute;
-    left: calc(100% + 6px);
+    top: 0;
     bottom: 0;
+    left: calc(100% + 6px);
+    width: min(282px, calc(50vw - 150px - var(--gutter) - 36px));
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 10px;
+    pointer-events: none;
   }
 
-  /* Above the axolotl's head, growing upwards; never wider than the space right of the ring. */
+  /* Above the axolotl's head; shrinks (and the text scrolls inside the bubble) when the text is long. */
   .bubble-spot {
-    position: absolute;
-    left: 6px;
-    bottom: calc(100% + 10px);
-    width: max-content;
-    max-width: min(270px, calc(50vw - 150px - var(--gutter) - 20px));
-  }
-
-  @media (max-width: 719px) {
-    .focus-mascot {
-      left: auto;
-      right: -22px;
-    }
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 0;
+    max-width: calc(100% - 6px);
+    margin-left: 6px;
   }
 </style>

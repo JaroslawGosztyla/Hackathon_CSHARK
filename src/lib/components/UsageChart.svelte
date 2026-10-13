@@ -320,18 +320,4 @@
   .titles-hint {
     margin-top: 12px;
   }
-
-  @media (max-width: 560px) {
-    .chart > li {
-      grid-template-columns: 1fr;
-      gap: 4px;
-    }
-    .label {
-      text-align: left;
-    }
-    .tooltip {
-      left: 0;
-      max-width: 100%;
-    }
-  }
 </style>

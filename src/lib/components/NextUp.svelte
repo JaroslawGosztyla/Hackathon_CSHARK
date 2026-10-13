@@ -401,15 +401,4 @@
     align-self: flex-start;
     color: var(--accent-strong);
   }
-
-  @media (max-width: 560px) {
-    .item {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .actions {
-      flex-direction: row;
-      flex-wrap: wrap;
-    }
-  }
 </style>

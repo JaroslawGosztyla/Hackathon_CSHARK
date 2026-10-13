@@ -551,6 +551,24 @@ export const es: Strings = {
       "Un ajolote con auriculares junto al reloj, en los descansos, en el resumen y en las ventanas emergentes al cambiar de fase. Comparte buenas prácticas y sugerencias para el descanso.",
     practiceLabel: "Buena práctica",
     nextUpLabel: "¿Qué sigue?",
+    startLines: [
+      "¡Manos a la obra!",
+      "Empezamos. ¡Suerte!",
+      "Auriculares puestos — ¡vamos!",
+      "Una tarea a la vez. ¡Adelante!",
+    ],
+    breakLines: [
+      "¡Descanso! Aléjate un rato de la pantalla.",
+      "Hora de descansar. ¡Te lo has ganado!",
+      "Descanso — estira las piernas.",
+    ],
+    cycleLines: [
+      "¡Ciclo completado! Volvemos a concentrarnos.",
+      "¡Genial, otro ciclo hecho!",
+      "Vas muy bien. ¡Siguiente ronda!",
+    ],
+    conflictHint: (subject: string) =>
+      `Una reunión cae en un descanso: ${subject}. Decide abajo qué hacer con ella.`,
   },
 
   calendar: {

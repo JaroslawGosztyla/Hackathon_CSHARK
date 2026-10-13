@@ -551,6 +551,24 @@ export const de: Strings = {
       "Ein Axolotl mit Kopfhörern neben der Uhr, in der Pause, in der Zusammenfassung und in den Pop-ups beim Phasenwechsel. Er gibt Tipps für gute Gewohnheiten und Vorschläge für die Pause.",
     practiceLabel: "Gute Gewohnheit",
     nextUpLabel: "Was steht an?",
+    startLines: [
+      "Auf geht's!",
+      "Los geht's. Viel Erfolg!",
+      "Kopfhörer auf — und los!",
+      "Eine Aufgabe nach der anderen. Los!",
+    ],
+    breakLines: [
+      "Pause! Geh kurz weg vom Bildschirm.",
+      "Zeit für eine Pause. Verdient!",
+      "Pause — vertritt dir die Beine.",
+    ],
+    cycleLines: [
+      "Zyklus geschafft! Zurück zum Fokus.",
+      "Super, wieder ein Zyklus geschafft!",
+      "Läuft gut. Nächste Runde!",
+    ],
+    conflictHint: (subject: string) =>
+      `Eine Besprechung fällt in eine Pause: ${subject}. Entscheide unten, was damit passieren soll.`,
   },
 
   calendar: {

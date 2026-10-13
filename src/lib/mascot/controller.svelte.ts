@@ -1,27 +1,37 @@
-// Drives the frame of one mascot: rests (mood frame) with a random blink, plays reactions and vowel lip-sync.
+// Drives the frame of one mascot: rests on its mood frame (with a random blink, and a short smile now and then when
+// calm), plays reactions, and shows the mouth for the letter its speech bubble just revealed (speech.svelte.ts).
 // One controller per mascot on screen; `useMascot` ties it to the component that shows it.
 import type { MascotVariant } from "./assets.svelte";
 import {
   BLINK_DELAY_MS,
   blinkSteps,
-  lipSyncSteps,
+  idleFrame,
   moodFrame,
+  MOUTH_HOLD_MS,
   reactionSteps,
+  SMILE_DELAY_MS,
   type MascotMood,
   type MascotReaction,
   type MascotStep,
 } from "./frames";
 
-type TrackKind = "reaction" | "talk" | "blink";
-/** What `talk` plays: lip-sync steps, or (reduced motion) a smile held until `hush`. */
-type Speech = MascotStep[] | "still";
-
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   try {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   } catch {
     return false;
   }
+}
+
+function randomDelay(range: { min: number; max: number }): number {
+  return range.min + Math.random() * (range.max - range.min);
+}
+
+/** A sequence of frames playing now. */
+interface Track {
+  steps: MascotStep[];
+  index: number;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 export class MascotController {
@@ -30,151 +40,224 @@ export class MascotController {
   readonly variant: MascotVariant;
 
   #mood: MascotMood;
-  #kind: TrackKind | null = null;
-  #track: MascotStep[] = [];
-  #index = 0;
-  /** Speech waiting for the running reaction to end. */
-  #queued: Speech | null = null;
-  /** Reduced motion: smiling while the bubble talks, instead of lip-sync. */
+  /** A reaction (start, nudge, …): wins over everything else, and speech waits for it. */
+  #reaction: Track | null = null;
+  /** A blink or a calm smile: only while resting, dropped as soon as anything else happens. */
+  #ambient: Track | null = null;
+  /** The speech bubble is revealing text: the frame is the mouth of the last revealed letter. */
+  #talking = false;
+  #mouth: string | null = null;
+  /** The mouth for the latest letter; it shows once the current one has been held `MOUTH_HOLD_MS`. */
+  #mouthWanted: string | null = null;
+  #mouthShownAt = Number.NEGATIVE_INFINITY;
+  #mouthTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Reduced motion: smiling while the bubble is shown, instead of moving the mouth. */
   #still = false;
-  #stepTimer: ReturnType<typeof setTimeout> | null = null;
   #blinkTimer: ReturnType<typeof setTimeout> | null = null;
+  #smileTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Called once when the running reaction ends (speech waiting to start). */
+  #onFree = new Set<() => void>();
   #disposed = false;
 
   constructor(variant: MascotVariant, mood: MascotMood = "neutral") {
     this.variant = variant;
     this.#mood = mood;
     this.frame = moodFrame(variant, mood);
-    this.#scheduleBlink();
+    this.#scheduleAmbient();
   }
 
-  /** The face to rest on (e.g. sad in an empty summary, happy when the goal was done). */
+  /** A reaction is playing (speech waits for it to end). */
+  get reacting(): boolean {
+    return this.#reaction !== null;
+  }
+
+  /** The face to rest on (`sessionMood` on the Skupienie page, happy when the goal was done, …). */
   setMood(mood: MascotMood): void {
     if (this.#disposed || mood === this.#mood) return;
     this.#mood = mood;
-    if (this.#kind === null) this.frame = this.#rest();
-    this.#scheduleBlink();
+    this.#stopAmbient();
+    this.#render();
+    this.#scheduleAmbient();
   }
 
-  /** Plays a reaction now; it replaces whatever runs (speech waits for it only when `talk` comes after). */
+  /** Plays a reaction now; it replaces a running one. Speech that starts meanwhile waits for it (`whenFree`). */
   react(reaction: MascotReaction): void {
     if (this.#disposed) return;
-    this.#queued = null;
-    this.#still = false;
-    this.#play(reactionSteps(this.variant, reaction, prefersReducedMotion()), "reaction");
+    this.#stopAmbient();
+    this.#stopTrack(this.#reaction);
+    const steps = reactionSteps(this.variant, reaction, prefersReducedMotion());
+    if (steps.length === 0) {
+      this.#reaction = null;
+      this.#reactionEnded();
+      return;
+    }
+    this.#reaction = { steps, index: 0, timer: null };
+    this.#advance(this.#reaction);
+  }
+
+  /** Calls `fn` once no reaction plays (at once when none does). Returns a function that cancels the wait. */
+  whenFree(fn: () => void): () => void {
+    if (this.#disposed) return () => {};
+    if (this.#reaction === null) {
+      fn();
+      return () => {};
+    }
+    this.#onFree.add(fn);
+    return () => this.#onFree.delete(fn);
+  }
+
+  /** The speech bubble starts revealing text. */
+  startTalking(): void {
+    if (this.#disposed) return;
+    this.#talking = true;
+    this.#resetMouth();
+    this.#stopAmbient();
+    this.#render();
   }
 
   /**
-   * Says `text`: vowel lip-sync for at most a few seconds, then rest. A running reaction finishes first. With reduced
-   * motion there is no lip-sync: the mascot smiles until `hush` (call it when the bubble goes away).
+   * The frame for the letter just revealed (a mouth frame, or the idle frame for a closed mouth). A new mouth shows only
+   * after the current one was held `MOUTH_HOLD_MS`; letters revealed meanwhile only update which mouth comes next.
    */
-  talk(text: string): void {
-    if (this.#disposed || text.trim() === "") return;
-    const speech: Speech = prefersReducedMotion() ? "still" : lipSyncSteps(text, this.variant);
-    if (this.#kind === "reaction") {
-      this.#queued = speech;
+  setMouth(frame: string): void {
+    if (this.#disposed || !this.#talking) return;
+    this.#mouthWanted = frame;
+    if (this.#mouthTimer !== null) return;
+    const wait = this.#mouthShownAt + MOUTH_HOLD_MS - performance.now();
+    if (wait <= 0) {
+      this.#showMouth();
       return;
     }
-    this.#speak(speech);
+    this.#mouthTimer = setTimeout(() => {
+      this.#mouthTimer = null;
+      this.#showMouth();
+    }, wait);
   }
 
-  /** Stops talking (the bubble went away); a running reaction keeps playing. */
-  hush(): void {
-    if (this.#disposed) return;
-    this.#queued = null;
-    const wasTalking = this.#kind === "talk" || this.#still;
-    this.#still = false;
-    if (this.#kind === "talk") this.#stopTrack();
-    if (wasTalking && this.#kind === null) {
-      this.frame = this.#rest();
-      this.#scheduleBlink();
-    }
+  /** All the text is shown: back to the mood frame. */
+  stopTalking(): void {
+    if (this.#disposed || !this.#talking) return;
+    this.#talking = false;
+    this.#resetMouth();
+    this.#render();
+    this.#scheduleAmbient();
+  }
+
+  /** Reduced motion: smile while the bubble is shown (no mouth movement). */
+  setStill(still: boolean): void {
+    if (this.#disposed || still === this.#still) return;
+    this.#still = still;
+    this.#stopAmbient();
+    this.#render();
+    this.#scheduleAmbient();
   }
 
   destroy(): void {
     this.#disposed = true;
-    this.#stopTrack();
-    if (this.#blinkTimer !== null) clearTimeout(this.#blinkTimer);
+    this.#stopTrack(this.#reaction);
+    this.#stopTrack(this.#ambient);
+    this.#reaction = null;
+    this.#ambient = null;
+    this.#onFree.clear();
+    this.#resetMouth();
+    for (const timer of [this.#blinkTimer, this.#smileTimer]) if (timer !== null) clearTimeout(timer);
     this.#blinkTimer = null;
+    this.#smileTimer = null;
   }
 
-  #rest(): string {
-    return this.#still ? moodFrame(this.variant, "smile") : moodFrame(this.variant, this.#mood);
+  /** The frame when nothing plays: the mouth while talking, else the mood (a smile while the still bubble shows). */
+  #render(): void {
+    if (this.#reaction !== null || this.#ambient !== null) return;
+    if (this.#talking) this.frame = this.#mouth ?? idleFrame(this.variant);
+    else this.frame = this.#still ? moodFrame(this.variant, "smile") : moodFrame(this.variant, this.#mood);
   }
 
-  #speak(speech: Speech): void {
-    if (speech === "still") {
-      this.#stopTrack();
-      this.#still = true;
-      this.frame = this.#rest();
-      return;
-    }
-    this.#still = false;
-    this.#play(speech, "talk");
+  #showMouth(): void {
+    // A closed mouth (null) shows the idle frame: no change, no hold.
+    if (!this.#talking || this.#mouthWanted === (this.#mouth ?? idleFrame(this.variant))) return;
+    this.#mouth = this.#mouthWanted;
+    this.#mouthShownAt = performance.now();
+    this.#render();
   }
 
-  #play(steps: MascotStep[], kind: TrackKind): void {
-    this.#stopTrack();
-    if (steps.length === 0) {
-      this.#finish();
-      return;
-    }
-    this.#kind = kind;
-    this.#track = steps;
-    this.#index = 0;
-    this.#step();
+  #resetMouth(): void {
+    if (this.#mouthTimer !== null) clearTimeout(this.#mouthTimer);
+    this.#mouthTimer = null;
+    this.#mouth = null;
+    this.#mouthWanted = null;
+    this.#mouthShownAt = Number.NEGATIVE_INFINITY;
   }
 
-  #step(): void {
-    const current = this.#track[this.#index];
+  #advance(track: Track): void {
+    const current = track.steps[track.index];
     if (!current) {
-      this.#finish();
+      if (track === this.#reaction) {
+        this.#reaction = null;
+        this.#reactionEnded();
+      } else if (track === this.#ambient) {
+        this.#ambient = null;
+        this.#render();
+        this.#scheduleAmbient();
+      }
       return;
     }
     this.frame = current.frame;
-    this.#stepTimer = setTimeout(() => {
-      this.#stepTimer = null;
-      this.#index++;
-      this.#step();
+    track.timer = setTimeout(() => {
+      track.timer = null;
+      track.index++;
+      this.#advance(track);
     }, current.ms);
   }
 
-  #stopTrack(): void {
-    if (this.#stepTimer !== null) clearTimeout(this.#stepTimer);
-    this.#stepTimer = null;
-    this.#kind = null;
-    this.#track = [];
-    this.#index = 0;
+  #reactionEnded(): void {
+    const waiting = [...this.#onFree];
+    this.#onFree.clear();
+    for (const fn of waiting) fn();
+    this.#render();
+    this.#scheduleAmbient();
   }
 
-  #finish(): void {
-    this.#kind = null;
-    this.#track = [];
-    const next = this.#queued;
-    this.#queued = null;
-    if (next !== null) {
-      this.#speak(next);
-      if (this.#kind !== null) return;
-    }
-    this.frame = this.#rest();
-    this.#scheduleBlink();
+  #stopTrack(track: Track | null): void {
+    if (track?.timer != null) clearTimeout(track.timer);
+    if (track) track.timer = null;
   }
 
-  #scheduleBlink(): void {
-    if (this.#blinkTimer !== null) clearTimeout(this.#blinkTimer);
-    this.#blinkTimer = null;
+  #stopAmbient(): void {
+    if (this.#ambient === null) return;
+    this.#stopTrack(this.#ambient);
+    this.#ambient = null;
+    this.#render();
+  }
+
+  /** Resting with the eyes open (blinks and calm smiles play only then). */
+  #resting(): boolean {
+    return this.#reaction === null && this.#ambient === null && !this.#talking && !this.#still;
+  }
+
+  #scheduleAmbient(): void {
     if (this.#disposed) return;
-    const delay = BLINK_DELAY_MS.min + Math.random() * (BLINK_DELAY_MS.max - BLINK_DELAY_MS.min);
-    this.#blinkTimer = setTimeout(() => {
-      this.#blinkTimer = null;
-      // Blink frames have a neutral face: only from rest with a neutral mood, and never with reduced motion.
-      const resting = this.#kind === null && !this.#still && this.#mood === "neutral";
-      if (resting && !prefersReducedMotion() && document.visibilityState === "visible") {
-        this.#play(blinkSteps(this.variant), "blink");
-      } else {
-        this.#scheduleBlink();
-      }
-    }, delay);
+    if (this.#blinkTimer === null) {
+      this.#blinkTimer = setTimeout(() => {
+        this.#blinkTimer = null;
+        // Blink frames have a neutral face: only from rest with a neutral or calm mood, never with reduced motion.
+        if (this.#mood === "neutral" || this.#mood === "calm") this.#playAmbient(blinkSteps(this.variant));
+        this.#scheduleAmbient();
+      }, randomDelay(BLINK_DELAY_MS));
+    }
+    if (this.#smileTimer === null && this.#mood === "calm") {
+      this.#smileTimer = setTimeout(() => {
+        this.#smileTimer = null;
+        if (this.#mood === "calm") this.#playAmbient(reactionSteps(this.variant, "smile", false));
+        this.#scheduleAmbient();
+      }, randomDelay(SMILE_DELAY_MS));
+    }
+  }
+
+  #playAmbient(steps: MascotStep[]): void {
+    if (!this.#resting() || steps.length === 0 || prefersReducedMotion()) return;
+    if (document.visibilityState !== "visible") return;
+    this.#ambient = { steps, index: 0, timer: null };
+    this.#advance(this.#ambient);
   }
 }
 

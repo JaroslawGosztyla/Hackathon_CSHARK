@@ -264,20 +264,4 @@
     flex-grow: 1;
     background: color-mix(in srgb, var(--text) 6%, transparent);
   }
-
-  @media (max-width: 640px) {
-    .entry,
-    .entry.with-goal {
-      grid-template-columns: 1fr auto;
-    }
-    .goal-cell {
-      grid-column: 1 / -1;
-    }
-    .goal-cell.none {
-      display: none;
-    }
-    .mini {
-      grid-column: 1 / -1;
-    }
-  }
 </style>

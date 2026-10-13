@@ -1,77 +1,35 @@
-<script lang="ts" module>
-  import { SvelteMap } from "svelte/reactivity";
-
-  /** "Inna propozycja" steps per break (session + cycle), so leaving the page and coming back keeps the tip. */
-  const offsets = new SvelteMap<string, number>();
-</script>
-
 <script lang="ts">
   // Break screen: the user's own reminder for this break (if any), then one research-based tip picked
-  // deterministically per (session, break) — the phase popup shows the same one.
-  import { untrack } from "svelte";
+  // deterministically per (session, break) — the phase popup shows the same one (`breakTip` store). The axolotl
+  // beside the timer says them in its bubble (FocusMascot), so the card shows the cup.
   import SourceLink from "$lib/components/SourceLink.svelte";
-  import Axolotl from "$lib/mascot/Axolotl.svelte";
-  import { useMascot } from "$lib/mascot/controller.svelte";
-  import { followCues, mascotEnabled } from "$lib/mascot/cues.svelte";
-  import { config, reminderForBreak } from "$lib/state/config.svelte";
+  import { breakTip } from "$lib/state/breakTip.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
-  import { breakTipText, CATEGORY_ICON, pickBreakTip } from "$lib/tips";
+  import { breakTipText, CATEGORY_ICON } from "$lib/tips";
 
   const b = strings.breakView;
-  /** Height of the axolotl in the card, in CSS pixels. */
-  const MASCOT_SIZE = 104;
 
   const snap = $derived(session.snapshot);
-  const breakKey = $derived(`${snap.sessionId ?? ""}:${snap.cycle}`);
-  const offset = $derived(offsets.get(breakKey) ?? 0);
-
-  const reminder = $derived.by(() => {
-    const cfg = config.value;
-    return cfg ? reminderForBreak(cfg.breakReminders, cfg.repeatReminders, snap.cycle) : null;
-  });
-  const tip = $derived(pickBreakTip(snap.sessionId, snap.cycle, snap.phaseTotalSecs, offset));
-
-  // The axolotl sits in the card during a break (FocusMascot leaves the timer): it smiles when the break starts and
-  // says the reminder and the tip (lip-sync), again after "Inna propozycja".
-  const mascotOn = $derived(mascotEnabled(config.value));
-  const mascot = useMascot("main");
-  followCues(mascot, ["break"]);
-  const speech = $derived([reminder, tip ? breakTipText(tip) : null].filter((part): part is string => part !== null).join(" "));
-
-  $effect(() => {
-    const text = mascotOn ? speech : "";
-    untrack(() => (text ? mascot.talk(text) : mascot.hush()));
-  });
-
-  function another(): void {
-    // Only the current break's entry matters; older ones are dropped so the map stays tiny.
-    for (const key of offsets.keys()) if (key !== breakKey) offsets.delete(key);
-    offsets.set(breakKey, offset + 1);
-  }
+  const reminder = $derived(breakTip.reminder);
+  const tip = $derived(breakTip.tip);
 </script>
 
 <section class="card break-card" aria-labelledby="break-title">
-  {#if mascotOn}
-    <div class="mascot" aria-hidden="true">
-      <Axolotl size={MASCOT_SIZE} frame={mascot.frame} />
-    </div>
-  {:else}
-    <div class="illustration" aria-hidden="true">
-      <svg viewBox="0 0 64 64" width="64" height="64">
-        <path d="M14 26h30v14a12 12 0 0 1-12 12h-6a12 12 0 0 1-12-12z" style="fill: var(--break)" opacity="0.9" />
-        <path d="M44 30h4a6 6 0 0 1 0 12h-4" fill="none" style="stroke: var(--break)" stroke-width="3" />
-        <path
-          class="steam"
-          d="M24 20c-2-3 2-5 0-8M32 20c-2-3 2-5 0-8"
-          fill="none"
-          style="stroke: var(--text-2)"
-          stroke-width="2"
-          stroke-linecap="round"
-        />
-      </svg>
-    </div>
-  {/if}
+  <div class="illustration" aria-hidden="true">
+    <svg viewBox="0 0 64 64" width="64" height="64">
+      <path d="M14 26h30v14a12 12 0 0 1-12 12h-6a12 12 0 0 1-12-12z" style="fill: var(--break)" opacity="0.9" />
+      <path d="M44 30h4a6 6 0 0 1 0 12h-4" fill="none" style="stroke: var(--break)" stroke-width="3" />
+      <path
+        class="steam"
+        d="M24 20c-2-3 2-5 0-8M32 20c-2-3 2-5 0-8"
+        fill="none"
+        style="stroke: var(--text-2)"
+        stroke-width="2"
+        stroke-linecap="round"
+      />
+    </svg>
+  </div>
   <div class="content">
     <h2 id="break-title">{b.title}</h2>
     <p class="secondary">{b.lead}</p>
@@ -97,7 +55,7 @@
         {/if}
       </div>
       <div class="row actions">
-        <button type="button" class="btn btn-sm" onclick={another}>{b.another}</button>
+        <button type="button" class="btn btn-sm" onclick={() => breakTip.another()}>{b.another}</button>
         {#if tip.source}
           <SourceLink url={tip.source} label={b.source} aria={b.sourceAria} />
         {/if}
@@ -123,14 +81,6 @@
     height: 84px;
     border-radius: 24px;
     background: var(--break-soft);
-  }
-
-  .mascot {
-    flex: none;
-    display: grid;
-    place-items: end center;
-    width: 112px;
-    padding-top: 4px;
   }
 
   .steam {
@@ -215,11 +165,5 @@
 
   .actions {
     gap: 14px;
-  }
-
-  @media (max-width: 560px) {
-    .break-card {
-      flex-direction: column;
-    }
   }
 </style>

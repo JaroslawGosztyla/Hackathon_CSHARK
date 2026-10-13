@@ -284,14 +284,4 @@
     padding-top: 12px;
     border-top: 1px solid var(--border);
   }
-
-  @media (max-width: 520px) {
-    .entry {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-
-    .num {
-      grid-column: 1 / -1;
-    }
-  }
 </style>

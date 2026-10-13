@@ -572,6 +572,26 @@ export const pl = {
     /** Bubble labels on the Skupienie page. */
     practiceLabel: "Dobra praktyka",
     nextUpLabel: "Co dalej?",
+    /** Said by the axolotl beside the timer (one line picked at random each time): Start, a break, a completed cycle. */
+    startLines: [
+      "Do dzieła!",
+      "Zaczynamy. Powodzenia!",
+      "Słuchawki na uszy — działamy!",
+      "Jedno zadanie naraz. Lecimy!",
+    ],
+    breakLines: [
+      "Przerwa! Odejdź na chwilę od ekranu.",
+      "Czas na przerwę. Zasłużoną!",
+      "Przerwa — rozprostuj nogi.",
+    ],
+    cycleLines: [
+      "Cykl zaliczony! Wracamy do skupienia.",
+      "Brawo, kolejny cykl za nami!",
+      "Świetnie idzie. Następna runda!",
+    ],
+    /** Idle: a meeting would fall into a break of a session started now (the card below has the choices). */
+    conflictHint: (subject: string) =>
+      `Spotkanie w czasie przerwy: ${subject}. Zdecyduj poniżej, co z nim zrobić.`,
   },
 
   calendar: {

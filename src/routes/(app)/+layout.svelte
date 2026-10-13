@@ -415,22 +415,6 @@
     margin: 0 auto;
   }
 
-  @media (max-width: 560px) {
-    .tagline {
-      display: none;
-    }
-    nav {
-      order: 3;
-      width: 100%;
-      justify-content: space-between;
-    }
-    nav a {
-      flex: 1;
-      text-align: center;
-      padding: 7px 8px;
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .highlight.slide,
     nav a {

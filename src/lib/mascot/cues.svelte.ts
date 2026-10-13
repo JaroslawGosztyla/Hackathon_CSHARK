@@ -1,10 +1,10 @@
 // Session events for the mascots of the main window. `app.ts` emits a cue when a phase changes or a session ends;
 // every mascot on screen that cares about it reacts. A mascot that appears right after the event (the summary page
-// opens after Stop, the break card after the break starts) still reacts while the cue is fresh.
+// opens after Stop, the Skupienie page is opened again right after Start) still reacts while the cue is fresh.
 import { untrack } from "svelte";
-import type { Config, PhaseChange, SessionSummary } from "$lib/types";
+import type { Config, PhaseChange, SessionSnapshot, SessionSummary } from "$lib/types";
 import type { MascotController } from "./controller.svelte";
-import type { MascotReaction } from "./frames";
+import type { MascotMood, MascotReaction } from "./frames";
 
 /** A cue older than this is not played by a mascot that appears later. */
 const FRESH_MS = 4000;
@@ -40,16 +40,36 @@ export function cueForSummary(summary: SessionSummary, focusSecs: number): Masco
   return focusSecs > 0 && summary.focusedSecs < focusSecs ? "stopEarly" : null;
 }
 
-/** Makes `controller` react to fresh cues of the given kinds. Call while a component initialises. */
-export function followCues(controller: MascotController, accept: readonly MascotReaction[]): void {
+/**
+ * Makes `controller` react to fresh cues of the given kinds (and calls `onCue`, e.g. to say something about it).
+ * Call while a component initialises.
+ */
+export function followCues(
+  controller: MascotController,
+  accept: readonly MascotReaction[],
+  onCue?: (reaction: MascotReaction) => void,
+): void {
   let seen = 0;
   $effect(() => {
     const cue = mascotCues.last;
     if (cue === null || cue.id === seen) return;
     seen = cue.id;
     if (!accept.includes(cue.reaction) || performance.now() - cue.at > FRESH_MS) return;
-    untrack(() => controller.react(cue.reaction));
+    untrack(() => {
+      controller.react(cue.reaction);
+      onCue?.(cue.reaction);
+    });
   });
+}
+
+/**
+ * The face the main window's mascot rests on, from the session alone (one source of truth): no session → neutral;
+ * a meeting extends the focus or holds the break → neutral; paused → sad; break → smile; focus running → calm.
+ */
+export function sessionMood(snap: SessionSnapshot): MascotMood {
+  if (snap.phase === "idle" || snap.meetingHold !== null) return "neutral";
+  if (snap.paused) return "sad";
+  return snap.phase === "break" ? "smile" : "calm";
 }
 
 /** `Config.showMascot`, on by default (also when talking to a shell build from before the setting). */

@@ -16,8 +16,8 @@
         "title": "FocusMode",
         "width": 1100,
         "height": 760,
-        "minWidth": 400,
-        "minHeight": 600,
+        "minWidth": 960,
+        "minHeight": 640,
         "center": true,
         "visible": false,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"

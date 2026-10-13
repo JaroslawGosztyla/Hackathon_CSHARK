@@ -547,6 +547,24 @@ export const it: Strings = {
       "Un assolotto con le cuffie accanto all'orologio, durante le pause, nel riepilogo e nei pop-up al cambio di fase. Condivide buone pratiche e suggerimenti per le pause.",
     practiceLabel: "Buona pratica",
     nextUpLabel: "Cosa fare dopo?",
+    startLines: [
+      "Al lavoro!",
+      "Si comincia. In bocca al lupo!",
+      "Cuffie in testa — si parte!",
+      "Un compito alla volta. Via!",
+    ],
+    breakLines: [
+      "Pausa! Allontanati un attimo dallo schermo.",
+      "È ora di una pausa. Te la sei meritata!",
+      "Pausa — sgranchisciti le gambe.",
+    ],
+    cycleLines: [
+      "Ciclo completato! Si torna a concentrarsi.",
+      "Ottimo, un altro ciclo fatto!",
+      "Va alla grande. Prossimo giro!",
+    ],
+    conflictHint: (subject: string) =>
+      `Una riunione cade durante una pausa: ${subject}. Decidi qui sotto cosa farne.`,
   },
 
   calendar: {

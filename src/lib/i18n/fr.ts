@@ -553,6 +553,24 @@ export const fr: Strings = {
       "Un axolotl avec un casque audio à côté de l'horloge, pendant les pauses, dans le résumé et dans les fenêtres pop-up au changement de phase. Il partage de bonnes pratiques et des suggestions pour la pause.",
     practiceLabel: "Bonne pratique",
     nextUpLabel: "Et ensuite ?",
+    startLines: [
+      "Au travail !",
+      "C'est parti. Bon courage !",
+      "Casque sur les oreilles — on y va !",
+      "Une tâche à la fois. Allons-y !",
+    ],
+    breakLines: [
+      "Pause ! Éloignez-vous un peu de l'écran.",
+      "C'est l'heure de la pause. Bien méritée !",
+      "Pause — dégourdissez-vous les jambes.",
+    ],
+    cycleLines: [
+      "Cycle terminé ! On se reconcentre.",
+      "Bravo, encore un cycle de fait !",
+      "Ça avance bien. Prochain tour !",
+    ],
+    conflictHint: (subject: string) =>
+      `Une réunion tombe pendant une pause : ${subject}. Choisissez ci-dessous quoi en faire.`,
   },
 
   calendar: {

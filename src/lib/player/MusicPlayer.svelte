@@ -466,18 +466,6 @@
     cursor: pointer;
   }
 
-  @media (max-width: 560px) {
-    .volume input {
-      width: 72px;
-    }
-    .btn-label {
-      display: none;
-    }
-    .art {
-      display: none;
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .eq i {
       animation: none;

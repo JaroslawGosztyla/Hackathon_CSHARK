@@ -10,6 +10,8 @@
   import { useMascot } from "$lib/mascot/controller.svelte";
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
   import type { MascotReaction } from "$lib/mascot/frames";
+  import RevealText from "$lib/mascot/RevealText.svelte";
+  import { useSpeech } from "$lib/mascot/speech.svelte";
   import { formatDuration, formatTimeRange } from "$lib/format";
   import { launcherList, strings } from "$lib/strings";
   import { breakTipText, CATEGORY_ICON, pickBreakTip } from "$lib/tips";
@@ -24,8 +26,15 @@
   };
   /** Buttons of a meeting reminder; "Przypomnij później" only while `remindLaterAllowed` (not on the last one). */
   const MEETING_CHOICES: readonly MeetingChoice[] = ["extend", "pauseAtBreak", "ignore", "remindLater"];
-  /** Exit animation before the shell hides the window. */
+  /** Exit animation before the shell hides the window (card only / the peeking axolotl dips first). */
   const LEAVE_MS = 180;
+  const LEAVE_MS_PEEK = 420;
+  /**
+   * The peeking axolotl rises from below the card's edge and lands with a squash-and-stretch "boing" (CSS
+   * `peek-enter`, 900 ms); with reduced motion it only fades in (200 ms). It speaks once it has settled.
+   */
+  const ENTER_MS = 900;
+  const ENTER_MS_REDUCED = 200;
   /** The shell closes the popup after a button; if it does not, the popup closes itself after this delay. */
   const AFTER_ACTION_MS = 1000;
 
@@ -82,7 +91,7 @@
   let deadline = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let frame = 0;
-  let reducedMotion = false;
+  let reducedMotion = $state(false);
 
   const kind = $derived(info?.kind ?? null);
   const visible = $derived(kind !== null && !hidden);
@@ -160,8 +169,27 @@
 
   const mascotOn = $derived(mascotEnabled(cfg));
   const peek = useMascot("peek");
-  /** Revision whose popup the axolotl already reacted to. */
-  let spokenRevision = -1;
+  /** Persistent: the message is the popup's content, it stays after the last letter. */
+  const speech = useSpeech(peek, { persist: true });
+  /** The peeking axolotl (not the small one in a meeting reminder's title) rises into the card. */
+  const peeking = $derived(mascotOn && kind !== null && kind !== "meetingReminder");
+  /** Revision whose popup the axolotl already reacted to / was asked to say (and the text it was asked to say). */
+  let reactedRevision = -1;
+  let spokenRevision = $state(-1);
+  let spokenText = "";
+  /** Revision whose entrance has finished (the axolotl stands still, ready to speak). */
+  let settledRevision = $state(-1);
+  /**
+   * Revision whose message no longer waits for the axolotl: its first letter showed (after the entrance and the
+   * reaction), or the text changed meanwhile and is shown plainly.
+   */
+  let revealedRevision = $state(-1);
+  /** The axolotl will say the message of this popup but has not started: the letters stay hidden until then. */
+  const speechPending = $derived(
+    mascotOn && info !== null && message.trim() !== "" && revealedRevision !== info.revision,
+  );
+  /** The message is still appearing: the line clamp's "…" stays hidden until the last letter is shown. */
+  const messageRevealing = $derived(mascotOn && (speechPending || (speech.line !== null && !speech.complete)));
 
   function reactionFor(popup: PopupInfo): MascotReaction | null {
     if (!popup.kind) return null;
@@ -169,20 +197,56 @@
     return KIND_REACTION[popup.kind];
   }
 
+  // A new popup: the reaction starts while the axolotl rises (speech waits for both).
   $effect(() => {
     const current = info;
     if (!current?.kind || !visible || !mascotOn) {
-      untrack(() => peek.hush());
+      untrack(() => speech.clear());
       return;
     }
-    if (current.revision === spokenRevision) return;
-    spokenRevision = current.revision;
-    const text = [title, message].filter((part) => part.trim() !== "").join(". ");
+    if (current.revision === reactedRevision) return;
+    reactedRevision = current.revision;
     untrack(() => {
+      speech.clear();
       const reaction = reactionFor(current);
       if (reaction) peek.react(reaction);
-      peek.talk(text);
     });
+  });
+
+  // The entrance of this popup's axolotl ends (a meeting reminder has none).
+  $effect(() => {
+    const current = info;
+    if (!current?.kind || !visible) return;
+    const revision = current.revision;
+    const delay = peeking ? (reducedMotion ? ENTER_MS_REDUCED : ENTER_MS) : 0;
+    const timer = setTimeout(() => (settledRevision = revision), delay);
+    return () => clearTimeout(timer);
+  });
+
+  // Once settled, it says the message letter by letter (the title is shown at once).
+  $effect(() => {
+    const current = info;
+    const text = message;
+    if (!current?.kind || !visible || !mascotOn || settledRevision !== current.revision) return;
+    if (spokenRevision === current.revision) {
+      // The text changed afterwards (e.g. saving a choice failed): show it plainly.
+      if (text !== spokenText) {
+        untrack(() => speech.clear());
+        revealedRevision = current.revision;
+      }
+      return;
+    }
+    spokenRevision = current.revision;
+    spokenText = text;
+    if (text.trim() !== "") untrack(() => speech.say({ text, urgent: true }));
+  });
+
+  // The speech waits for the reaction to end: the letters stay hidden until the first one shows.
+  $effect(() => {
+    const current = info;
+    if (current !== null && speech.line !== null && spokenRevision === current.revision) {
+      revealedRevision = current.revision;
+    }
   });
 
   function anyShield(c: Config): boolean {
@@ -328,7 +392,7 @@
     if (!current || !current.kind || hidden || leaving) return;
     stopCountdown();
     leaving = true;
-    await sleep(LEAVE_MS);
+    await sleep(peeking ? (reducedMotion ? ENTER_MS_REDUCED : LEAVE_MS_PEEK) : LEAVE_MS);
     if (info?.revision !== current.revision) return;
     try {
       await api.popupAction("dismiss");
@@ -420,7 +484,7 @@
 
 {#if visible && info && kind}
   {#key info.revision}
-    <div class="popup kind-{kind}" class:leaving role="status" aria-live="polite" aria-atomic="true" {@attach holdWhileInside}>
+    <div class="popup kind-{kind}" class:leaving class:with-peek={peeking} role="status" aria-live="polite" aria-atomic="true" {@attach holdWhileInside}>
       {#if kind !== "meetingReminder"}
         {#if mascotOn}
           <div class="peek" aria-hidden="true">
@@ -448,9 +512,14 @@
           class:reminder
           class:single={kind === "breakStarted" || heldReminder !== null}
           class:failed={choiceFailed}
+          class:revealing={messageRevealing}
           title={message}
         >
-          {#if reminder}<span class="sr-only">{p.reminderPrefix} </span>{/if}{message}
+          {#if reminder}<span class="sr-only">{p.reminderPrefix} </span>{/if}<RevealText
+            text={message}
+            speech={mascotOn ? speech : null}
+            waiting={speechPending}
+          />
         </p>
         {#if kind === "breakStarted"}
           <p class="tip" title={tip ? breakTipText(tip) : undefined}>
@@ -552,6 +621,11 @@
     animation: slide-out 0.18s ease-in forwards;
   }
 
+  /* The axolotl dips below the edge first (peek-leave), then the card slides away. */
+  .popup.leaving.with-peek {
+    animation: slide-out 0.18s ease-in 0.22s forwards;
+  }
+
   .icon {
     position: relative;
     display: grid;
@@ -582,9 +656,77 @@
   }
 
   /* The axolotl peeks over the card's bottom-left edge (into the padding, so it touches the edge). */
+  /*
+   * Enters from below the card's bottom edge (clipped by the card): a smooth ease-out rise that ends stretched a few
+   * pixels above its place, then squashes, rebounds a little and rests — scaled from its bottom centre, like a spring.
+   */
   .peek {
     align-self: end;
     margin: 0 -4px -14px -12px;
+    transform-origin: 50% 100%;
+    animation: peek-enter 900ms both;
+  }
+
+  .popup.leaving .peek {
+    animation: peek-leave 250ms cubic-bezier(0.5, 0, 0.75, 0) forwards;
+  }
+
+  @keyframes peek-enter {
+    0% {
+      transform: translateY(calc(100% + 18px)) scale(1, 1);
+      animation-timing-function: cubic-bezier(0.2, 0.75, 0.3, 1);
+    }
+    61% {
+      transform: translateY(-5px) scale(0.88, 1.14);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+    }
+    77% {
+      transform: translateY(0) scale(1.06, 0.94);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+    }
+    90% {
+      transform: translateY(-1px) scale(0.98, 1.02);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+    }
+    100% {
+      transform: none;
+    }
+  }
+
+  @keyframes peek-leave {
+    from {
+      transform: none;
+    }
+    to {
+      transform: translateY(calc(100% + 18px)) scale(0.96, 1.04);
+    }
+  }
+
+  @keyframes peek-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes peek-fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+
+  /* Reduced motion: a plain 200 ms fade, no movement (wins over app.css's global "no animation" rule on purpose). */
+  @media (prefers-reduced-motion: reduce) {
+    .peek {
+      animation-name: peek-fade-in !important;
+      animation-duration: 200ms !important;
+      animation-timing-function: ease-out !important;
+    }
+
+    .popup.leaving .peek {
+      animation-name: peek-fade-out !important;
+      animation-duration: 200ms !important;
+      animation-timing-function: ease-in !important;
+    }
   }
 
   /* A meeting reminder needs the whole width for its buttons: a small axolotl peeks over the title instead. */
@@ -630,7 +772,8 @@
   }
 
   .message {
-    color: var(--text-2);
+    --message-color: var(--text-2);
+    color: var(--message-color);
     font-size: 0.84rem;
     line-height: 1.4;
     display: -webkit-box;
@@ -647,12 +790,21 @@
   }
 
   .message.reminder {
-    color: var(--text);
+    --message-color: var(--text);
     font-weight: 650;
   }
 
   .message.failed {
-    color: var(--danger);
+    --message-color: var(--danger);
+  }
+
+  /* The clamp's "…" is drawn in the paragraph's colour: hidden while the letters still appear. */
+  .message.revealing {
+    color: transparent;
+  }
+
+  .message.revealing :global(.reveal) {
+    color: var(--message-color);
   }
 
   .tip {

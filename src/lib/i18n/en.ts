@@ -538,6 +538,24 @@ export const en: Strings = {
       "An axolotl in headphones next to the clock, during breaks, in the summary and in the pop-ups when the phase changes. It shares good practices and break suggestions.",
     practiceLabel: "Good practice",
     nextUpLabel: "What's next?",
+    startLines: [
+      "Let's do this!",
+      "Here we go. Good luck!",
+      "Headphones on — let's go!",
+      "One task at a time. Off we go!",
+    ],
+    breakLines: [
+      "Break time! Step away from the screen for a bit.",
+      "Time for a break. You've earned it!",
+      "Break — stretch your legs.",
+    ],
+    cycleLines: [
+      "Cycle done! Back to focus.",
+      "Nice, another cycle behind us!",
+      "Going great. Next round!",
+    ],
+    conflictHint: (subject: string) =>
+      `A meeting falls during a break: ${subject}. Decide below what to do with it.`,
   },
 
   calendar: {

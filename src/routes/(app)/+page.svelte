@@ -233,12 +233,4 @@
     color: var(--accent-strong);
     font-weight: 600;
   }
-
-  @media (max-width: 560px) {
-    .controls :global(.btn-lg) {
-      min-height: 46px;
-      padding: 10px 18px;
-      font-size: 1rem;
-    }
-  }
 </style>
