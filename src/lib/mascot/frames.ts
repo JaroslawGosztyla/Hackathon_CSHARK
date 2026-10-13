@@ -105,18 +105,29 @@ const FRAME_SETS: Record<MascotVariant, FrameSet> = {
   },
 };
 
-/** Vowels (Polish letters included) and the mouth they show. */
-const VOWELS: Record<string, Mouth> = {
-  a: "a",
-  ą: "a",
-  e: "e",
-  ę: "e",
-  i: "i",
-  y: "y",
-  o: "o",
-  ó: "o",
-  u: "u",
-};
+/** Vowels of the UI languages (Latin with diacritics, Cyrillic) and the mouth they show. */
+const VOWELS: Record<string, Mouth> = Object.fromEntries(
+  (
+    [
+      ["a", "aąàáâäãая"],
+      ["e", "eęèéêëеєэ"],
+      ["i", "iìíîïиії"],
+      ["y", "yы"],
+      ["o", "oóòôöõоё"],
+      ["u", "uùúûüуюů"],
+    ] as const
+  ).flatMap(([mouth, letters]) => Array.from(letters, (letter) => [letter, mouth] as const)),
+);
+
+/** A Chinese or Japanese character is a syllable on its own: each one opens the mouth, in turn. */
+const CJK_SYLLABLE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+const CJK_MOUTHS: readonly Mouth[] = ["a", "o", "e", "u", "i"];
+
+function mouthFor(ch: string): Mouth | undefined {
+  const vowel = VOWELS[ch.toLowerCase()];
+  if (vowel !== undefined || !CJK_SYLLABLE.test(ch)) return vowel;
+  return CJK_MOUTHS[(ch.codePointAt(0) ?? 0) % CJK_MOUTHS.length];
+}
 
 const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
 
@@ -166,7 +177,7 @@ export function lipSyncSteps(text: string, variant: MascotVariant): MascotStep[]
   let consonants = 0;
   for (const ch of text) {
     if (elapsed + CHAR_MS > TALK_MAX_MS) break;
-    const vowel = VOWELS[ch.toLowerCase()];
+    const vowel = mouthFor(ch);
     let frame: string;
     if (vowel !== undefined) {
       frame = set.mouth[vowel];

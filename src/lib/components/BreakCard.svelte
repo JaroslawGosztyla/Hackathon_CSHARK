@@ -16,7 +16,7 @@
   import { config, reminderForBreak } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
-  import { CATEGORY_ICON, pickBreakTip, STRETCH_FOOTNOTE } from "$lib/tips";
+  import { breakTipText, CATEGORY_ICON, pickBreakTip } from "$lib/tips";
 
   const b = strings.breakView;
   /** Height of the axolotl in the card, in CSS pixels. */
@@ -37,7 +37,7 @@
   const mascotOn = $derived(mascotEnabled(config.value));
   const mascot = useMascot("main");
   followCues(mascot, ["break"]);
-  const speech = $derived([reminder, tip?.pl ?? null].filter((part): part is string => part !== null).join(" "));
+  const speech = $derived([reminder, tip ? breakTipText(tip) : null].filter((part): part is string => part !== null).join(" "));
 
   $effect(() => {
     const text = mascotOn ? speech : "";
@@ -91,9 +91,9 @@
           <span class="sep" aria-hidden="true">·</span>
           <span class="muted-label">{b.suggestionLabel}</span>
         </p>
-        <p class="text">{tip.pl}</p>
+        <p class="text">{breakTipText(tip)}</p>
         {#if tip.category === "stretch"}
-          <p class="footnote">{STRETCH_FOOTNOTE.pl}</p>
+          <p class="footnote">{strings.stretchFootnote}</p>
         {/if}
       </div>
       <div class="row actions">

@@ -10,7 +10,7 @@
     connectLabel?: string;
   }
 
-  let { connectLabel = strings.settings.teamsConnect }: Props = $props();
+  let { connectLabel }: Props = $props();
 
   const shieldsCfg = $derived(config.value?.shields ?? null);
   const status = $derived(teams.status);
@@ -109,7 +109,7 @@
           disabled={!configured || teams.connecting || prompt !== null}
           onclick={() => teams.connect()}
         >
-          {connectLabel}
+          {connectLabel ?? strings.settings.teamsConnect}
         </button>
       {/if}
     </div>

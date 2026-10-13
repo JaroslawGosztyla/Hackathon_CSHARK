@@ -5,6 +5,7 @@
   import { browser } from "$app/environment";
   import * as api from "$lib/api";
   import { EVENTS } from "$lib/bindings/names";
+  import { followLanguage } from "$lib/i18n/index.svelte";
   import { applyTheme, DEFAULT_THEME, isTheme, readCachedTheme } from "$lib/themes";
 
   let { children }: { children: Snippet } = $props();
@@ -16,11 +17,15 @@
     applyTheme(readCachedTheme() ?? DEFAULT_THEME);
   }
 
-  /** The popup follows the app theme: read on load and again for every popup (the window can be reused). */
+  /**
+   * The popup follows the app theme and language: read on load and again for every popup (the window can be reused).
+   * Until then it uses the ones the main window cached (`$lib/themes`, `$lib/i18n`).
+   */
   async function refreshTheme(): Promise<void> {
     try {
       const cfg = await api.getConfig();
       if (isTheme(cfg.theme)) applyTheme(cfg.theme);
+      followLanguage(cfg.language);
     } catch (e) {
       const err = api.toAppError(e);
       if (err.code !== api.ERR_NO_SHELL) console.warn(`[FocusMode] ${err.code}: ${err.message}`);

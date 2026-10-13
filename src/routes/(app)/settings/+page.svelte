@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getAutostart, getSystemLanguage, setAutostart, toAppError, ERR_NO_SHELL } from "$lib/api";
+  import { getAutostart, setAutostart, toAppError, ERR_NO_SHELL } from "$lib/api";
   import BlocklistFile from "$lib/components/BlocklistFile.svelte";
   import BreakReminders from "$lib/components/BreakReminders.svelte";
   import CalendarSettings from "$lib/components/CalendarSettings.svelte";
@@ -17,32 +17,39 @@
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
-  import { LANGUAGES, strings } from "$lib/strings";
-  import type { Config, Language } from "$lib/types";
+  import {
+    isUiLanguage,
+    knownSystemLanguage,
+    LANGUAGE_NAMES,
+    LANGUAGES,
+    loadSystemLanguage,
+    strings,
+  } from "$lib/i18n/index.svelte";
+  import type { Config } from "$lib/types";
 
   /** `closeToTray` as a select value: null = ask at the first X. */
   type CloseChoice = "ask" | "tray" | "quit";
   const CLOSE_CHOICES: readonly CloseChoice[] = ["ask", "tray", "quit"];
-  const closeLabels: Record<CloseChoice, string> = {
+  const closeLabels = $derived<Record<CloseChoice, string>>({
     ask: strings.settings.closeAsk,
     tray: strings.settings.closeTray,
     quit: strings.settings.closeQuit,
-  };
+  });
 
   const cfg = $derived(config.value);
 
   let autostart = $state<boolean | null>(null);
   let autostartBusy = $state(false);
-  /** OS UI language as resolved by the shell, for the "Systemowy (…)" option. */
-  let systemLanguage = $state<Language | null>(null);
 
   const closeChoice = $derived.by((): CloseChoice => {
     const v = cfg?.closeToTray;
     return v === true ? "tray" : v === false ? "quit" : "ask";
   });
-  const systemLanguageName = $derived(
-    systemLanguage && systemLanguage !== "system" ? strings.languageNames[systemLanguage] : null,
-  );
+  /** OS UI language as resolved by the shell, for the "System (…)" option (native name). */
+  const systemLanguageName = $derived.by(() => {
+    const lang = knownSystemLanguage();
+    return lang ? LANGUAGE_NAMES[lang] : null;
+  });
 
   onMount(() => {
     getAutostart()
@@ -51,13 +58,8 @@
         const err = toAppError(e);
         if (err.code !== ERR_NO_SHELL) toasts.error(err);
       });
-    getSystemLanguage()
-      .then((lang) => (systemLanguage = lang))
-      .catch((e: unknown) => {
-        // Only the label of the "system" option depends on it.
-        const err = toAppError(e);
-        if (err.code !== ERR_NO_SHELL) console.warn(`[FocusMode] ${err.code}: ${err.message}`);
-      });
+    // Only the label of the "system" option depends on it (failures are logged by `$lib/i18n`).
+    void loadSystemLanguage();
   });
 
   function setCloseChoice(value: string) {
@@ -66,9 +68,9 @@
     set((c) => (c.closeToTray = choice === "ask" ? null : choice === "tray"));
   }
 
+  /** Saves `config.language`; the app layout follows it, so the whole UI switches at once. */
   function setLanguage(value: string) {
-    const lang = value === "system" ? "system" : LANGUAGES.find((l) => l === value);
-    if (lang) set((c) => (c.language = lang));
+    if (value === "system" || isUiLanguage(value)) set((c) => (c.language = value));
   }
 
   function set(mutate: (c: Config) => void) {
@@ -330,7 +332,7 @@
         >
           <option value="system">{strings.settings.languageSystem(systemLanguageName)}</option>
           {#each LANGUAGES as lang (lang)}
-            <option value={lang} {lang}>{strings.languageNames[lang]}</option>
+            <option value={lang} lang={lang === "zh" ? "zh-Hans" : lang}>{LANGUAGE_NAMES[lang]}</option>
           {/each}
         </select>
       </div>

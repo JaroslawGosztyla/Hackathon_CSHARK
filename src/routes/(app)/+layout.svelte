@@ -12,6 +12,7 @@
   import NudgeBanner from "$lib/components/NudgeBanner.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import { formatClock } from "$lib/format";
+  import { followLanguage } from "$lib/i18n/index.svelte";
   import MusicPlayer from "$lib/player/MusicPlayer.svelte";
   import { initAppState } from "$lib/state/app";
   import { config } from "$lib/state/config.svelte";
@@ -26,9 +27,24 @@
 
   /** In tab order: the highlight, the background pan and the page slide all follow this order. */
   const links = [
-    { href: "/", label: strings.nav.focus },
-    { href: "/summary", label: strings.nav.summary },
-    { href: "/settings", label: strings.nav.settings },
+    {
+      href: "/",
+      get label() {
+        return strings.nav.focus;
+      },
+    },
+    {
+      href: "/summary",
+      get label() {
+        return strings.nav.summary;
+      },
+    },
+    {
+      href: "/settings",
+      get label() {
+        return strings.nav.settings;
+      },
+    },
   ];
 
   const path = $derived(page.url.pathname);
@@ -48,6 +64,14 @@
   });
 
   $effect.pre(() => applyTheme(theme));
+
+  // ---------------------------------------------------------------------------
+  // Language: config.language (`system` = the OS UI language); until the config arrives, the language of the last run
+  // (`$lib/i18n` applies it before the first paint). A switch in Settings applies here at once.
+  // ---------------------------------------------------------------------------
+
+  const languageChoice = $derived(config.value?.language);
+  $effect.pre(() => followLanguage(languageChoice));
 
   // ---------------------------------------------------------------------------
   // Navigation: one sliding highlight, a background pan by tab index, page slides (View Transitions).

@@ -2,13 +2,13 @@
   // Idle Skupienie page: one good working practice per day, plus the Polish screen-work note in the Polish UI only.
   import SourceLink from "$lib/components/SourceLink.svelte";
   import { strings } from "$lib/strings";
-  import { PL_LEGAL_NOTE, workingTipOfDay } from "$lib/tips";
+  import { PL_LEGAL_NOTE, showsPolishLegalNote, workingTipOfDay, workingTipText } from "$lib/tips";
 
   const t = strings.idleTips;
 
   // Read once per mount: the page is shown again after every session, which is often enough to roll over at midnight.
   const tip = workingTipOfDay(new Date());
-  const showLegal = strings.locale === "pl";
+  const showLegal = $derived(showsPolishLegalNote());
 </script>
 
 {#if tip}
@@ -27,14 +27,14 @@
         </svg>
         {t.practiceTitle}
       </h2>
-      <p class="text">{tip.pl}</p>
+      <p class="text">{workingTipText(tip)}</p>
       <SourceLink url={tip.source} label={t.source} aria={t.sourceAria} />
     </div>
 
     {#if showLegal}
       <div class="block legal">
         <h3 class="label">{t.lawTitle}</h3>
-        <p class="text small-text">{PL_LEGAL_NOTE.pl}</p>
+        <p class="text small-text"><span lang="pl">{PL_LEGAL_NOTE.text}</span></p>
         <SourceLink url={PL_LEGAL_NOTE.source} label={t.source} aria={t.sourceAria} />
       </div>
     {/if}

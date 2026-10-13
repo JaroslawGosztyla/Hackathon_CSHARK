@@ -16,6 +16,17 @@
       } catch (e) {
         // Storage unavailable: the default (dark) colours until the config arrives.
       }
+      // The UI language of the last run (cached by $lib/i18n, which switches the texts themselves).
+      try {
+        var cachedLanguage = localStorage.getItem("focusmode.language");
+        if (/^(en|pl|de|fr|it|uk|ru|es|ja)$/.test(cachedLanguage || "")) {
+          document.documentElement.setAttribute("lang", cachedLanguage);
+        } else if (cachedLanguage === "zh") {
+          document.documentElement.setAttribute("lang", "zh-Hans");
+        }
+      } catch (e) {
+        // Storage unavailable: $lib/i18n sets the language when it loads.
+      }
     </script>
     <style>
       html {

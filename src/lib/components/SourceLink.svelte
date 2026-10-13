@@ -6,7 +6,7 @@
 
   interface Props {
     url: string;
-    /** Visible word before the host, e.g. "Źródło". */
+    /** Visible text before the host, with its punctuation and spacing (fr "Source : ", zh "来源："). */
     label: string;
     /** Accessible name built from the host. */
     aria: (host: string) => string;
@@ -26,7 +26,7 @@
 </script>
 
 <button type="button" class="source" aria-label={aria(host)} title={url} onclick={open}>
-  {label}: <span class="host">{host}</span>
+  {label}<span class="host">{host}</span>
   <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
     <path
       d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10M9 2h5v5M14 2L7.5 8.5"

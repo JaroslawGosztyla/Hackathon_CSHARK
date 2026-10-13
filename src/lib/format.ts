@@ -1,7 +1,6 @@
-// Formatting helpers for times, dates and process names (Polish locale).
-import { strings } from "./strings";
-
-const LOCALE = "pl-PL";
+// Formatting helpers for times, dates and process names, in the Intl locale of the language in use
+// (`intlLocale` is reactive, so formatted values re-render when the language changes).
+import { intlLocale, strings } from "./i18n/index.svelte";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -22,14 +21,40 @@ export function formatDuration(totalSecs: number): string {
   return m === 0 ? strings.time.hours(h) : strings.time.hoursMinutes(h, m);
 }
 
-const timeFmt = new Intl.DateTimeFormat(LOCALE, { hour: "2-digit", minute: "2-digit" });
-const dateFmt = new Intl.DateTimeFormat(LOCALE, { day: "numeric", month: "short", year: "numeric" });
-const shortDateFmt = new Intl.DateTimeFormat(LOCALE, { day: "numeric", month: "short" });
-const pctFmt = new Intl.NumberFormat(LOCALE, { style: "percent", maximumFractionDigits: 0 });
+const DATE_OPTIONS = {
+  time: { hour: "2-digit", minute: "2-digit" },
+  date: { day: "numeric", month: "short", year: "numeric" },
+  shortDate: { day: "numeric", month: "short" },
+} satisfies Record<string, Intl.DateTimeFormatOptions>;
 
-export const formatTimeOfDay = (ms: number) => timeFmt.format(new Date(ms));
-export const formatDate = (ms: number) => dateFmt.format(new Date(ms));
-export const formatShortDate = (ms: number) => shortDateFmt.format(new Date(ms));
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+const percentFormats = new Map<string, Intl.NumberFormat>();
+
+/** One cached formatter per locale and kind (creating Intl formatters is slow). */
+function dateFormat(kind: keyof typeof DATE_OPTIONS): Intl.DateTimeFormat {
+  const locale = intlLocale();
+  const key = `${locale}|${kind}`;
+  let format = dateFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, DATE_OPTIONS[kind]);
+    dateFormats.set(key, format);
+  }
+  return format;
+}
+
+function percentFormat(): Intl.NumberFormat {
+  const locale = intlLocale();
+  let format = percentFormats.get(locale);
+  if (!format) {
+    format = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 });
+    percentFormats.set(locale, format);
+  }
+  return format;
+}
+
+export const formatTimeOfDay = (ms: number) => dateFormat("time").format(new Date(ms));
+export const formatDate = (ms: number) => dateFormat("date").format(new Date(ms));
+export const formatShortDate = (ms: number) => dateFormat("shortDate").format(new Date(ms));
 
 /** `12 paź 2026, 09:15–10:45` (end date omitted when on the same day). */
 export function formatSpan(startMs: number, endMs: number): string {
@@ -74,9 +99,10 @@ export function formatDayNear(ms: number, nowMs: number = Date.now()): string {
 
 /** Fraction 0..1 → `54%`. Values that round to 0 but are not 0 show as `<1%`. */
 export function formatPercent(fraction: number): string {
-  if (!Number.isFinite(fraction) || fraction <= 0) return pctFmt.format(0);
-  if (fraction < 0.005) return `<${pctFmt.format(0.01)}`;
-  return pctFmt.format(fraction);
+  const pct = percentFormat();
+  if (!Number.isFinite(fraction) || fraction <= 0) return pct.format(0);
+  if (fraction < 0.005) return `<${pct.format(0.01)}`;
+  return pct.format(fraction);
 }
 
 /** `Code.exe` → `Code`; keeps other names as they are. */

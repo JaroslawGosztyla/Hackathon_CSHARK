@@ -12,7 +12,7 @@
   import type { MascotReaction } from "$lib/mascot/frames";
   import { formatDuration, formatTimeRange } from "$lib/format";
   import { launcherList, strings } from "$lib/strings";
-  import { CATEGORY_ICON, pickBreakTip } from "$lib/tips";
+  import { breakTipText, CATEGORY_ICON, pickBreakTip } from "$lib/tips";
   import type { Config, MeetingChoice, PopupInfo, PopupKind } from "$lib/types";
 
   /** How long the popup stays; the countdown pauses while the pointer or the keyboard focus is on it. */
@@ -453,10 +453,10 @@
           {#if reminder}<span class="sr-only">{p.reminderPrefix} </span>{/if}{message}
         </p>
         {#if kind === "breakStarted"}
-          <p class="tip" title={tip?.pl}>
+          <p class="tip" title={tip ? breakTipText(tip) : undefined}>
             {#if tip}
               <span class="tip-icon" aria-hidden="true">{CATEGORY_ICON[tip.category]}</span>
-              <span class="sr-only">{p.tipPrefix(strings.breakView.categories[tip.category])} </span>{tip.pl}
+              <span class="sr-only">{p.tipPrefix(strings.breakView.categories[tip.category])} </span>{breakTipText(tip)}
             {/if}
           </p>
         {/if}

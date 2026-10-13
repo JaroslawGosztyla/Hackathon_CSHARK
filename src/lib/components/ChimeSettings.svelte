@@ -12,7 +12,7 @@
 
   const SOUNDS: readonly ChimeSound[] = ["midnight", "vaporwave", "lunar", "autumn", "classic", "soft", "chiptune", "custom"];
   const KINDS: readonly ChimeKind[] = ["breakStart", "focusStart"];
-  const LABELS: Record<ChimeKind, string> = { breakStart: s.customBreak, focusStart: s.customFocus };
+  const LABELS = $derived<Record<ChimeKind, string>>({ breakStart: s.customBreak, focusStart: s.customFocus });
   const NAME_KEY = "focusmode.customChimeNames";
 
   /** Stored file name (in the app data folder) → the name of the file the user picked. */

@@ -23,8 +23,18 @@ export interface StreamPreset {
   windowOnly: boolean;
 }
 
+/** Labels are getters, so they follow the language in use. */
 export const STREAM_PRESETS: StreamPreset[] = [
-  { url: LOFI_GIRL_URL, label: strings.music.lofiPreset, hint: strings.music.lofiPresetHint, windowOnly: true },
+  {
+    url: LOFI_GIRL_URL,
+    get label() {
+      return strings.music.lofiPreset;
+    },
+    get hint() {
+      return strings.music.lofiPresetHint;
+    },
+    windowOnly: true,
+  },
 ];
 
 export type PlayItem =

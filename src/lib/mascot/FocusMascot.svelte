@@ -9,7 +9,7 @@
   import { session } from "$lib/state/session.svelte";
   import { work, workEnabled } from "$lib/state/work.svelte";
   import { strings } from "$lib/strings";
-  import { workingTipOfDay } from "$lib/tips";
+  import { workingTipOfDay, workingTipText } from "$lib/tips";
   import Axolotl from "./Axolotl.svelte";
   import { useMascot } from "./controller.svelte";
   import { followCues, mascotEnabled } from "./cues.svelte";
@@ -31,7 +31,7 @@
   const speech = $derived.by((): { label: string; text: string } | null => {
     if (!session.isIdle) return null;
     if (topItem) return { label: strings.mascot.nextUpLabel, text: strings.work.itemName(topItem.key, topItem.title) };
-    if (tip) return { label: strings.mascot.practiceLabel, text: tip.pl };
+    if (tip) return { label: strings.mascot.practiceLabel, text: workingTipText(tip) };
     return null;
   });
 
