@@ -3,14 +3,16 @@
 Sesje skupienia w klimacie lofi: ustawiasz czasy pracy i przerwy (domyślnie 45 / 15 minut), wybierasz muzykę
 i klikasz Start. Na czas skupienia FocusMode wycisza to, co rozprasza: powiadomienia Windows, status w Teams,
 strony z memami i launchery gier. W przerwie wszystko wraca, a muzyka gra dalej. Jeśli w czasie przerwy masz spotkanie,
-FocusMode powie ci o tym jeszcze przed startem i zapyta, co zrobić. Po zakończeniu sesji widzisz, w których
-aplikacjach naprawdę spędziłeś czas.
+FocusMode powie ci o tym jeszcze przed startem i zapyta, co zrobić. Jeśli połączysz GitHub, GitLab, Jirę, Azure DevOps albo Linear,
+podpowie też, czym zająć się w tej sesji: najpierw zadania przypisane do ciebie, potem to, na co ktoś czeka. Po zakończeniu sesji widzisz,
+w których aplikacjach naprawdę spędziłeś czas.
 
 Rust + Tauri 2 + Svelte 5 · Windows 10/11 (pełne wsparcie), macOS / Linux (best-effort) · projekt hackathonowy.
 Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu),
 [ADR-014](docs/DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki),
-[ADR-015](docs/DECISIONS.md#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia)
-i [ADR-016](docs/DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach).
+[ADR-015](docs/DECISIONS.md#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia),
+[ADR-016](docs/DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach)
+i [ADR-017](docs/DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy).
 
 ## Co potrafi
 
@@ -24,11 +26,17 @@ i [ADR-016](docs/DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach).
   3.: obiad (opcjonalnie lista może się powtarzać).
 - Zamiast zwykłego powiadomienia Windows możesz włączyć **okienka FocusMode**: małe okno w prawym dolnym rogu ekranu, w stylu aplikacji,
   z przyciskami „Pokaż okno” i „Pomiń fazę”. Nie zabiera fokusu i znika samo po kilku sekundach. Pojawia się też, gdy sesja zatrzymała się
-  po uśpieniu komputera, gdy FocusMode zamknął launchery gier, gdy przerwa czeka na koniec spotkania i jako przypomnienie o spotkaniu w czasie przerwy. To okno aplikacji, a nie powiadomienie, więc „Nie przeszkadzać” go nie wycisza.
+  po uśpieniu komputera, gdy FocusMode zamknął launchery gier, gdy przerwa czeka na koniec spotkania, jako przypomnienie o spotkaniu w czasie przerwy
+  i w przerwie (albo po Stop) z liczbą nowych pozycji „Co dalej?”. To okno aplikacji, a nie powiadomienie, więc „Nie przeszkadzać” go nie wycisza.
 - **Spotkania z kalendarza** (opcjonalnie; [jak połączyć](#kalendarze-spotkania-w-czasie-przerw)): Microsoft 365 / Outlook, Google Calendar
   i każdy kalendarz z linkiem ICS (firmowy Exchange, iCloud, Proton, Zoho, Zimbra, Nextcloud…), także spotkania cykliczne. Gdy spotkanie wypada
   w czasie przerwy, strona Skupienie pokazuje to **przed Start** i pyta, czy przedłużyć skupienie na czas spotkania (z wyciszoną muzyką),
   wstrzymać przerwę, zignorować, czy przypomnieć później (30, 20 i 10 minut przed spotkaniem). Kalendarze są tylko odczytywane.
+- **Co dalej?** (opcjonalnie; [jak połączyć](#co-dalej-zadania-z-github-gitlab-jira-azure-devops-i-linear)): zadania i powiadomienia z GitHub, GitLab,
+  Jira, Azure DevOps i Linear w jednej liście na stronie Skupienie. Najpierw to, co przypisane do ciebie (bieżący sprint, priorytet, termin, „w toku”),
+  potem to, na co ktoś czeka (prośby o review, poprawki, nieudane testy, wzmianki), na końcu reszta powiadomień; przy każdej pozycji widać, dlaczego jest wysoko.
+  Wybrane zadanie staje się **celem sesji** pod minutnikiem, a podsumowanie pyta „Zrobione?”. Nowe powiadomienia z czasu skupienia czekają do przerwy.
+  Kolejność liczy FocusMode na twoim komputerze, bez AI; tokeny są tylko do odczytu i zaszyfrowane.
 - **Pauza, Wznów, Pomiń fazę, Stop** w dowolnej chwili, w oknie albo z ikony w zasobniku (działa też przy ukrytym oknie).
   Uśpienie komputera w trakcie sesji automatycznie ją wstrzymuje.
 - **Muzyka** (gra też w przerwie, chyba że wyłączysz to w ustawieniach):
@@ -229,6 +237,89 @@ Nazwy opcji różnią się między wersjami. **Taki link to klucz do kalendarza*
 zaszyfrowane, poza plikiem ustawień, i nie pokazuje ich w logach ani w komunikatach o błędach. Gdy link wycieknie, unieważnij go u dostawcy
 (zwykle „Zresetuj” albo „Cofnij publikację”) i wklej nowy.
 
+## Co dalej? Zadania z GitHub, GitLab, Jira, Azure DevOps i Linear
+
+FocusMode może czytać zadania i powiadomienia z narzędzi, w których pracujesz, i na stronie **Skupienie** podpowiadać, czym zająć się w tej sesji.
+Kolejność jest stała:
+
+1. **Przypisane do ciebie** (issue, zgłoszenia, work itemy): najpierw z bieżącego sprintu albo cyklu, potem według priorytetu (od najwyższego),
+   terminu (po terminie, dziś, w ciągu 3 dni), statusu („w toku” przed „do zrobienia”) i wieku (starsze najpierw).
+2. **Czeka na ciebie**: prośby o twoje review, potem twoje pull / merge requesty z prośbą o poprawki albo z nieudanymi testami (CI), potem wzmianki
+   (w każdej grupie najpierw to, co czeka najdłużej).
+3. **Pozostałe powiadomienia**, od najnowszych.
+
+Zadanie przypisane do ciebie zawsze stoi wyżej niż cokolwiek z grupy 2, a grupa 2 wyżej niż powiadomienia. Przy każdej pozycji widzisz, **dlaczego jest wysoko**
+(„Dlaczego teraz”: przypisane do ciebie, sprint, wysoki priorytet, termin dziś, po terminie, w toku, czeka na twoją recenzję, długo czeka, wzmianka).
+Kolejność liczy FocusMode na twoim komputerze, bez AI. Narzędzia czyta co 5 minut i na żądanie („Odśwież teraz”).
+
+- **Cel sesji**: „Ustaw jako cel” przy pozycji pokazuje ją pod minutnikiem. Po Stop podsumowanie pyta „Zrobione?”, a historia zapamiętuje cel i odpowiedź.
+  W samym narzędziu nic się nie zmienia (FocusMode tylko czyta).
+- **Skupienia nic nie przerywa**: w trakcie focusa widać tylko cel. Nowe zadania i powiadomienia z tego czasu FocusMode pokaże w przerwie albo po Stop
+  (małe okienko albo powiadomienie z samą liczbą nowych pozycji, bez tytułów), a na liście są oznaczone jako „nowe”. Opcję
+  „Wstrzymuj powiadomienia podczas skupienia” możesz wyłączyć: lista będzie widoczna także w trakcie focusa, a nowe pozycje FocusMode ogłosi od razu (także małym okienkiem w trakcie focusa).
+  Takie grupowanie powiadomień opiera się na badaniach (m.in. Kushlev i Dunn 2015, Fitz i in. 2019; szczegóły w [ADR-017](docs/DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy)).
+
+Połączysz je w **Ustawienia → Narzędzia pracy**: włącz narzędzie, wpisz adres (GitLab, Jira) albo organizację (Azure DevOps), wklej token i kliknij
+**Zapisz token**. Token jest zapisywany zaszyfrowany (DPAPI, tylko dla twojego konta Windows), poza plikiem ustawień, nie wraca do pola i nie trafia do logów.
+Twórz tokeny z najwęższymi uprawnieniami, tylko do odczytu, i z terminem ważności; po jego upływie Ustawienia pokażą błąd i wkleisz nowy.
+
+### GitHub
+
+1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+2. Resource owner: twoje konto albo organizacja, w której pracujesz (token fine-grained widzi repozytoria tylko jednego właściciela, a organizacja może wymagać
+   zatwierdzenia tokenu). Repository access: wszystkie albo wybrane repozytoria.
+3. Repository permissions, każde **Read-only**: **Issues** i **Pull requests** (Metadata GitHub doda sam). Nic więcej nie zaznaczaj.
+
+Taki token daje, w repozytoriach tokenu, issue przypisane do ciebie, prośby o twoje review i twoje pull requesty z prośbą o poprawki.
+**Wzmianek, pozostałych powiadomień i wyników GitHub Actions token fine-grained nie odczyta**: API powiadomień i Checks API GitHub udostępnia tylko tokenom
+klasycznym. Jeśli chcesz je widzieć, utwórz zamiast niego token klasyczny (**Tokens (classic)**) z zakresem `notifications` i `repo`
+(albo `public_repo`, jeśli pracujesz tylko w publicznych repozytoriach). Zakres `repo` daje również prawo zapisu: FocusMode z niego nie korzysta,
+ale dlatego domyślnie polecamy token fine-grained. Priorytet issue FocusMode odczytuje z etykiet (`P0`–`P4`, `priority: high` itp.), a termin z kamienia milowego.
+Obsługiwany jest github.com (bez GitHub Enterprise Server).
+
+### GitLab
+
+1. GitLab → awatar → **Edytuj profil → Tokeny dostępu** (Personal access tokens) → **Dodaj nowy token**.
+2. Zaznacz tylko zakres **`read_api`** (odczyt API) i ustaw termin ważności.
+3. Dla własnej instancji wpisz jej adres (np. `https://gitlab.firma.pl`); domyślnie `https://gitlab.com`.
+
+GitLab daje issue przypisane do ciebie, merge requesty czekające na twoją recenzję, twoje merge requesty z prośbą o zmiany albo z nieudanym pipeline'em
+oraz listę To-Do (wzmianki i pozostałe). Sprint to bieżąca iteracja (tylko GitLab Premium i Ultimate). Issue GitLaba nie mają pola priorytetu:
+FocusMode odczytuje go z etykiet (`priority::1`, `P2` itp.), a status „w toku” z etykiet takich jak `workflow::in progress`.
+
+### Jira
+
+- **Jira Cloud**: na [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens) wybierz
+  **Utwórz token API z zakresami** (Create API token with scopes), aplikację **Jira** i tylko zakresy **`read:jira-work`** i **`read:jira-user`**;
+  ustaw krótki termin ważności (Atlassian i tak pozwala najwyżej na rok). W FocusMode wpisz adres witryny (np. `https://firma.atlassian.net`;
+  adres skopiowany z przeglądarki też zadziała) i e-mail konta Atlassian. Token z zakresami Atlassian przyjmuje tylko przez swoją bramkę
+  `api.atlassian.com`, więc FocusMode odczytuje identyfikator witryny (bez wysyłania tokenu) i łączy się przez nią. Zwykły token bez zakresów też zadziała,
+  ale ma wszystkie uprawnienia twojego konta (FocusMode wysyła nim tylko zapytania odczytu).
+- **Jira Data Center**: profil → **Personal Access Tokens → Create token** (z terminem ważności). Wpisz adres serwera, a pole e-mail zostaw puste.
+  Taki token ma uprawnienia twojego konta.
+
+Jira daje zgłoszenia przypisane do ciebie, z aktywnym sprintem, priorytetem, terminem i statusem. Powiadomień ani wzmianek Jira przez API nie udostępnia,
+więc jako powiadomienia FocusMode pokazuje obserwowane przez ciebie zgłoszenia innych osób, zmienione w ostatniej dobie.
+
+### Azure DevOps
+
+1. `https://dev.azure.com/<organizacja>` → ustawienia użytkownika (ikona obok awatara) → **Personal access tokens → New Token**.
+2. Organization: twoja organizacja (token dla wszystkich organizacji nie zadziała: Microsoft wyłącza takie tokeny 1 grudnia 2026).
+   Scopes: **Custom defined → Work Items: Read**, **Code: Read** i **Project and Team: Read** (lista projektów i bieżąca iteracja zespołu), nic więcej.
+   Ustaw termin ważności.
+3. W FocusMode wpisz nazwę organizacji (możesz też wkleić adres `https://dev.azure.com/<organizacja>/…`).
+
+Azure DevOps daje work itemy przypisane do ciebie (z priorytetem, terminem i bieżącą iteracją), pull requesty czekające na twój głos i twoje pull requesty,
+w których recenzent wybrał „czeka na autora” albo „odrzucone”. Administrator organizacji może ograniczyć tworzenie tokenów; wtedy poproś go o zgodę.
+Obsługiwane jest Azure DevOps Services (`dev.azure.com`), bez Azure DevOps Server.
+
+### Linear
+
+1. Linear → **Settings → Account → Security & access → Personal API keys → New API key**.
+2. Permissions: **Only select permissions → Read**; dostęp do zespołów: wszystkie albo wybrane.
+
+Linear daje zgłoszenia przypisane do ciebie, z bieżącym cyklem, priorytetem i terminem, a także powiadomienia ze skrzynki Linear (wzmianki i pozostałe).
+
 ## Discord i inne komunikatory
 
 Discord nie udostępnia aplikacjom API do zmiany statusu użytkownika, a sterowanie kontem przez token użytkownika łamie regulamin Discorda
@@ -262,7 +353,7 @@ FocusMode nie zawiera grafik ani marki Lofi Girl.
 
 ## Prywatność
 
-- **Nic nie opuszcza komputera.** Nie ma kont, telemetrii ani analityki.
+- **Nic nie opuszcza komputera** poza ruchem, który sam wybierzesz (muzyka i włączone integracje, niżej). Nie ma kont, telemetrii, analityki ani AI.
 - **Śledzenie aplikacji** sprawdza raz na sekundę, i tylko w trakcie biegnącego skupienia (nie w pauzie i nie w przerwie), nazwę procesu
   na pierwszym planie, czas bezczynności i tytuł okna. Elementy samego Windows (menu Start, pasek zadań, pulpit, wyszukiwanie) pomija.
   Zapisuje sumy czasu według procesu, a gdy włączone jest **zapamiętywanie tytułów** (domyślnie tak), także najczęstsze tytuły okien każdej aplikacji
@@ -281,12 +372,20 @@ FocusMode nie zawiera grafik ani marki Lofi Girl.
   do komend aplikacji, przechodzi tylko po domenach YouTube i Google, a inne linki otwiera w twojej przeglądarce.
   Token Teams jest zaszyfrowany DPAPI dla bieżącego użytkownika Windows. Przed ustawieniem „Nie przeszkadzać” FocusMode odczytuje twój bieżący
   status z Microsoft Graph (ta sama zgoda `Presence.ReadWrite`); odczytu nigdzie nie zapisuje.
-  Włączone kalendarze łączą się tylko ze swoimi serwerami: Microsoft Graph, Google (logowanie i Calendar API) albo adresy twoich linków ICS.
+  Włączone kalendarze łączą się tylko ze swoimi serwerami: Microsoft Graph, Google (logowanie i Calendar API) albo adresy twoich linków ICS,
+  a włączone narzędzia pracy tylko ze swoimi API (`api.github.com`, adres twojego GitLaba, adres twojej Jiry i, dla tokenu Jira z zakresami, `api.atlassian.com`,
+  `dev.azure.com`, `api.linear.app`).
 - **Kalendarze** (tylko gdy je włączysz) są **tylko odczytywane**: `Calendars.Read` w Microsoft Graph, zakres tylko do odczytu w Google, zwykłe pobranie linku ICS.
   Token logowania Google i linki ICS (link ICS to klucz do kalendarza) są zaszyfrowane DPAPI dla bieżącego użytkownika Windows w osobnych plikach,
   nigdy w `config.json`; kalendarz Microsoft używa tokenu Teams. Tajny klucz klienta Google leży w `config.json` (Google nie traktuje go
   w aplikacjach komputerowych jako tajnego), ale nie trafia do logów. Tematy i godziny spotkań widzisz tylko w oknie i okienkach FocusMode: nie trafiają
   do logów, historii, rozszerzenia ani nigdzie indziej. Na dysku zostają tylko twoje wybory dla spotkań (sam identyfikator spotkania i wybór, bez tematu).
+- **Narzędzia pracy („Co dalej?”)** (tylko gdy je włączysz) są **tylko odczytywane**: FocusMode nie zamyka zadań, nie odpowiada i nie oznacza powiadomień
+  jako przeczytanych. Tokeny są zaszyfrowane DPAPI dla bieżącego użytkownika Windows, każdy w osobnym pliku, nigdy w `config.json` ani w logach,
+  i jadą tylko do API swojego narzędzia. **Kolejność liczy FocusMode lokalnie**: tytuły zadań i powiadomienia nie trafiają do żadnej AI ani innej usługi.
+  Widzisz je tylko w oknie FocusMode (okienko i powiadomienie Windows podają samą liczbę nowych pozycji); nie trafiają do logów, rozszerzenia ani mostu.
+  Na dysku zostają identyfikatory już widzianych pozycji (`work-seen.json`, bez tytułów) i cel sesji w historii (klucz, tytuł i link zadania;
+  przy wyłączonym zapisie historii nic, a „Usuń historię” go kasuje).
 - **Dostęp do plików**: odtwarzacz może czytać z dysku tylko muzykę dołączoną do aplikacji i pliki audio znalezione w wybranym folderze muzyki.
   Własny dźwięk dzwonka jest kopiowany do folderu `sounds` w danych aplikacji; config przechowuje tylko nazwę pliku z tego folderu.
 - **Zamykanie launcherów gier** (tylko gdy je włączysz): na start skupienia FocusMode przegląda lokalnie listę uruchomionych procesów
@@ -301,11 +400,13 @@ FocusMode nie zawiera grafik ani marki Lofi Girl.
   w `HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce`, który przy następnym logowaniu uruchamia FocusMode z `--restore-shields`.
   Powiadomienia wracają w przerwie, po Stop i przy wyjściu, a po awarii przy następnym uruchomieniu aplikacji albo najpóźniej przy następnym logowaniu.
 - Dane leżą lokalnie w `%APPDATA%\com.focusmode.app`: `config.json` (ustawienia, także język, wybór zasobnika, odcień, motyw, dzwonki, przypomnienia i launchery), `websiteblacklist.txt` (lista blokowanych stron),
-  `history.jsonl` (podsumowania sesji z czasem według aplikacji i, jeśli włączone, tytułami okien; przy wyłączonym zapisie historii nowe sesje nie są dopisywane,
+  `history.jsonl` (podsumowania sesji z czasem według aplikacji, celem sesji z odpowiedzią „Zrobione?” i, jeśli włączone, tytułami okien; przy wyłączonym zapisie historii nowe sesje nie są dopisywane,
   a „Usuń historię” kasuje plik), `sounds\` (twoje własne dźwięki dzwonków), `teams-token.bin` (jeśli połączysz Teams; czyta też kalendarz Microsoft),
   `google-token.bin` i `ics-links.bin` (zaszyfrowane, jeśli połączysz Google albo zapiszesz linki ICS), `meeting-choices.json` (wybory dla spotkań: identyfikator i wybór, bez tematów),
+  `work-github-token.bin`, `work-gitlab-token.bin`, `work-jira-token.bin`, `work-azure-devops-token.bin`, `work-linear-token.bin` (zaszyfrowane tokeny narzędzi pracy, tylko zapisane)
+  i `work-seen.json` (identyfikatory widzianych pozycji „Co dalej?”, bez tytułów),
   `shields-restore.json` (tylko w trakcie wyciszenia) i `tint-restore.json` (tylko gdy FocusMode zmienił kolory ekranu).
-  Logi (bez tytułów okien, tokenów, linków ICS i tematów spotkań): `%LOCALAPPDATA%\com.focusmode.app\logs`,
+  Logi (bez tytułów okien, tokenów, linków ICS, tematów spotkań i tytułów zadań): `%LOCALAPPDATA%\com.focusmode.app\logs`,
   dane WebView2 (w tym ciasteczka YouTube z okna YouTube i z osadzonego playera): `%LOCALAPPDATA%\com.focusmode.app\EBWebView`.
 
 ## Znane ograniczenia
@@ -336,6 +437,13 @@ FocusMode nie zawiera grafik ani marki Lofi Girl.
   Plan przerw zakłada, że sesja biegnie bez pauz (po pauzie i pominięciu jest liczony na nowo). Przedłużone skupienie trzyma osłony przez całe spotkanie,
   a Teams „Nie przeszkadzać” (wygasa po długości skupienia + 5 min) może wygasnąć przed końcem długiego spotkania. Przypomnienia działają, dopóki FocusMode działa
   (także w zasobniku). Google w trybie testowym wymaga ponownego połączenia co 7 dni. Kalendarze Google i ICS działają tylko na Windows (szyfrowanie DPAPI).
+- „Co dalej?”: nowe zadania i powiadomienia widać po następnej synchronizacji (co 5 minut), nie na żywo; przy limicie zapytań albo błędzie narzędzie
+  jest ponawiane coraz rzadziej (najrzadziej co 30 minut), a lista zostaje z ostatniego odczytu. GitHub: token fine-grained nie czyta powiadomień
+  ani wyników GitHub Actions i widzi tylko jednego właściciela repozytoriów; issue GitHuba mają priorytet tylko w etykietach, termin tylko przez kamień milowy
+  i nie mają sprintu. Jira nie udostępnia powiadomień ani wzmianek, pole sprintu ma tylko Jira Software, a token Jira Data Center (i Cloud bez zakresów)
+  nie daje się ograniczyć do odczytu. Azure DevOps nie ma API powiadomień. GitLab ma iteracje tylko w planach płatnych. Jedno konto na narzędzie.
+  Kolejność to heurystyka, która nie zna ustaleń twojego zespołu:
+  dlatego zawsze widzisz powody, a cel wybierasz sam. Tokeny działają tylko na tym koncie Windows (DPAPI), więc narzędzia pracy działają tylko na Windows.
 - W trybie dev powiadomienia Windows mogą mieć nazwę i ikonę PowerShell. Po instalacji mają nazwę FocusMode.
 
 ## Rozwój
@@ -365,11 +473,11 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Katalog | Zawartość |
 |---|---|
-| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów (ze spotkaniami, które przedłużają focus albo wstrzymują przerwę), config (z przypomnieniami, nazwami plików dzwonków i kalendarzami), parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki (z pomijaniem powłoki Windows i tytułami okien), harmonogram i temperatura odcienia, planowanie przerw i kolizje ze spotkaniami (`calendar.rs`), launchery gier, języki; kontrakt IPC w `api.rs` |
+| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów (ze spotkaniami, które przedłużają focus albo wstrzymują przerwę, i z celem sesji), config (z przypomnieniami, nazwami plików dzwonków, kalendarzami i narzędziami pracy), parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki (z pomijaniem powłoki Windows i tytułami okien), harmonogram i temperatura odcienia, planowanie przerw i kolizje ze spotkaniami (`calendar.rs`), kolejność „Co dalej?” (`work.rs`), launchery gier, języki; kontrakt IPC w `api.rs` |
 | `crates/focus-audio` | dzwonki (rodio) na dedykowanym wątku: syntezowane pakiety i własny plik |
-| `crates/focus-platform` | integracje Windows: aktywne okno (z klasą okna), wyciszenie powiadomień, keep-awake, Teams i kalendarz Microsoft (Graph), Google Calendar i linki ICS (`calendar/`), pliki szyfrowane DPAPI (`secrets.rs`), zamykanie procesów, język systemu, czas lokalny, Oświetlenie nocne, rampa gamma |
-| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray, okienka faz, ciepło ekranu (Oświetlenie nocne / gamma), synchronizacja kalendarzy i przypomnienia o spotkaniach (`src/calendar/`); muzyka w zestawie w `resources/music/` |
-| `src/` | frontend SvelteKit (SPA): ekrany, odtwarzacz muzyki, motywy (`lib/themes/`), porady na przerwę (`lib/tips.ts`), teksty UI |
+| `crates/focus-platform` | integracje Windows: aktywne okno (z klasą okna), wyciszenie powiadomień, keep-awake, Teams i kalendarz Microsoft (Graph), Google Calendar i linki ICS (`calendar/`), klienci GitHub, GitLab, Jira, Azure DevOps i Linear (`work/`), pliki szyfrowane DPAPI (`secrets.rs`), zamykanie procesów, język systemu, czas lokalny, Oświetlenie nocne, rampa gamma |
+| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray, okienka faz, ciepło ekranu (Oświetlenie nocne / gamma), synchronizacja kalendarzy i przypomnienia o spotkaniach (`src/calendar/`), synchronizacja narzędzi pracy i wstrzymywanie nowych pozycji w focusie (`src/work.rs`, `src/work/`); muzyka w zestawie w `resources/music/` |
+| `src/` | frontend SvelteKit (SPA): ekrany, odtwarzacz muzyki, „Co dalej?” i cel sesji (`lib/components/NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`), motywy (`lib/themes/`), porady na przerwę (`lib/tips.ts`), teksty UI |
 | `browser-extension/` | rozszerzenie MV3 do blokady stron |
 | `spikes/` | wyrzucalne eksperymenty z M0 |
 
@@ -377,7 +485,7 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Plik | Zawartość |
 |---|---|
-| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013, ADR-014, ADR-015 i ADR-016 opisują aktualny zakres** |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013…017 opisują aktualny zakres** |
 | [CREDITS.md](CREDITS.md) | licencje i autorzy dołączonej muzyki, grafiki i dźwięków |
 | [docs/TASKS.md](docs/TASKS.md) | taski (sekcja „Speedrun”), milestone'y i podział pracy A/B |
 | [docs/DESIGN.md](docs/DESIGN.md) | produkt, UX, ryzyka (sprzed pivotu, w części nieaktualne) |

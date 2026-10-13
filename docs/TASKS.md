@@ -1,7 +1,7 @@
 # FocusMode — Taski i podział pracy
 
-> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014, ADR-015 i ADR-016); wersja 2 po cross-review (2026-09-27).
-> Decyzje: ADR-008…016 w [DECISIONS.md](DECISIONS.md).
+> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014, ADR-015, ADR-016 i ADR-017); wersja 2 po cross-review (2026-09-27).
+> Decyzje: ADR-008…017 w [DECISIONS.md](DECISIONS.md).
 
 **Legenda statusu:** `[ ]` do zrobienia · `[~]` w toku · `[x]` zrobione · `[-]` porzucone
 Przy braniu taska wpisz obok statusu kto: `[~] (A)`. Edytuj **tylko swoje linie** (mniej konfliktów).
@@ -20,6 +20,9 @@ Oświetleniem nocnym Windows albo gammą (SR-19) i dokłada motywy, animowaną n
 porady na przerwę oraz opcje historii (SR-20…SR-29).
 Kalendarze ([ADR-016](DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach), 2026-10-13): Microsoft 365 przez logowanie Teams, Google Calendar i linki ICS;
 spotkanie w czasie przerwy widać na stronie Skupienie przed Start, z wyborem: przedłuż skupienie, wstrzymaj przerwę, ignoruj, przypomnij później (SR-30…SR-33).
+„Co dalej?” ([ADR-017](DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy), 2026-10-13): zadania i powiadomienia z GitHub, GitLab, Jira, Azure DevOps i Linear
+(tokeny tylko do odczytu, DPAPI) w kolejności: przypisane do użytkownika → czeka na niego → reszta, z powodami; nowe pozycje czekają do przerwy;
+wybrane zadanie = cel sesji, a podsumowanie pyta „Zrobione?” (SR-34…SR-37).
 
 - [~] **SR-01** (B) Kontrakt IPC od nowa (`crates/focus-core/src/api.rs`): DTO configu (czasy, muzyka, osłony), snapshot sesji, `ShieldStatus`,
   użycie aplikacji i `SessionSummary`, Teams, most dla rozszerzenia (`BRIDGE_PORT = 47615`), stałe komend i eventów. Bindingi w `src/lib/bindings/`
@@ -42,6 +45,9 @@ spotkanie w czasie przerwy widać na stronie Skupienie przed Start, z wyborem: p
   Zmiana CLAUDE.md (zasady 6 i 11, struktura) czeka na zatwierdzenie (notatka 2026-10-13).
   2026-10-13 (kalendarze): ADR-016 (+ poprawki ADR-010, 011, 013, 014), ARCHITECTURE §6 (nowe komendy i event, snapshot, przykłady JSON, §6.8 config, DTO i reguły core),
   README (funkcja, konfiguracja Microsoft / Google / ICS, prywatność, ograniczenia). Zmiana CLAUDE.md (zasady 2, 6 i 11, struktura) czeka na zatwierdzenie (notatka 2026-10-13, „kalendarze”).
+  2026-10-13 („Co dalej?”): ADR-017, ARCHITECTURE §6 (nowe komendy i event, snapshot, przykłady JSON, §6.9 config, DTO, reguły core, platforma i powłoka),
+  README (funkcja, tokeny krok po kroku dla GitHub / GitLab / Jira / Azure DevOps / Linear, prywatność, pliki danych, ograniczenia).
+  Zmiana CLAUDE.md (zasada 11, struktura) wprowadzona 2026-10-13 (zgodnie z decyzjami właściciela).
 - [ ] **SR-09** (A+B, po merge'u) Zaktualizować DESIGN.md i ARCHITECTURE.md do ADR-013 (tabela faz, wątki, kontrakt, okna). ARCHITECTURE §6 (kontrakt IPC) zaktualizowany 2026-10-13.
 - [~] **SR-10** (B) Okno YouTube jako fallback (ADR-013 pkt 2): gdy YouTube odmawia osadzania (błędy 101/150/153; m.in. live Lofi Girl i część YouTube Music)
   albo linku nie da się osadzić (`/@kanał/live`, `/channel/<id>/live`, `/@kanał`), link gra w ukrytym oknie Tauri `media` ze stroną YouTube (odtwarzacz w tle, bez uprawnień IPC,
@@ -139,6 +145,30 @@ spotkanie w czasie przerwy widać na stronie Skupienie przed Start, z wyborem: p
   (także okno YouTube); Ustawienia → Kalendarze (`CalendarSettings.svelte`: Microsoft przez konto Teams, Google: identyfikator klienta + „Połącz z Google”, linki ICS, zakres godzin, „Odśwież teraz”);
   okienko `meetingReminder` z wyborami (bez „przypomnij później” w ostatnim) i `breakHeld`; teksty w `strings.ts`.
   DoD: Idle z połączonym kalendarzem → kolizje widać przed Start; wybór zostaje po restarcie; `npm run check` zielone; brak tematów spotkań w konsoli.
+- [~] **SR-34** (B) „Co dalej?” w `focus-core` (ADR-017 pkt 3 i 5): `work.rs` (`rank`: czyszczenie, łączenie kopii po `id`, `score` i `reasons`, najwyżej 50;
+  `tier`, `is_in_progress`, `normalize_goal`), `config.rs` (`WorkConfig` z wartościami domyślnymi, `WorkConfig::normalized`, `normalize_work_url`, walidacja e-maila Jira
+  i organizacji Azure DevOps), `session.rs` (`Input::SetGoal`, cel w snapshocie, `SessionTotals.goal` na Stop, `Session::goal()`), `stats.rs` (cel w podsumowaniu).
+  Kontrakt: `Config.work`, DTO `Work*` i `SessionGoal`, `SessionSnapshot.goal`, `SessionSummary.goal` / `goalDone`, `PopupKind.workDigest`, `PopupInfo.workCount`,
+  komendy `get_work` / `refresh_work` / `set_work_token` / `set_session_goal` / `mark_goal_done` + `work://changed`.
+  DoD: `cargo test -p focus-core` zielone (252 testy, w tym niezmiennik progów dla wszystkich kombinacji cech i dokładna kolejność w progu 1); bindingi zregenerowane bez ręcznych zmian.
+- [~] **SR-35** (B) „Co dalej?” w `focus-platform` (ADR-017 pkt 1 i 7): `work/` — klienci GitHub (wyszukiwanie, własne PR: recenzje i CI, powiadomienia z tokenem
+  klasycznym, `If-Modified-Since`, `X-Poll-Interval`), GitLab (`read_api`: przypisane, MR do review, własne MR, To-Do), Jira Cloud (`POST /rest/api/3/search/jql`,
+  token z zakresami przez bramkę `api.atlassian.com` z `cloudId` z `/_edge/tenant_info`) i Data Center (`POST /rest/api/2/search`, `Bearer`); pole sprintu po typie
+  `:gh-sprint`; obserwowane zgłoszenia jako powiadomienia), Azure DevOps (WIQL, `workitemsbatch`, bieżąca iteracja zespołu, PR do głosu i własne z „czeka na autora”)
+  i Linear (GraphQL: przypisane + powiadomienia); tylko zapytania odczytu, przekierowania tylko w obrębie adresu; mapowanie na `WorkItem` (`id` = `<źródło>:<klucz>`,
+  termin bez godziny = koniec dnia lokalnego, priorytet → 0–4 z nazw i etykiet); tokeny przez `secrets.rs`.
+  DoD: testy mapowania na przykładowych odpowiedziach z dokumentacji dostawców; 401 / 403 / 429 → błąd źródła bez tokenu i adresów; w `Debug` klientów nie ma tokenów.
+- [~] **SR-36** (B) „Co dalej?” w powłoce (ADR-017 pkt 2, 4 i 5): `src-tauri/src/work.rs` (+ `work/model.rs`, `work/fetch.rs`: wątek ze stanem, pobieranie w osobnych wątkach
+  co 5 min i na żądanie, ponowienia 1 → 30 min, `X-Poll-Interval`, `rank`, `work-seen.json`, `unseen`, `heldCount` w focusie, okienko `workDigest` / toast na start przerwy
+  i po Stop, `work://changed`), tokeny `work-<źródło>-token.bin` (`validate_token`, `redact`), komendy w `commands.rs`, `Persistence::mark_goal_done` (przepisanie `history.jsonl`),
+  digest w `popup.rs` (czeka na inne okienka), `texts::work_digest_toast`.
+  DoD: token zapisany → po restarcie lista bez ponownego wklejania; nowe pozycje w Focus → brak okienek i toastów do przerwy, potem jedno okienko z liczbą;
+  w logach brak tokenów, tytułów i adresów; zły token → błąd tylko tego narzędzia, sesja i pozostałe narzędzia działają.
+- [~] **SR-37** (B) „Co dalej?” w UI (ADR-017 pkt 5): `NextUp.svelte` (karta na stronie Skupienie: Idle i przerwa, w focusie tylko przy wyłączonym `holdDuringFocus`;
+  powody „Dlaczego teraz”, „nowe”, „Otwórz”, „Ustaw jako cel”), `SessionGoalLine.svelte` (cel pod minutnikiem), `WorkSettings.svelte` (Ustawienia → Narzędzia pracy:
+  włączniki, adresy, tokeny z instrukcją najwęższych uprawnień, stan, „Odśwież teraz”, `holdDuringFocus`), „Zrobione?” w podsumowaniu i znacznik celu w historii,
+  okienko `workDigest`, `src/lib/state/work.svelte.ts`, teksty w `strings.ts`. DoD: `npm run check` zielone; token nie wraca do pola ani do konsoli;
+  „Ustaw jako cel” → cel pod minutnikiem przez całą sesję → Stop → „Zrobione?” → odpowiedź widać w historii także po restarcie.
 
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
@@ -160,6 +190,9 @@ spotkanie w czasie przerwy widać na stronie Skupienie przed Start, z wyborem: p
 - [ ] kalendarze (ADR-016): Microsoft (jeśli tenant pozwala na `Calendars.Read`), Google (konto testowe) i link ICS ze spotkaniem cyklicznym → kolizje na stronie Skupienie przed Start;
   `extend` (focus do końca spotkania, muzyka wyciszona), `pauseAtBreak` (przerwa w pauzie do Wznów), `ignore`, `remindLater` (okienka 30 / 20 / 10 min, ostatnie bez „przypomnij później”);
   Pomiń fazę i Stop działają w przedłużonym focusie; po restarcie Google i ICS działają bez ponownego logowania; w `config.json` i w logach brak tokenów, linków ICS i tematów
+- [ ] „Co dalej?” (ADR-017): GitHub (token fine-grained), GitLab, Jira Cloud, Azure DevOps i Linear z tokenami tylko do odczytu → przypisane zadania zawsze nad
+  prośbami o review i wzmiankami, a te nad powiadomieniami, z powodami; nowe pozycje w trakcie focusa nie dają okienek ani toastów, w przerwie jedno okienko z liczbą;
+  „Ustaw jako cel” → cel pod minutnikiem → Stop → „Zrobione?” zapisane w historii; w `config.json` i w logach brak tokenów i tytułów zadań; zły token → błąd tylko tego narzędzia
 
 ## Role
 
@@ -347,3 +380,25 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
     wybory w `meeting-choices.json`, okienka `meetingReminder`, `Input::SetMeetingHolds`, `calendar://changed`)”; `src/` — „`src/lib/state/calendar.svelte.ts`,
     komponenty `MeetingConflicts.svelte` (Skupienie), `MeetingHoldBanner.svelte` i `CalendarSettings.svelte` (Ustawienia → Kalendarze)”.
 - [2026-10-13] (B→A) Kontrakt, kalendarze — poprawki: `CalendarConfig.googleClientSecret` (string, domyślnie `""`, stary config wczytuje się bez zmian; walidacja w core `is_google_client_secret`: przycięty, najwyżej 100 znaków `[A-Za-z0-9_-]`, pole błędu `calendar.googleClientSecret`; leży w `config.json`, bo Google dokumentuje sekret klienta „Desktop app” jako niepoufny, ale nie trafia do logów) i `MeetingConflict.tooLong` (bool, `#[serde(default)]`). Bez nowych komend i eventów; zmienione zachowanie: `teams_connect` prosi o `Calendars.Read` tylko przy włączonym `calendar.microsoft` (platforma: `TeamsClient::begin_login(calendar: bool)`, `teams::login_scopes`), a `disconnect_calendar(microsoft)` nie usuwa już tokenu Teams, tylko wyłącza `calendar.microsoft` (zapis jak `update_config`) i czyści spotkania Microsoft. Zmiany w core (twoje pliki, proszę o review `session.rs`): `timing::MAX_MEETING_HOLD_MS` (4 h), `calendar::meeting_hold_allowed`, `MeetingHold::is_usable` / `from_meeting` odrzucają spotkania dłuższe niż 4 h (na obu zegarach), więc nie przedłużają focusa, nie wstrzymują przerwy i nie wyciszają muzyki; test `meeting_holds_with_extreme_values_never_panic` przepisany pod ten limit, nowy `meetings_longer_than_4_hours_never_hold_the_session`. Nowy kod błędu powłoki `calendar.meetingTooLong` (`set_meeting_choice` z `extend` / `pauseAtBreak` dla takiego spotkania).
+- [2026-10-13] (B→A) Kontrakt, „Co dalej?” (ADR-017): komendy `get_work` / `refresh_work` / `set_work_token { source, token | null }` / `set_session_goal { goal | null }` /
+  `mark_goal_done { sessionId, done }`, event `work://changed` (`WorkStatus` z rewizją); DTO `WorkConfig`, `WorkSource`, `WorkItemKind`, `WorkReason`, `WorkItem`,
+  `WorkSourceStatus`, `WorkStatus`, `SessionGoal`; `Config.work` (stary config: narzędzia wyłączone); `SessionSnapshot.goal`, `SessionSummary.goal` / `goalDone`,
+  `PopupInfo.workCount` (wszystkie `#[serde(default)]`, więc stara historia się wczytuje); `PopupKind.workDigest`. Zmiany w core (twoje pliki, proszę o review `session.rs`):
+  nowy moduł `work.rs` (`rank`, `tier`, `is_in_progress`, `normalize_goal`, stałe `MAX_ITEMS` itd.; kolejność progów 1 > 2 > 3 sprawdzona testem na wszystkich kombinacjach cech);
+  `config::WorkConfig::normalized` (w `Config::normalized`) i `normalize_work_url`, stałe `DEFAULT_GITLAB_URL`, `MAX_WORK_URL_LEN`, `MAX_JIRA_EMAIL_LEN`, `MAX_AZURE_ORG_LEN`;
+  `session::Input::SetGoal` (w każdej fazie, bez efektów — tabela faz z ADR-013 bez zmian), `Session::goal()`, nowe pole `SessionTotals.goal` (ustawiane na Stop);
+  `stats::summarize` przenosi cel do podsumowania z `goal_done: None`. Powłoka (twoje `persistence.rs` i `session_actor.rs`): `Persistence::mark_goal_done` przepisuje
+  `history.jsonl` atomowo, `work_token_path` / `work-seen.json`; aktor przyjmuje `ActorCmd::SetGoal` i zgłasza zmiany fazy do `crate::work` (wstrzymywanie nowych pozycji w focusie).
+  Nowe pliki w danych aplikacji: `work-<github|gitlab|jira|azure-devops|linear>-token.bin` (DPAPI) i `work-seen.json` (same identyfikatory).
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-017 („Co zmienia”) czeka na zatwierdzenie przez użytkownika; do tego czasu przy różnicy wygrywa ADR-017. Proponowany tekst:
+  - zasada 11, pierwsze zdanie (razem z propozycją z notatki „kalendarze”): „nic nie opuszcza komputera poza ruchem, który wybrał użytkownik (muzyka, opcjonalnie Graph
+    dla Teams i kalendarza Microsoft, Google Calendar, linki ICS, narzędzia pracy: GitHub, GitLab, Jira, Azure DevOps, Linear).” i nowe zdanie: „Narzędzia pracy
+    tylko do odczytu; tokeny tylko w plikach szyfrowanych DPAPI (`work-<źródło>-token.bin`), nigdy w `config.json` ani w logach; tytuły zadań tylko lokalnie,
+    nigdy w logach, moście ani rozszerzeniu, a toast podaje tylko liczbę. Kolejność „Co dalej?” liczy `focus-core` lokalnie; nic nie trafia do modeli AI (ADR-017).”
+  - Struktura: `focus-core` — „`work.rs` (kolejność „Co dalej?”: progi przypisane → czeka na ciebie → powiadomienia, wynik, powody, cel sesji)”, a przy `session.rs`
+    „cel sesji `Input::SetGoal`”; `focus-platform` — „`work/` (klienci GitHub, GitLab, Jira, Azure DevOps i Linear, tylko odczyt)”; powłoka — „`work.rs`
+    (+ `work/model.rs`: czysta logika, `work/fetch.rs`: pobieranie w osobnych wątkach; synchronizacja co 5 min, `work-seen.json`, wstrzymywanie nowych pozycji
+    w focusie i okienko `workDigest`, `work://changed`)”, a przy `persistence.rs` „`mark_goal_done`”; `src/` — „`src/lib/state/work.svelte.ts`, komponenty
+    `NextUp.svelte` (Skupienie: „Co dalej?”), `SessionGoalLine.svelte` (cel pod minutnikiem) i `WorkSettings.svelte` (Ustawienia → Narzędzia pracy)”.
+
+- [2026-10-13] (B) Zmiany CLAUDE.md z propozycji ADR-015, ADR-016 i ADR-017 (zasady 2, 6, 11 i Struktura) wprowadzone — wynikają wprost z decyzji właściciela produktu (tytuły okien, kalendarze, narzędzia pracy).

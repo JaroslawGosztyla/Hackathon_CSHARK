@@ -23,6 +23,11 @@ Zmienia ADR-009, 012, 013 i 014.
 Google Calendar, linki ICS dla pozostałych) i pytanie, co zrobić ze spotkaniem, które wypada w przerwie: przedłużyć skupienie, wstrzymać przerwę,
 zignorować albo przypomnieć później (30, 20 i 10 minut przed spotkaniem). Zmienia ADR-010, 011, 013 i 014.
 
+**Stan na 2026-10-13 („Co dalej?”):** [ADR-017](#adr-017-co-dalej--zadania-z-narzędzi-pracy) dokłada listę „Co dalej?” z narzędzi pracy
+(GitHub, GitLab, Jira, Azure DevOps, Linear; tokeny tylko do odczytu, szyfrowane DPAPI): najpierw zadania przypisane do użytkownika, potem to, co czeka
+na niego (review, zmiany, nieudane testy, wzmianki), na końcu pozostałe powiadomienia, z powodami przy każdej pozycji. Nowe pozycje czekają do przerwy
+i nie przerywają skupienia. Wybrane zadanie staje się celem sesji, a podsumowanie pyta „Zrobione?”. Zmienia ADR-013 i 014.
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -970,3 +975,210 @@ przez Graph, a twarda zasada 6 w CLAUDE.md wyklucza tryb spotkania bez nowego AD
     tylko w plikach szyfrowanych DPAPI, nigdy w `config.json` ani w logach; tematy spotkań tylko lokalnie, nigdy w logach, historii, moście ani rozszerzeniu;
   - Struktura: `focus-core/src/calendar.rs`, `focus-platform/src/calendar/` (`google.rs`, `ics.rs`) i `secrets.rs`, `src-tauri/src/calendar/`
     (z czystą logiką w `model.rs`), `src/lib/state/calendar.svelte.ts` i komponenty `MeetingConflicts.svelte`, `MeetingHoldBanner.svelte`, `CalendarSettings.svelte`.
+
+---
+
+## ADR-017: Co dalej? — zadania z narzędzi pracy
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu poprosił 2026-10-13 o połączenie FocusMode z GitHubem, Jirą „i czymkolwiek innym” oraz o subskrypcję powiadomień
+z tych narzędzi. Na tej podstawie aplikacja ma podpowiadać, czym zająć się dalej, i **dawać pierwszeństwo zadaniom przypisanym do użytkownika**.
+Kolejność ustalił tak:
+1. **przypisane do użytkownika** (issue, tickety, work itemy): najpierw aktywny sprint albo cykl, potem priorytet (od najwyższego), potem termin
+   (po terminie, dziś, wkrótce), potem status („w toku” przed „do zrobienia”), na końcu wiek (starsze najpierw);
+2. **czekające na użytkownika**: prośba o review, zmiany do wprowadzenia albo nieudane testy (CI) we własnym pull / merge requeście, bezpośrednie wzmianki;
+3. **pozostałe powiadomienia** (informacyjne).
+
+Próg 1 zawsze stoi nad progiem 2, a ten nad progiem 3, a użytkownik widzi, dlaczego pozycja jest wysoko. Powiadomienia czekają do przerwy
+albo do następnej sesji i **nigdy nie przerywają skupienia**. Tokeny tylko do odczytu, zaszyfrowane, nigdy w logach ani w `config.json`;
+nic nie trafia do modelu AI ani do innej strony trzeciej.
+
+To dotyka twardej zasady 11 w CLAUDE.md (ruch sieciowy tylko ten, który wybrał użytkownik: dotąd muzyka, Graph i kalendarze), ADR-013 pkt 5
+(co leży w historii) i ADR-014 pkt 1 (rodzaje okienek), więc wymaga tego ADR.
+
+**Opcje — skąd zadania i powiadomienia:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Odpytywanie API każdego narzędzia z komputera użytkownika, jego tokenem tylko do odczytu** | bez serwera i pośredników; działa za firmowym VPN i z instancjami na własnych serwerach (GitLab self-managed, Jira Data Center); token zostaje na komputerze | nowe pozycje widać dopiero po następnej synchronizacji; limity zapytań każdego dostawcy; pięć różnych API |
+| Webhooki | zmiany od razu | wymagają publicznego adresu, czyli serwera pośredniczącego (strona trzecia, zasada 11); zakłada je administrator repozytorium albo projektu, a nie użytkownik; odrzucone |
+| Logowanie OAuth z aplikacją zarejestrowaną u każdego dostawcy | bez wklejania tokenów | rejestracja (często też weryfikacja) aplikacji u pięciu dostawców, sekrety klienta, przekierowania; koszt widać po Google w ADR-016; na później |
+| Powiadomienia e-mail (IMAP) | jedno źródło dla wszystkich narzędzi | dostęp do całej skrzynki to znacznie więcej niż zadania; parsowanie maili; odrzucone |
+| Kolejność układa model AI | „sprytniejsza” kolejność | tytuły zadań wychodzą poza komputer (zasada 11), wynik bez powtarzalności i bez wyjaśnienia; odrzucone |
+
+**Opcje — kolejność:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Stałe progi (przypisane → czeka na ciebie → reszta), w progu kolejne kryteria, z powodami** | dokładnie według prośby; przewidywalne, testowalne, czysta funkcja w core; powody da się pokazać | heurystyka nie zna ustaleń zespołu |
+| Jedna suma ważona wszystkich cech | jedna liczba | pilna wzmianka mogłaby wyprzedzić przypisane zadanie, wbrew prośbie; wagi trudno uzasadnić |
+
+**Decyzja:**
+
+1. **Pięć narzędzi** (`Config.work`; wszystkie domyślnie wyłączone, każde włącza się osobno w Ustawieniach). Tylko odczyt: FocusMode niczego w nich nie zmienia
+   (nie zamyka zadań, nie odpowiada, nie oznacza powiadomień jako przeczytanych).
+
+   | Narzędzie | Konfiguracja | Token (najwęższy możliwy) | Co daje |
+   |---|---|---|---|
+   | GitHub (github.com) | `work.github` | fine-grained personal access token tylko do odczytu: Issues (Read) i Pull requests (Read); Metadata (Read) dochodzi sam. Albo token klasyczny (`notifications` + `repo` / `public_repo`, pkt 7) | przypisane issue (priorytet z etykiet `P0`–`P4` / `priority: …`, termin z kamienia milowego, „w toku” z etykiet); PR z prośbą o twoje review; twoje PR z prośbą o zmiany albo z nieudanymi testami; z tokenem klasycznym także nieprzeczytane powiadomienia z twoim udziałem (wzmianki i pozostałe) |
+   | GitLab (gitlab.com albo własna instancja) | `work.gitlab`, `work.gitlabUrl` (domyślnie `https://gitlab.com`) | personal access token z zakresem `read_api` | przypisane issue (priorytet z etykiet `priority::1` / `P2`…, „w toku” z etykiet `workflow::…`, bieżąca iteracja = sprint); MR czekające na twoje review (bez już ocenionych); twoje MR z prośbą o zmiany albo z nieudanym pipeline'em; lista To-Do (wzmianki, reszta jako powiadomienia) |
+   | Jira Cloud albo Data Center | `work.jira`, `work.jiraUrl`, `work.jiraEmail` (puste = Data Center) | Cloud: e-mail konta + token API Atlassian, najlepiej z zakresami tylko do odczytu `read:jira-work` i `read:jira-user` (wtedy przez bramkę `api.atlassian.com`, pkt 7); Data Center: personal access token (ma uprawnienia konta) | przypisane zgłoszenia (priorytet, termin, status, aktywny sprint); obserwowane zgłoszenia innych osób zmienione w ostatniej dobie jako powiadomienia (Jira nie ma API powiadomień ani wzmianek) |
+   | Azure DevOps Services | `work.azureDevops`, `work.azureOrg` | PAT ograniczony do jednej organizacji: Work Items (Read), Code (Read) oraz Project and Team (Read) | przypisane work itemy (priorytet 1–4, termin, bieżąca iteracja zespołu = sprint); PR czekające na twój głos; twoje PR z głosem „czeka na autora” albo „odrzucone” |
+   | Linear | `work.linear` | osobisty klucz API z uprawnieniem Read | przypisane issue (priorytet, termin, aktywny cykl = sprint); nieprzeczytane powiadomienia ze skrzynki Linear (wzmianki i pozostałe) |
+
+   - **Tokeny** zapisuje `set_work_token { source, token }`, każdy w osobnym pliku szyfrowanym DPAPI dla bieżącego użytkownika Windows
+     (`focus-platform/src/secrets.rs`; w danych aplikacji `work-<github|gitlab|jira|azure-devops|linear>-token.bin`), **nigdy w `config.json` i nigdy w logach**;
+     `token: null` usuwa plik. Powłoka przyjmuje 1–4096 widocznych znaków ASCII bez spacji (trafiają do nagłówka HTTP); inaczej błąd `work.token`
+     (pole `token`), a nieudany zapis albo usunięcie pliku to `work.tokenSave`; żaden komunikat nie powtarza tokenu. Tokenu nie da się odczytać z UI
+     (nie ma gettera): Ustawienia pokazują tylko stan źródła i konto (`WorkSourceStatus.account`). Token jedzie wyłącznie do API swojego narzędzia,
+     przez HTTPS. Poza Windows (bez DPAPI) narzędzia pracy są niedostępne (`state = unavailable`), jak Google i ICS w ADR-016.
+   - **Adresy** (`gitlabUrl`, `jiraUrl`) core sprawdza w `config::normalize_work_url`: tylko `https://`, host `[a-z0-9.-]` z opcjonalnym portem, bez danych logowania,
+     zapytania i fragmentu (`@`, `?`, `#`), ścieżka z bezpiecznych znaków (bez segmentów `.` i `..`), najwyżej 512 znaków, bez końcowego `/`. Dla `gitlab.com`
+     i `*.atlassian.net` ścieżka jest odrzucana, więc wklejony adres z przeglądarki działa. `jiraEmail` jest pusty albo ma postać `nazwa@domena` bez spacji,
+     znaków sterujących i `:` (staje się nazwą użytkownika w Basic auth), najwyżej 254 znaki. `azureOrg` przyjmuje też wklejony `https://dev.azure.com/<org>/…`
+     albo `<org>.visualstudio.com`, a potem tylko `[A-Za-z0-9._-]` (najwyżej 64 znaki, bez nazw z samych kropek). Błędy: `config.invalid` z polem
+     `work.gitlabUrl`, `work.jiraUrl`, `work.jiraEmail` albo `work.azureOrg`; komunikat nie powtarza wartości (wklejony adres może zawierać dane logowania).
+   - Stan każdego narzędzia: `WorkSourceStatus { source, state, detail, account }`. Błąd jednego (zły albo wygasły token, brak sieci, limit zapytań) to
+     `state = error` ze szczegółem po angielsku, bez tokenu i adresów; pozostałe działają, a sesja trwa (zasada 8).
+
+2. **„Subskrypcja” = okresowa synchronizacja.** Powłoka (`src-tauri/src/work.rs`, czysta część w `work/model.rs`) ma własny wątek ze stanem, a każde pobranie
+   idzie w osobnym krótkim wątku (`work/fetch.rs`, blokujące HTTP z `focus_platform::work`), więc komendy odpowiadają od razu, a aktor sesji nigdy nie czeka
+   na sieć (zasada 3). Każde włączone narzędzie jest czytane **co 5 minut** (`model::POLL_EVERY`) i od razu po `refresh_work`, zmianie tokenu albo ustawień
+   narzędzia i na starcie sesji. Nieudane pobranie (także odpowiedź 429 przy wyczerpanym limicie) jest ponawiane po 1, 2, 4… minutach, najrzadziej co 30 minut,
+   a narzędzie zachowuje poprzednie pozycje. GitHub nie jest czytany częściej, niż każe `X-Poll-Interval` (wartość z nagłówka przyjmujemy najwyżej do godziny),
+   także przy ręcznym odświeżeniu,
+   a jego klient pamięta `Last-Modified` dla `If-Modified-Since` (odpowiedź 304 nie zużywa limitu). Pozycje wszystkich narzędzi przechodzą razem przez
+   `focus_core::work::rank` (także co 5 minut, bo wiek i terminy płyną z zegarem), a wynik idzie jako `WorkStatus` (getter `get_work` + event `work://changed`
+   z rewizją, ADR-012). Identyfikatory już widzianych pozycji powłoka trzyma w `work-seen.json` (same `id`, bez tytułów), żeby po restarcie nie ogłaszać
+   starych pozycji jako nowych.
+
+3. **Kolejność** (`focus_core::work::rank`, czysta funkcja: bez zegara, plików i sieci; `now` przychodzi z powłoki).
+   - Próg (`work::tier`): `assigned` = 1; `reviewRequested`, `changesRequested`, `ciFailed` i `mention` = 2; `notification` = 3.
+     **Każda pozycja progu 1 stoi nad każdą pozycją progu 2, a ta nad każdą z progu 3**, bez względu na pozostałe cechy (test sprawdza wszystkie kombinacje).
+   - W progu 2 najpierw prośby o review (ktoś czeka na ciebie), potem zmiany do zrobienia i nieudane testy we własnym PR / MR, na końcu wzmianki.
+   - Dalej, w każdym progu, kryteria właściciela w jego kolejności: aktywny sprint / cykl / iteracja → priorytet (`priorityRank` 0 = najwyższy … 4 = najniższy;
+     brak priorytetu liczy się jak średni, 2) → termin (po terminie → w ciągu 24 h → w ciągu 3 dni → później albo brak) → status „w toku” przed resztą
+     (`work::is_in_progress` rozpoznaje m.in. „In Progress”, „Doing”, „In Review”, „Active”, „WIP”, `workflow::in progress` z GitLaba, kategorię statusu Jira
+     `indeterminate`, typ stanu Linear `started` oraz polskie, niemieckie, francuskie, hiszpańskie, włoskie i rosyjskie odpowiedniki) → wiek: w progach 1 i 2
+     starsze najpierw (dłużej czeka), w progu 3 nowsze najpierw (świeża informacja). Remis rozstrzyga `key`, potem `id`, więc wynik nie zależy od kolejności wejścia.
+   - `WorkItem.score` zapisuje tę kolejność cyframi dziesiętnymi (wyższy = wyżej): `10^9` próg (3 = przypisane, 2 = czeka, 1 = powiadomienie), `10^8` grupa progu 2
+     (3 = review, 2 = zmiany / CI, 1 = wzmianka), `10^7` sprint, `10^6` priorytet (4 − ranga), `10^5` termin (3 / 2 / 1 / 0), `10^4` „w toku”, a ostatnie cztery cyfry
+     to godziny od ostatniej zmiany (najwyżej 9999; w progu 3 odwrócone). Wynik i powody liczy zawsze core; wartości przysłane z zewnątrz są ignorowane.
+   - **Powody** (`WorkItem.reasons`, w tej kolejności, tylko gdy dotyczą): `assigned` (próg 1), `blockingOthers` (prośba o review), `mentioned` (wzmianka),
+     `inSprint`, `highPriority` (ranga 0 albo 1), `overdue` albo `dueToday`, `inProgress`, `waitingLong` (tylko próg 2, bez zmian dłużej niż 3 dni).
+     UI pokazuje je jako krótkie etykiety przy pozycji (teksty w `strings.ts`).
+   - **Terminy**: `dueMs` to chwila, w której mija termin. Termin bez godziny (Jira `duedate`, GitLab `due_date`, Linear `dueDate`) platforma przekazuje
+     jako **koniec tego dnia czasu lokalnego**, więc zadanie jest „na dziś” przez cały dzień, a „po terminie” dopiero następnego dnia.
+   - **Jedna pozycja na zadanie**: `id` = źródło + klucz. Kopie o tym samym `id` (np. przypisane issue, które jest też wzmianką w powiadomieniach) łączą się:
+     wygrywa kopia z najlepszego progu (potem silniejsza grupa progu 2, potem pełniejsza, potem nowsza), a jej braki uzupełniają pozostałe.
+   - Wynik ma najwyżej 50 pozycji (`work::MAX_ITEMS`). Tekst jest czyszczony do wyświetlenia (znaki sterujące → spacje, tytuł do 300 znaków, klucz do 120,
+     etykiety do 80), a adres, który nie jest `http(s)://` z hostem (np. `javascript:`, `file:`, `ms-settings:`), staje się pusty: UI nie otwiera wtedy linku.
+   - Priorytety narzędzi platforma przelicza na `priorityRank` 0–4 (`focus_platform::work::priority_rank_from_name`: `P0`–`P4` i cyfra na początku nazwy wprost,
+     a słowa: Highest / Blocker / Critical / Urgent = 0, High / Major = 1, Medium / Normal = 2, Low / Minor = 3, Lowest / Trivial = 4; GitHub i GitLab z etykiet;
+     Azure DevOps 1–4 i Linear Urgent (1) … Low (4) na 0–3, a „bez priorytetu” Linear (0) na brak);
+     nazwa z narzędzia zostaje w `priorityLabel` do wyświetlenia. Pozycja bez priorytetu, terminu albo sprintu ma te kryteria puste (priorytet liczy się jak średni).
+
+4. **Wstrzymanie w trakcie skupienia** (`work.holdDuringFocus`, domyślnie włączone).
+   - Synchronizacja trwa także w focusie, ale **nowe pozycje nie przerywają skupienia**: żadnego okienka ani toastu, a strona Skupienie pokazuje
+     w focusie tylko cel sesji. Liczbę wstrzymanych nowych pozycji podaje `WorkStatus.heldCount`.
+   - `unseen: true` mają pozycje, które przyszły, odkąd użytkownik ostatnio patrzył na listę: pozycje zwrócone przez `get_work` albo `refresh_work`
+     liczą się od następnego stanu jako widziane (UI czyta listę przez `get_work`, gdy ją pokazuje). Pierwsza lista narzędzia po starcie aplikacji
+     albo po zmianie jego ustawień jest punktem wyjścia i niczego nie ogłasza.
+   - Na start przerwy (i po Stop, czyli przed następną sesją) powłoka pokazuje okienko `workDigest` z liczbą nowych pozycji (`PopupInfo.workCount`),
+     także przy wyłączonych okienkach faz (jak przypomnienie o spotkaniu); toast tylko wtedy, gdy okienka nie da się otworzyć. Okienko `workDigest`
+     nigdy nie zastępuje innego: czeka, aż zniknie okienko przerwy (albo przypomnienie o spotkaniu), a z kilku czekających zostaje najnowsze.
+     Żadne nie przechodzi do focusa: okienko startu focusa go nie odkłada, tylko zastępuje, a na start focusa z wstrzymaniem powłoka usuwa
+     paczkę z ekranu i z kolejki (`PopupHandle::withdraw_work_digest`). Toast podaje tylko liczbę, bez tytułów zadań.
+   - Przy wyłączonym `holdDuringFocus` (świadomy wybór użytkownika) lista „Co dalej?” jest widoczna także w focusie, a nowe pozycje są ogłaszane
+     od razu, także okienkiem w trakcie focusa. Wyłączenie w trakcie focusa od razu ogłasza pozycje wstrzymane do tej chwili.
+   - Podstawa: powiadomienia w paczkach o stałych porach zamiast na bieżąco. Kushlev i Dunn 2015 („Checking email less frequently reduces stress”,
+     Computers in Human Behavior 43, [doi:10.1016/j.chb.2014.11.005](https://doi.org/10.1016/j.chb.2014.11.005)): sprawdzanie poczty kilka razy dziennie
+     zamiast bez ograniczeń obniżało stres. Fitz i in. 2019 („Batching smartphone notifications can improve well-being”, Computers in Human Behavior 101,
+     [doi:10.1016/j.chb.2019.07.016](https://doi.org/10.1016/j.chb.2019.07.016)): powiadomienia w paczkach trzy razy dziennie poprawiały samopoczucie,
+     a całkowite wyłączenie powiadomień zwiększało niepokój i obawę, że coś umknie; dlatego wstrzymujemy i pokazujemy w przerwie, zamiast ukrywać.
+     Mark i in. 2008 („The cost of interrupted work: more speed and stress”, CHI, [doi:10.1145/1357054.1357072](https://doi.org/10.1145/1357054.1357072)):
+     przerywaną pracę ludzie kończą szybciej, ale z większym stresem i frustracją. Kushlev i Dunn 2015 oraz Mark i in. 2008 są już źródłami porad
+     w `src/lib/tips.ts` (ADR-015 pkt 7). To uzasadnienie projektu, a nie obietnica w UI (zasada 10).
+
+5. **Karta „Co dalej?”, cel sesji i „Zrobione?”.**
+   - Strona Skupienie pokazuje kartę „Co dalej?” (`NextUp.svelte`) w Idle i w przerwie (w focusie tylko przy wyłączonym `holdDuringFocus`): pięć pierwszych
+     pozycji (więcej po „Pokaż więcej”), przy każdej źródło, klucz, tytuł, termin i powody („Dlaczego teraz”), oznaczenie „nowe” dla `unseen`,
+     „Otwórz” (link w przeglądarce, tylko `http(s)://`) i „Ustaw jako cel”. Bez połączonych narzędzi karta to tylko podpowiedź z linkiem do Ustawień.
+   - „Ustaw jako cel” ustawia cel sesji: `set_session_goal { goal }` z `SessionGoal { source, key, title, url }` (`null` czyści).
+     Działa w każdej fazie i nie daje efektów (`Input::SetGoal`). Core czyści cel (`work::normalize_goal`: tekst jak w rankingu, adres spoza `http(s)://` pusty;
+     pusty klucz i tytuł = brak celu) i pokazuje go w każdym snapshocie (`SessionSnapshot.goal`; UI pod minutnikiem, `SessionGoalLine.svelte`, z „×”,
+     które czyści cel). Cel wybrany w Idle przechodzi przez Start.
+   - Na Stop cel trafia do podsumowania (`SessionSummary.goal`), a sesja zostaje bez celu. Podsumowanie pyta „Zrobione?” (Tak / Nie):
+     `mark_goal_done { sessionId, done }` zapisuje odpowiedź (`goalDone`) w ostatnim podsumowaniu i przy tej sesji w `history.jsonl`
+     (powłoka przepisuje plik atomowo, `persistence.rs`). Historia pokazuje cel ze znacznikiem. Stara historia bez tych pól wczytuje się z `goal: null`, `goalDone: null`.
+   - Odpowiedź dotyczy tylko FocusMode: zadanie w narzędziu się nie zmienia (tylko odczyt).
+
+6. **Prywatność.**
+   - **Ranking jest lokalny** (czysta funkcja w `focus-core`). Tytuły, klucze i powiadomienia **nie trafiają do żadnego modelu AI ani innej strony trzeciej**;
+     jedyny ruch to zapytania do API narzędzi włączonych przez użytkownika (`api.github.com`, adres GitLaba, adres witryny albo serwera Jira
+     i dla tokenów z zakresami `api.atlassian.com`, `dev.azure.com`, `api.linear.app`). Zapytania idą tylko pod skonfigurowany adres (przekierowania
+     na inny adres są odrzucane, bo nagłówek z tokenem poszedłby za nimi).
+   - Tytuły i klucze zadań pokazujemy tylko w oknie i okienkach FocusMode oraz w snapshocie sesji. **Nie trafiają do logów**, mostu ani rozszerzenia,
+     a toast podaje tylko liczbę. Na dysku: `work-seen.json` (same identyfikatory) i cel sesji w `history.jsonl` (klucz, tytuł i link; tylko przy `keepHistory`;
+     usuwa go „Usuń historię”).
+   - Tokeny: pkt 1. Szczegóły błędów nie zawierają tokenów ani adresów.
+
+7. **Ograniczenia** (świadome).
+   - **GitHub: tokeny fine-grained nie czytają powiadomień ani Checks API** (`GET /notifications` przyjmuje tylko tokeny klasyczne, a Checks API
+     GitHub wymienia wśród ograniczeń tokenów fine-grained). Z tokenem fine-grained FocusMode widzi przez wyszukiwanie (`GET /search/issues`) przypisane issue
+     i prośby o review oraz własne PR z prośbą o zmiany, ale nie widzi wzmianek, pozostałych powiadomień ani wyników GitHub Actions (check runs).
+     Token fine-grained działa też tylko dla jednego właściciela zasobów (twoje konto albo jedna organizacja), a organizacja może wymagać jego zatwierdzenia.
+     Token klasyczny z zakresem `notifications` daje powiadomienia, ale do prywatnych repozytoriów (i ich check runs) potrzebuje zakresu `repo`, czyli pełnego
+     dostępu, a nie tylko odczytu (FocusMode i tak tylko czyta). Issue GitHuba nie mają pól priorytetu ani sprintu: priorytet i „w toku” platforma odczytuje
+     z etykiet, a termin z kamienia milowego (pól GitHub Projects nie czytamy). Tylko github.com, bez GitHub Enterprise Server.
+   - **Limity zapytań**: GitHub: wyszukiwanie 30 zapytań na minutę, reszta REST 5000 na godzinę; Jira Cloud: odpowiedź 429 z `Retry-After`
+     (od 2026-03-02 Atlassian egzekwuje też limity punktowe dla aplikacji); Azure DevOps: dławienie według zużycia zasobów, z `Retry-After`; Linear: 2500 zapytań i 3 mln punktów złożoności
+     na godzinę na klucz; GitLab: limity instancji (429). Synchronizacja co 5 minut mieści się w nich z zapasem, a po błędzie narzędzie ponawia coraz rzadziej (pkt 2).
+   - **Jira**: brak publicznego API powiadomień i wzmianek. Próg 3 z Jiry to tylko zastępstwo: obserwowane zgłoszenia przypisane do kogoś innego,
+     zmienione w ostatniej dobie. **Pole sprintu** to pole niestandardowe z innym id na każdej witrynie: platforma znajduje je w `GET /rest/api/{3|2}/field`
+     po typie (`schema.custom` kończy się na `:gh-sprint`) i uznaje zgłoszenie za „w sprincie”, gdy któryś z jego sprintów ma stan `active`
+     (Data Center bywa, że podaje sprinty starym zapisem tekstowym `…[…,state=ACTIVE,…]`). Jira bez Jira Software (bez tablic Scrum) nie ma sprintów.
+     Cloud szuka przez `POST /rest/api/3/search/jql` (stare `/rest/api/3/search` Atlassian wyłączył w 2025; nowe zwraca tylko id, jeśli nie poda się `fields`),
+     Data Center przez `POST /rest/api/2/search` z tokenem jako `Bearer` (Jira 8.14+); token Data Center ma wszystkie uprawnienia konta (nie da się go
+     ograniczyć do odczytu). **Token Cloud z zakresami** Atlassian przyjmuje wyłącznie przez bramkę `https://api.atlassian.com/ex/jira/{cloudId}`:
+     gdy witryna odrzuci token, platforma odczytuje `cloudId` z `https://<witryna>/_edge/tenant_info` (bez wysyłania danych logowania) i kieruje zapytania
+     przez bramkę. Tokeny API Atlassian wygasają najpóźniej po roku.
+   - **Azure DevOps**: API nie ma skrzynki powiadomień; tylko Azure DevOps Services (`dev.azure.com`), bez Azure DevOps Server. Globalne PAT przestają działać
+     2026-12-01, więc token musi być ograniczony do jednej organizacji, a administrator organizacji może tworzenie PAT ograniczyć.
+   - **GitLab**: iteracje (sprint) są tylko w planach Premium i Ultimate; issue GitLaba nie mają pola priorytetu (platforma czyta go z etykiet), a status
+     „w toku” pochodzi z etykiet (`workflow::…`), bo samo issue ma tylko stan otwarte / zamknięte.
+   - Nowe pozycje pojawiają się z opóźnieniem jednego cyklu synchronizacji (nie na żywo). Jedno konto na narzędzie. Kolejność to heurystyka, która nie zna
+     ustaleń zespołu: dlatego zawsze pokazujemy powody, a cel wybiera użytkownik.
+   - Tokeny w plikach DPAPI działają tylko na koncie Windows, które je zapisało (po przeniesieniu danych trzeba je wkleić ponownie). Tokeny wygasają
+     (GitLab domyślnie po roku, Atlassian najpóźniej po roku, GitHub i Azure DevOps według wyboru albo zasad organizacji): źródło pokazuje wtedy błąd.
+
+8. **Kontrakt** (`api.rs`; jak w ADR-013–016, w tej samej gałęzi co implementacja): komendy `get_work`, `refresh_work`, `set_work_token`,
+   `set_session_goal` i `mark_goal_done`; event `work://changed`; DTO `WorkConfig`, `WorkSource`, `WorkItemKind`, `WorkReason`, `WorkItem`,
+   `WorkSourceStatus`, `WorkStatus` i `SessionGoal`; pole `Config.work`; `SessionSnapshot.goal`; `SessionSummary.goal` i `goalDone`;
+   `PopupKind.workDigest`; `PopupInfo.workCount`. Nowe pola mają wartości domyślne (`#[serde(default)]`), więc stary config, stara historia
+   i stary snapshot się wczytują. Szczegóły: ARCHITECTURE §6.9.
+
+**Konsekwencje:**
+- Aplikacja łączy się z kolejnymi serwerami, ale tylko z narzędziami włączonymi przez użytkownika i tylko z jego tokenem. Bez sieci źródło ma stan błędu,
+  a sesja działa jak dotąd.
+- Wklejanie tokenów to tarcie przy konfiguracji (pięć różnych stron tworzenia tokenu); README i Ustawienia prowadzą krok po kroku. Logowanie OAuth zostaje na później.
+- „Tylko odczyt” jest pełne tam, gdzie pozwala narzędzie (GitHub fine-grained, GitLab `read_api`, Jira Cloud z zakresami `read:jira-work` / `read:jira-user`,
+  Azure DevOps Read, Linear Read). Tokenu Jira Cloud bez zakresów, tokenu Jira Data Center i klasycznego tokenu GitHuba z `repo` nie da się tak ograniczyć:
+  wtedy „tylko odczyt” gwarantuje kod FocusMode, który wysyła wyłącznie zapytania odczytu, a nie sam token. Wybór GitHuba to kompromis: token fine-grained
+  jest tylko do odczytu, ale bez powiadomień i wyników GitHub Actions; klasyczny daje wszystko, ale nie jest tylko do odczytu.
+- `history.jsonl` dostaje cel sesji, a tytuł zadania bywa poufny: obowiązuje to samo co przy tytułach okien (ADR-015): tylko lokalnie, nic przy wyłączonym
+  `keepHistory`, „Usuń historię” usuwa.
+- `mark_goal_done` przepisuje cały `history.jsonl` (atomowo); przy długiej historii to jeden większy zapis na odpowiedź.
+- W `focus-core`: nowy moduł `work.rs`, `Input::SetGoal`, `Session::goal()` i `SessionTotals.goal`; `stats::summarize` przenosi cel do podsumowania
+  (z `goalDone: null`); `WorkConfig::normalized` w `Config::normalized`. Tabela faz z ADR-013 się nie zmienia: `SetGoal` nie daje efektów w żadnej fazie.
+- Okienka faz dostają rodzaj `workDigest`, który czeka na inne okienka.
+
+**Co zmienia:**
+- ADR-013: pkt 5 (historia: cel sesji i odpowiedź „Zrobione?”).
+- ADR-014: pkt 1 (nowe `PopupKind.workDigest` i `PopupInfo.workCount`; digest nie zastępuje innego okienka).
+- CLAUDE.md (zmiana czeka na zatwierdzenie przez użytkownika, notatka w TASKS z 2026-10-13, „Co dalej?”):
+  - twarda zasada 11: ruch sieciowy także do włączonych narzędzi pracy (GitHub, GitLab, Jira, Azure DevOps, Linear), tylko do odczytu; tokeny tylko w plikach
+    szyfrowanych DPAPI (`work-<źródło>-token.bin`), nigdy w `config.json` ani w logach; tytuły zadań tylko lokalnie, nigdy w logach, moście ani rozszerzeniu;
+    kolejność liczona lokalnie, nic nie trafia do modeli AI;
+  - Struktura: `focus-core/src/work.rs`, `focus-platform/src/work/`, `src-tauri/src/work.rs` (+ `work/model.rs`, `work/fetch.rs`),
+    `src/lib/state/work.svelte.ts` i komponenty `NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`.

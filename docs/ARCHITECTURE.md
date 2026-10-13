@@ -260,12 +260,13 @@ config spoza zakresów → błąd walidacji.
 
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
-> Stan na 2026-10-13 (z ADR-016, kalendarze), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> Stan na 2026-10-13 (z ADR-017, „Co dalej?”), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
 `#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu w ms od epoki Unix
 (`i64` eksportowane jako `number` przez `#[ts(type = "number")]`): `startedAtMs` / `endedAtMs` w `SessionSummary` oraz czasy spotkań i przerw z ADR-016
-(`Meeting.startMs` / `endMs`, `MeetingConflict.breakStartMs` / `breakEndMs` / `nextReminderMs`, `CalendarStatus.lastSyncMs`, `MeetingHoldView.untilMs`).
+(`Meeting.startMs` / `endMs`, `MeetingConflict.breakStartMs` / `breakEndMs` / `nextReminderMs`, `CalendarStatus.lastSyncMs`, `MeetingHoldView.untilMs`)
+i z ADR-017 (`WorkItem.dueMs` / `updatedMs`, `WorkStatus.lastSyncMs`).
 Eksport: `cargo test -p focus-core` zapisuje do `TS_RS_EXPORT_DIR` (ustawione w `.cargo/config.toml` względem workspace).
 **CI sprawdza, czy po regeneracji `src/lib/bindings/` nie ma zmian** (`git diff --exit-code`).
 Nazwy komend i eventów są stałymi w `api.rs` (`commands::*`, `events::*`), które test `export_names` zapisuje do `src/lib/bindings/names.ts`
@@ -322,6 +323,11 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `disconnect_calendar` | `source: CalendarSource` | `CalendarStatus` | `google` / `ics`: zapomina zapisany token albo linki. `microsoft`: **nie usuwa tokenu Teams** (status w Teams działa dalej), tylko wyłącza `calendar.microsoft` (zapis jak przez `update_config`; UI ustawia to pole u siebie bez ponownego zapisu) i usuwa spotkania Microsoft |
 | `set_ics_urls` | `urls: string[]` | `CalendarStatus` | zastępuje linki ICS; zapis w pliku szyfrowanym DPAPI, nigdy w `config.json` ani w logach |
 | `get_ics_urls` | – | `string[]` | zapisane linki ICS (do edycji w Ustawieniach) |
+| `get_work` | – | `WorkStatus` | lista „Co dalej?”: pozycje z włączonych narzędzi pracy w kolejności `focus_core::work::rank` (najwyżej 50) i stan każdego narzędzia (ADR-017) |
+| `refresh_work` | – | `WorkStatus` | pobiera wszystkie włączone narzędzia od razu |
+| `set_work_token` | `source: WorkSource, token: string \| null` | `WorkStatus` | zapisuje token narzędzia w pliku szyfrowanym DPAPI (`work-<źródło>-token.bin`), nigdy w `config.json` ani w logach; `null` usuwa token. Token: 1–4096 widocznych znaków ASCII (inaczej `work.token`, pole `token`); błąd zapisu → `work.tokenSave`. Tokenu nie da się odczytać z powrotem |
+| `set_session_goal` | `goal: SessionGoal \| null` | `()` | cel sesji (pozycja z „Co dalej?”), w każdej fazie, bez efektów (`Input::SetGoal`); widoczny w `SessionSnapshot.goal`, na Stop trafia do `SessionSummary.goal`; `null` czyści |
+| `mark_goal_done` | `sessionId: string, done: boolean` | `()` | odpowiedź na „Zrobione?” w podsumowaniu: `goalDone` w ostatnim podsumowaniu i przy tej sesji w `history.jsonl` (powłoka przepisuje plik atomowo). Sesji nie ma ani w pamięci, ani w pliku → `history.unknownSession`; błąd zapisu → `persistence.history`; przy wyłączonym `keepHistory` zmienia tylko ostatnie podsumowanie |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -347,6 +353,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `popup://show` | `PopupInfo` | okienko faz ma pokazać komunikat (albo się schować: `kind: null`) |
 | `tint://changed` | `TintStatus` | zmienił się poziom ciepła, podgląd, użyty mechanizm (`mode`), ograniczenie siły (`capped`) albo błąd |
 | `calendar://changed` | `CalendarStatus` | po każdej synchronizacji kalendarzy, zmianie wyboru dla spotkania, zmianie połączenia (także postęp logowania Google) i zmianie kolizji |
+| `work://changed` | `WorkStatus` | po każdej synchronizacji narzędzi pracy, zmianie tokenu i zmianie wstrzymanych pozycji (`heldCount`, `unseen`) |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -360,6 +367,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `PopupInfo` | `get_popup` | `popup://show` |
 | `TintStatus` | `get_tint_status` | `tint://changed` |
 | `CalendarStatus` | `get_calendar` (także wynik `refresh_calendar`, `set_meeting_choice`, `disconnect_calendar` i `set_ics_urls`) | `calendar://changed` |
+| `WorkStatus` | `get_work` (także wynik `refresh_work` i `set_work_token`) | `work://changed` |
 
 Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
 1. **najpierw** rejestruje `listen(...)`,
@@ -388,6 +396,8 @@ pub struct SessionSnapshot {
     pub music_muted: bool,          // muzyka ma milczeć: Focus (także w pauzie) w trakcie spotkania z wyborem `extend` (ADR-016)
     #[serde(default)]
     pub meeting_hold: Option<MeetingHoldView>, // spotkanie przedłuża focus albo wstrzymuje przerwę (do Wznów)
+    #[serde(default)]
+    pub goal: Option<SessionGoal>,  // cel sesji z „Co dalej?” (ADR-017); widoczny w Idle i w trakcie sesji, czyszczony na Stop
 }
 ```
 
@@ -398,7 +408,7 @@ Odtwarzacz (osadzony i okno YouTube) milknie, gdy `musicMuted`, i wraca do zwyk�
 |---|---|---|
 | `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
 | `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
-| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014); także przypomnienie o spotkaniu `meetingReminder` i wstrzymana przerwa `breakHeld` (ADR-016) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu) i `popup://show`, a przy `meetingReminder` także `set_meeting_choice` |
+| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014); także przypomnienie o spotkaniu `meetingReminder`, wstrzymana przerwa `breakHeld` (ADR-016) i paczka nowych pozycji „Co dalej?” `workDigest` (ADR-017) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu) i `popup://show`, a przy `meetingReminder` także `set_meeting_choice` |
 
 Okien przerwy i ostrzeżenia nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
 Okien overlay odcienia (`tint-*`) też już nie ma: ciepło ekranu daje Oświetlenie nocne Windows albo gamma ramp (ADR-015), a `TintStatus` czyta tylko okno główne.
@@ -513,6 +523,58 @@ z pierwszą przerwą). „Przypomnij później” wybrane na stronie Skupienie d
 ```json
 { "calendar": { "microsoft": false, "google": false, "googleClientId": "", "googleClientSecret": "", "ics": false, "horizonHours": 10 } }
 ```
+
+`Config`, tylko pole dodane przez ADR-017 (wartości domyślne):
+
+```json
+{ "work": { "github": false, "gitlab": false, "gitlabUrl": "https://gitlab.com", "jira": false, "jiraUrl": "", "jiraEmail": "",
+            "azureDevops": false, "azureOrg": "", "linear": false, "holdDuringFocus": true } }
+```
+
+`WorkStatus` (GitHub, Jira i Linear włączone; w chwili `lastSyncMs` trwa przerwa, a jedna pozycja przyszła w trakcie focusa i czeka jako nowa):
+
+```json
+{ "revision": 23,
+  "sources": [ { "source": "github", "state": "on", "detail": null, "account": "ola-dev" },
+               { "source": "gitlab", "state": "off", "detail": null, "account": null },
+               { "source": "jira", "state": "on", "detail": null, "account": "Ola Nowak" },
+               { "source": "azureDevops", "state": "off", "detail": null, "account": null },
+               { "source": "linear", "state": "on", "detail": null, "account": "Ola" } ],
+  "items": [
+    { "id": "jira:SHOP-128", "source": "jira", "kind": "assigned", "key": "SHOP-128", "title": "Płatność BLIK w koszyku",
+      "url": "https://firma.atlassian.net/browse/SHOP-128", "project": "Sklep", "priorityLabel": "High", "priorityRank": 1,
+      "dueMs": 1760392799999, "status": "In Progress", "inSprint": true, "updatedMs": 1760256400000,
+      "score": 3013210026, "reasons": ["assigned", "inSprint", "highPriority", "dueToday", "inProgress"], "unseen": false },
+    { "id": "github:firma/sklep#42", "source": "github", "kind": "reviewRequested", "key": "firma/sklep#42", "title": "Cache koszyka w Redisie",
+      "url": "https://github.com/firma/sklep/pull/42", "project": "firma/sklep", "priorityLabel": null, "priorityRank": null,
+      "dueMs": null, "status": null, "inSprint": false, "updatedMs": 1760004400000,
+      "score": 2302000096, "reasons": ["blockingOthers", "waitingLong"], "unseen": false },
+    { "id": "linear:ENG-7", "source": "linear", "kind": "notification", "key": "ENG-7", "title": "Eksport raportu do CSV",
+      "url": "https://linear.app/firma/issue/ENG-7", "project": "Engineering", "priorityLabel": null, "priorityRank": null,
+      "dueMs": null, "status": null, "inSprint": false, "updatedMs": 1760342800000,
+      "score": 1002009997, "reasons": [], "unseen": true } ],
+  "heldCount": 1, "lastSyncMs": 1760350000000 }
+```
+
+Wyniki z §6.9: Jira (zmiana 26 h temu; termin bez godziny 2025-10-13 = koniec tego dnia w Warszawie, 23:59:59.999 UTC+2, czyli „dziś”) = 3·10⁹ + sprint 10⁷ + priorytet 3·10⁶ + termin 2·10⁵ + „w toku” 10⁴ + 26;
+review GitHuba (czeka 96 h, więc `waitingLong`) = 2·10⁹ + review 3·10⁸ + nieznany priorytet 2·10⁶ + 96; powiadomienie Linear (2 h temu) = 10⁹ + 2·10⁶ + (9999 − 2).
+
+`PopupInfo` (paczka nowych pozycji na start przerwy, po okienku przerwy; `cycle` i `phaseSecs` mają znaczenie tylko w okienkach faz):
+
+```json
+{ "revision": 16, "kind": "workDigest", "cycle": 0, "phaseSecs": 0, "launchers": [], "reminder": null, "meeting": null, "workCount": 3 }
+```
+
+`SessionSummary`, tylko pola dodane przez ADR-017 (po odpowiedzi „Tak” na „Zrobione?”):
+
+```json
+{ "goal": { "source": "jira", "key": "SHOP-128", "title": "Płatność BLIK w koszyku", "url": "https://firma.atlassian.net/browse/SHOP-128" },
+  "goalDone": true }
+```
+
+Argumenty komend „Co dalej?”: `set_work_token` → `{ "source": "github", "token": "…" }` albo `{ "source": "github", "token": null }`,
+`set_session_goal` → `{ "goal": { "source": "jira", "key": "SHOP-128", "title": "Płatność BLIK w koszyku", "url": "https://firma.atlassian.net/browse/SHOP-128" } }`
+albo `{ "goal": null }`, `mark_goal_done` → `{ "sessionId": "1760350000000-12345-1", "done": true }`.
 
 `MediaWindowStatus` (okno YouTube z domyślnym streamem):
 
@@ -723,6 +785,114 @@ Tokenów, linków ICS ani tematów spotkań nie loguje: szczegół błędu zamie
 Czysta część (`model.rs`): łączenie źródeł (kopie spotkania z kilku źródeł: to samo id albo ten sam temat z początkiem w odstępie do minuty; wybór kopii przechodzi
 na spotkanie, które zostało), wybory z etapem przypomnień (zapominane po końcu spotkania), walidacja linków ICS (`https://` albo `webcal://` z hostem, bez spacji,
 najwyżej 10 po 2048 znaków; `webcal://` jest pobierany przez `https://`), najwyżej 200 spotkań.
+
+### 6.9 „Co dalej?” — zadania z narzędzi pracy (ADR-017)
+
+Nowe pole `Config.work` (stary `config.json` bez niego wczytuje się z wyłączonymi narzędziami; częściowy obiekt jest uzupełniany domyślnymi).
+Tokenów w configu nie ma: zapisuje je `set_work_token` (plik szyfrowany DPAPI na narzędzie).
+
+| Pole | Typ | Domyślnie | Znaczenie |
+|---|---|---|---|
+| `work.github` | `boolean` | `false` | GitHub (github.com) |
+| `work.gitlab` | `boolean` | `false` | GitLab |
+| `work.gitlabUrl` | `string` | `https://gitlab.com` | adres instancji GitLab (`normalize_work_url`) |
+| `work.jira` | `boolean` | `false` | Jira Cloud albo Data Center |
+| `work.jiraUrl` | `string` | `""` | witryna Jira Cloud (`https://firma.atlassian.net`) albo adres serwera Data Center (`normalize_work_url`) |
+| `work.jiraEmail` | `string` | `""` | e-mail konta Atlassian do tokenu API Jira Cloud (nazwa użytkownika w Basic auth); pusty = Data Center (token jako `Bearer`) |
+| `work.azureDevops` | `boolean` | `false` | Azure DevOps Services |
+| `work.azureOrg` | `string` | `""` | organizacja z `https://dev.azure.com/<org>`; wklejony adres (`dev.azure.com/<org>/…`, `<org>.visualstudio.com`) jest skracany do nazwy |
+| `work.linear` | `boolean` | `false` | Linear |
+| `work.holdDuringFocus` | `boolean` | `true` | nowe pozycje z czasu focusa czekają do przerwy albo do Stop (`heldCount`, okienko `workDigest`); wyłączone = lista widoczna także w focusie, a nowe pozycje ogłaszane od razu (okienko `workDigest` także w focusie) |
+
+Błędy walidacji: `config.invalid` z polem `work.gitlabUrl`, `work.jiraUrl` (oba: `https://`, host `[a-z0-9.-]` z opcjonalnym portem 1–65535, bez `@`, `?` i `#`,
+ścieżka bez segmentów `.` i `..`, najwyżej 512 znaków; końcowe `/` usuwane; dla `gitlab.com` i `*.atlassian.net` ścieżka odrzucana), `work.jiraEmail`
+(pusty albo `nazwa@domena` bez spacji, znaków sterujących i `:`, najwyżej 254 znaki) albo `work.azureOrg` (`[A-Za-z0-9._-]`, najwyżej 64 znaki, nie same kropki).
+Komunikat nie powtarza wartości. Walidacja działa także przy wyłączonym narzędziu.
+
+Nowe DTO i pola:
+
+| Typ | Pola / warianty | Uwagi |
+|---|---|---|
+| `WorkSource` | `github`, `gitlab`, `jira`, `azureDevops`, `linear` | argument `set_work_token`; `SessionGoal.source` |
+| `WorkItemKind` | `assigned` (próg 1); `reviewRequested`, `changesRequested`, `ciFailed`, `mention` (próg 2); `notification` (próg 3) | `focus_core::work::tier` |
+| `WorkReason` | `assigned`, `inSprint`, `highPriority`, `dueToday`, `overdue`, `inProgress`, `blockingOthers`, `waitingLong`, `mentioned` | liczy core; UI pokazuje teksty ze `strings.ts` („Dlaczego teraz”) |
+| `WorkItem` | `id` (źródło + klucz), `source`, `kind`, `key` (np. `PROJ-123`, `owner/repo#45`, `ENG-7`), `title`, `url` (pusty = bez linku), `project`, `priorityLabel` (nazwa z narzędzia), `priorityRank` (0 = najwyższy … 4 = najniższy, `null` = brak), `dueMs`, `status` (nazwa z narzędzia), `inSprint`, `updatedMs`, `score`, `reasons`, `unseen` | `score` i `reasons` zawsze liczy `rank`; wartości z platformy są ignorowane |
+| `WorkSourceStatus` | `source`, `state` (`IntegrationState`), `detail` (angielski szczegół bez tokenu i adresów), `account` (nazwa konta, jeśli narzędzie ją podaje) | jedno na narzędzie: `off` (wyłączone), `unavailable` (brak adresu, tokenu albo DPAPI), `on` (także „not synced yet”), `error` |
+| `WorkStatus` | `revision`, `sources`, `items` (najwyżej 50, od najlepszej), `heldCount` (nowe pozycje wstrzymane w focusie), `lastSyncMs` | getter `get_work`, event `work://changed` |
+| `SessionGoal` | `source`, `key`, `title`, `url` | argument `set_session_goal` |
+| `SessionSnapshot.goal` | `SessionGoal \| null` | `#[serde(default)]`; cel w Idle i w trakcie sesji |
+| `SessionSummary.goal` / `goalDone` | `SessionGoal \| null` / `boolean \| null` | `#[serde(default)]`, więc stara historia się wczytuje; `goalDone` ustawia `mark_goal_done` |
+| `PopupKind.workDigest` | – | nowe pozycje z czasu focusa, na start przerwy albo po Stop |
+| `PopupInfo.workCount` | `number` | `#[serde(default)]`; liczba nowych pozycji dla `workDigest`, w innych okienkach 0 |
+
+Core (`focus-core`, bez zegara, plików i sieci; czasy kalendarzowe w ms od epoki Unix):
+- `work::rank(items, now_ms) -> Vec<WorkItem>`: czyści każdą pozycję, łączy kopie o tym samym `id`, liczy `score` i `reasons`, sortuje od najlepszej
+  i zwraca najwyżej `MAX_ITEMS` (50). Wynik nie zależy od kolejności wejścia; arytmetyka nasyca się (żadne czasy nie powodują paniki).
+- Układ `score` (cyfry dziesiętne, wyższy = wyżej):
+
+  | Cyfry | Znaczenie |
+  |---|---|
+  | `10^9` | próg: 3 = przypisane, 2 = czeka na użytkownika, 1 = powiadomienie |
+  | `10^8` | tylko próg 2: 3 = prośba o review, 2 = zmiany do zrobienia / nieudane CI, 1 = wzmianka |
+  | `10^7` | 1 = aktywny sprint / cykl / iteracja |
+  | `10^6` | priorytet: 4 − ranga (ranga 0 → 4 … ranga 4 → 0); brak = średni (ranga 2); rangi powyżej 4 przycinane do 4 |
+  | `10^5` | termin: 3 = po terminie (`dueMs < now`), 2 = w ciągu 24 h, 1 = w ciągu 3 dni (`DUE_SOON_MS`), 0 = później albo brak |
+  | `10^4` | 1 = status „w toku” (`is_in_progress`) |
+  | `10^0..10^3` | godziny od `updatedMs`, najwyżej 9999 (w progach 1 i 2 starsze wyżej; w progu 3 9999 − godziny, więc nowsze wyżej) |
+
+  Remis: `key`, potem `id`.
+- Powody, w tej kolejności i tylko gdy dotyczą: `assigned` (próg 1), `blockingOthers` (`reviewRequested`), `mentioned` (`mention`); `inSprint`;
+  `highPriority` (ranga 0 albo 1, `HIGH_PRIORITY_MAX_RANK`); `overdue` albo `dueToday`; `inProgress`; `waitingLong` (tylko próg 2, `updatedMs` starsze niż 3 dni, `WAITING_LONG_MS`).
+- Łączenie kopii (`id` = źródło + klucz): wygrywa najlepszy próg, potem silniejsza grupa progu 2, potem więcej ustawionych pól, potem nowsza (dalej stała kolejność);
+  zwycięzca zachowuje swoje pola i uzupełnia brakujące z pozostałych kopii; `inSprint` i `unseen` to „lub”, `updatedMs` to maksimum.
+- Czyszczenie: znaki sterujące → spacje, przycięcie; tytuł do `MAX_TITLE_CHARS` (300), klucz do `MAX_KEY_CHARS` (120), projekt, etykieta priorytetu i status
+  do `MAX_LABEL_CHARS` (80) z „…” na końcu; pusta etykieta → `null`; adres inny niż `http(s)://` z hostem, z białymi znakami albo dłuższy niż `MAX_URL_LEN` (2048) → `""`.
+- `work::tier(kind)` (1 / 2 / 3), `work::is_in_progress(status)` (bez wielkości liter, spacji i interpunkcji; fragmenty w dowolnym miejscu: „in progress”,
+  „in review”, „code review”, „in development”, „doing”, `workflow::in progress` i odpowiedniki PL / DE / FR / ES / IT / RU; tylko jako cały status: „active”,
+  „started”, „review”, „wip”, „development”, „implementing”, „implementation”, „indeterminate”), `work::normalize_goal(goal)` (czyszczenie jak wyżej,
+  adres spoza `http(s)://` pusty, `None` przy pustym kluczu i tytule).
+- `config::WorkConfig::normalized()` (w `Config::normalized`), `config::normalize_work_url(field, raw)`; stałe `DEFAULT_GITLAB_URL`, `MAX_WORK_URL_LEN` (512),
+  `MAX_JIRA_EMAIL_LEN` (254), `MAX_AZURE_ORG_LEN` (64).
+- `session::Input::SetGoal(Option<SessionGoal>)`: w każdej fazie, bez efektów, przez `normalize_goal`; cel jest w każdym snapshocie i przechodzi przez Start;
+  na Stop trafia do `SessionTotals.goal`, a sesja zostaje bez celu; `Session::goal()`. `stats::summarize` kopiuje go do `SessionSummary.goal` z `goalDone: None`.
+
+Platforma (`focus-platform/src/work/`: `mod.rs` + klient na narzędzie za traitem `WorkProvider`; blokujące HTTP z limitem 10 s; tylko zapytania odczytu,
+także te wysyłane jako `POST`: wyszukiwanie Jira, `workitemsbatch`, GraphQL; przekierowania tylko w obrębie tego samego adresu; 401 / 403 → błąd tokenu
+`token invalid or missing scope`, 429 albo 403 z wyczerpanym limitem → błąd limitu; komunikaty bez adresów i treści odpowiedzi)
+mapuje odpowiedzi narzędzi na `WorkItem`: `id` = `<źródło>:<klucz>` (np. `github:owner/repo#45`, `azure-devops:#42`),
+termin bez godziny = ostatnia milisekunda tego dnia czasu lokalnego, priorytet narzędzia → `priorityRank` 0–4 (nazwa w `priorityLabel`), status jak w narzędziu
+(kategoria statusu Jira `indeterminate` i typ stanu Linear `started` też liczą się jako „w toku”). API, z których korzysta (ADR-017 pkt 1 i 7):
+
+| Narzędzie | API | Rodzaje pozycji |
+|---|---|---|
+| GitHub | REST `api.github.com`: `GET /user`; `GET /search/issues` (otwarte issue przypisane do użytkownika: priorytet i „w toku” z etykiet, termin z kamienia milowego; otwarte PR z prośbą o jego review; jego otwarte PR); dla własnych PR `GET …/pulls/{n}/reviews` (prośba o zmiany), `GET …/pulls/{n}` i `GET …/commits/{sha}/check-runs` (Checks API tylko z tokenem klasycznym), potem łączny status commita (nieudane CI); `GET /notifications?participating=true` (tylko token klasyczny; nieprzeczytane; `If-Modified-Since` z ostatniego `Last-Modified`, odpowiedź 304 = poprzednie pozycje; `X-Poll-Interval` idzie do powłoki; powód `mention` → wzmianka) | `assigned`, `reviewRequested`, `changesRequested`, `ciFailed`, `mention`, `notification` |
+| GitLab | REST `/api/v4` (token w nagłówku `PRIVATE-TOKEN`): `GET /user`; `GET /issues?scope=assigned_to_me&state=opened` (termin `due_date`, priorytet i „w toku” z etykiet, bieżąca iteracja = sprint); `GET /merge_requests?scope=all&reviewer_id=…&state=opened` (bez MR, które użytkownik już ocenił: `…/reviewers`); jego otwarte MR (`scope=created_by_me`: `detailed_merge_status` `requested_changes` albo nieudany pipeline); `GET /todos?state=pending` (`mentioned` / `directly_addressed` → wzmianka, reszta → powiadomienie) | `assigned`, `reviewRequested`, `changesRequested`, `ciFailed`, `mention`, `notification` |
+| Jira | `GET /rest/api/{3\|2}/myself`; `GET /rest/api/{3\|2}/field` (pola sprintu: `schema.custom` kończy się na `:gh-sprint`; zapamiętane w kliencie); JQL przypisanych, nierozwiązanych zgłoszeń przez `POST /rest/api/3/search/jql` (Cloud, z listą `fields`) albo `POST /rest/api/2/search` (Data Center, token jako `Bearer`); obserwowane zgłoszenia innych osób zmienione w ostatniej dobie. Token Cloud z zakresami: po odmowie witryny `cloudId` z `/_edge/tenant_info` (bez danych logowania) i zapytania przez `https://api.atlassian.com/ex/jira/<cloudId>` | `assigned`, `notification` |
+| Azure DevOps | REST `dev.azure.com/<org>` (PAT jako Basic z pustą nazwą użytkownika): `GET /_apis/connectionData` (id i nazwa użytkownika; API Profiles wymaga tokenów Entra); WIQL na poziomie organizacji (przypisane, otwarte) i `POST /_apis/wit/workitemsbatch` (tytuł, stan, typ, projekt, iteracja, priorytet 1–4, termin); bieżąca iteracja domyślnego zespołu projektu (`GET /<projekt>/_apis/work/teamsettings/iterations?$timeframe=current`); `GET /_apis/projects` i PR w ostatnio zmienianych projektach: `searchCriteria.reviewerId` bez głosu użytkownika, `searchCriteria.creatorId` z głosem „czeka na autora” (−5) albo „odrzucone” (−10). Nieważny PAT bywa odpowiedzią 203 ze stroną logowania zamiast 401 | `assigned`, `reviewRequested`, `changesRequested` |
+| Linear | GraphQL `https://api.linear.app/graphql` (klucz w nagłówku `Authorization` bez `Bearer`), jedno zapytanie: nazwa użytkownika, `viewer.assignedIssues` (typ stanu inny niż completed / canceled / duplicate, najwyżej 50; `priority` 1 Urgent … 4 Low → ranga 0–3, 0 = brak; `dueDate`; aktywny cykl = sprint) i ostatnie powiadomienia (nieprzeczytane, nieodłożone, niezarchiwizowane; kategoria `mentions` → wzmianka, reszta → powiadomienie; klucz = identyfikator issue, więc łączą się z przypisanym). Błędy GraphQL `AUTHENTICATION_ERROR` / `FORBIDDEN` → błąd tokenu, `RATELIMITED` → limit | `assigned`, `mention`, `notification` |
+
+Powłoka (`src-tauri/src/work.rs`, czysta część w `work/model.rs`, pobieranie w `work/fetch.rs`): wątek `focus-work` trzyma stan, a każde pobranie idzie w osobnym
+krótkim wątku z klientem narzędzia (klient i jego token zostają między pobraniami, dopóki nie zmienią się ustawienia ani token). Harmonogram: co 5 minut
+(`POLL_EVERY`) i od razu po `refresh_work`, zmianie tokenu albo ustawień narzędzia oraz na starcie sesji; po błędzie ponowienie po 1, 2, 4… min (najwyżej 30,
+`FIRST_BACKOFF` / `MAX_BACKOFF`) z zachowaniem poprzednich pozycji; GitHub nie częściej niż jego `X-Poll-Interval` (najwyżej 1 h, `MAX_POLL_HINT`), także przy
+`refresh_work`. Pobranie bez odpowiedzi przez 3 min jest porzucane, a `refresh_work` czeka na wyniki najwyżej 60 s i oddaje bieżący stan.
+`set_work_token` sprawdza token (`validate_token`: przycięty, 1–4096 widocznych znaków ASCII; błąd `work.token` z polem `token`), zapisuje go szyfrowany
+(`work-<github|gitlab|jira|azure-devops|linear>-token.bin`, błąd zapisu `work.tokenSave`) albo usuwa przy `null`. Szczegół błędu narzędzia przechodzi przez
+`model::redact` (token → `<token>`, każde słowo z `://` → `<link>`, najwyżej 200 znaków), więc w `WorkSourceStatus.detail` i w logach nie ma tokenów ani adresów.
+`unseen` i ogłaszanie nowych pozycji: pozycje oddane przez `get_work` / `refresh_work` liczą się od następnego stanu jako widziane; ich identyfikatory
+(najwyżej 2000, bez tytułów) leżą w `work-seen.json`. Pierwsza lista narzędzia po starcie albo zmianie jego ustawień jest punktem wyjścia i niczego nie ogłasza.
+Nowe pozycje w Focus przy `holdDuringFocus` trafiają do `heldCount`; powłoka ogłasza je okienkiem `workDigest` (toastem bez tytułów, `texts::work_digest_toast`,
+tylko gdy okienka nie da się otworzyć) na start przerwy i po Stop, nigdy w focusie. `workDigest` nie zastępuje okienka na ekranie: czeka, aż zniknie (najpierw okienko
+przerwy, potem paczka), a z kilku czekających zostaje najnowsza (`popup.rs`). Okienko startu focusa zastępuje paczkę zamiast ją odkładać, a na start focusa
+z wstrzymaniem `PopupHandle::withdraw_work_digest` usuwa ją z ekranu i z kolejki, więc paczka sprzed focusa nie wraca w jego trakcie. W focusie z wstrzymaniem
+błąd pobierania nie wysyła `app://error` (widać go tylko w stanie narzędzia). `set_session_goal` wysyła `Input::SetGoal` do aktora; `mark_goal_done` (`Persistence::mark_goal_done`) ustawia
+`goalDone` w ostatnim podsumowaniu i przepisuje atomowo `history.jsonl` (linie tej sesji), a odpowiedź udzielona, zanim podsumowanie trafiło do pliku, jest dopisywana razem z nim.
+Tytułów, kluczy i linków pozycji powłoka nie loguje (tylko liczby).
+
+UI: `src/lib/state/work.svelte.ts` (listen → `get_work` → nowsza rewizja), `NextUp.svelte` (karta „Co dalej?” na stronie Skupienie: Idle, przerwa, a w focusie
+tylko przy wyłączonym `holdDuringFocus`), `SessionGoalLine.svelte` (cel pod minutnikiem, „×” czyści), `WorkSettings.svelte` (Ustawienia → Narzędzia pracy:
+włącznik, adres / e-mail / organizacja, token z instrukcją najwęższych uprawnień, stan, „Odśwież teraz”, `holdDuringFocus`); podsumowanie pyta „Zrobione?”,
+a historia pokazuje cel ze znacznikiem.
 
 ## 7. Model wątków i współbieżności
 
