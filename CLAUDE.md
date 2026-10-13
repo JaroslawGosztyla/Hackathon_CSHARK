@@ -26,7 +26,8 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
 ## Struktura
 
 - `crates/focus-core/` — czysta logika: `timing.rs` (profil czasów), `session.rs` (maszyna stanów Focus ⇄ Przerwa), `config.rs` (domyślne + walidacja),
-  `blocklist.rs` (domeny, procesy przeglądarek, dopasowanie tytułów), `stats.rs` (użycie aplikacji, podsumowanie). `src/api.rs` = kontrakt IPC.
+  `blocklist.rs` (parser `websiteblacklist.txt`: domeny + regexy RE2, procesy przeglądarek, dopasowanie tytułów), `stats.rs` (użycie aplikacji, podsumowanie).
+  `src/api.rs` = kontrakt IPC. `assets/websiteblacklist.txt` = domyślna lista stron wbudowana w aplikację (ADR-013 pkt 4).
 - `crates/focus-audio/` — dedykowany wątek rodio, syntetyczne dzwonki (`ChimePlayer`). Muzyka nie gra w Ruście.
 - `crates/focus-platform/` — integracje OS za traitami z `Noop`: `foreground` (aktywne okno + bezczynność),
   `notifications` (DND Windows przez nieudokumentowany COM `IQuietHoursSettings`, stan sprzed focusa awaryjnie z WNF),
@@ -35,6 +36,7 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `shields.rs` (wątek osłon z generacją, `shields-restore.json` + wpis RunOnce `FocusModeRestore` → `--restore-shields`),
   `tracker.rs` (próbkowanie aktywnej aplikacji + awaryjny nudge po tytule okna, gdy rozszerzenie nie odpytało mostu przez 90 s),
   `bridge.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia), `persistence.rs` (`config.json`, `history.jsonl`),
+  `blocklist.rs` (`websiteblacklist.txt` w katalogu konfiguracji: utworzenie z domyślnej listy, odczyt, auto-przeładowanie po zapisie, `blocklist://changed`),
   `music.rs` (skan folderu; asset scope tylko dla znalezionych plików audio),
   `teams.rs`, `tray.rs`, `texts.rs` (teksty toastów).
 - `src/` — **frontend Svelte/TS** (nie Rust!). `src/lib/api.ts` = jedyne miejsce z `invoke`/`listen`. `src/lib/player/` = odtwarzacz muzyki.
@@ -67,7 +69,7 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
 
 1. **`focus-core` nie zależy od Tauri, rodio, OS, sieci ani systemu plików.** API: `Session::handle(now, Input) -> Vec<Effect>`.
    Nie czytaj zegara ani plików w core. `now` (monotoniczny + kalendarzowy) i config przychodzą z zewnątrz.
-   Pliki czyta i zapisuje `src-tauri/src/persistence.rs`.
+   Pliki czyta i zapisuje powłoka: `src-tauri/src/persistence.rs` (a `websiteblacklist.txt` — `src-tauri/src/blocklist.rs`).
 2. **Wszystkie czasy pochodzą z `TimingProfile`** (`normal()`/`demo()`/`from_config()`), bez magicznych liczb w logice ani w UI.
    Fazy liczy zegar monotoniczny, statystyki kalendarzowy (ADR-011). Zachowanie faz i kolejność efektów są dokładnie takie jak w tabeli ADR-013.
 3. **Efekty uboczne wykonuje tylko powłoka** (`effects.rs`). Komendy Tauri są cienkie. **Aktor nigdy nie czeka na wolny efekt**:

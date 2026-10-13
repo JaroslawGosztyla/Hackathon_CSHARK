@@ -299,9 +299,14 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `open_media_window` | `url: string, play: boolean` | `()` | otwiera (albo przekierowuje) osobne okno YouTube, które gra link jako stronę najwyższego poziomu. Dla linków odmawiających osadzania (błędy YouTube 101/150/153) albo takich, których nie da się osadzić (ADR-013 pkt 2). Tylko https YouTube / YouTube Music, inaczej `media.url` |
 | `control_media_window` | `action: MediaAction, volume: number \| null` | `()` | `MediaAction`: `play` / `pause` / `setVolume` / `show` (pokazuje, przywraca i aktywuje okno, np. do akceptacji strony zgody YouTube) / `close`. `volume` (0..1) tylko dla `setVolume`. Przy zamkniętym oknie no-op |
 | `get_media_window` | – | `MediaWindowStatus` | |
+| `get_blocklist` | – | `BlocklistInfo` | wczytana lista `websiteblacklist.txt` (przy pierwszym starcie plik powstaje z domyślnej listy wbudowanej w aplikację) |
+| `open_blocklist_file` | – | `()` | otwiera `websiteblacklist.txt` w domyślnym edytorze tekstu systemu |
+| `reload_blocklist` | – | `BlocklistInfo` | wczytuje plik od razu (po zapisaniu i tak wczytuje się sam) |
 
-Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, phase, remainingSecs }`
-(port to stała `BRIDGE_PORT` w `api.rs`).
+Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
+(port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
+wyrażeń regularnych (RE2) dopasowywanych do pełnego adresu URL bez rozróżniania wielkości liter. Poza blokadą obie listy są puste.
+`patterns` ma `#[serde(default)]`, więc stan bez tego pola też się wczytuje.
 
 ### 6.2 Eventy
 
@@ -314,9 +319,10 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `session://summary` | `SessionSummary` | raz, gdy sesja się kończy (Stop) |
 | `shields://status` | `ShieldStatus` | gdy któraś osłona zmienia stan |
 | `teams://status` | `TeamsStatus` | gdy zmienia się połączenie z Teams (także postęp logowania) |
-| `focus://nudge` | `Nudge` | awaryjny nudge: tracker wykrył stronę z blocklisty w tytule okna przeglądarki (bez rozszerzenia) |
+| `focus://nudge` | `Nudge` | awaryjny nudge: tracker wykrył stronę z listy w tytule okna przeglądarki (bez rozszerzenia); `matched` to domena albo źródło regexu |
 | `app://error` | `AppError` | integracja zawiodła; sesja trwa (degradacja) |
 | `media://window` | `MediaWindowStatus` | okno YouTube się otwiera, zamyka, przechodzi na inny adres albo zmienia tytuł |
+| `blocklist://changed` | `BlocklistInfo` | `websiteblacklist.txt` wczytany ponownie (automatycznie albo przez `reload_blocklist`) z innym wynikiem |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -326,6 +332,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `ShieldStatus` | `get_shield_status` | `shields://status` |
 | `TeamsStatus` | `get_teams_status` | `teams://status` |
 | `MediaWindowStatus` | `get_media_window` | `media://window` |
+| `BlocklistInfo` | `get_blocklist` (także wynik `reload_blocklist`) | `blocklist://changed` |
 
 Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
 1. **najpierw** rejestruje `listen(...)`,
@@ -395,6 +402,40 @@ Argumenty komend okna YouTube: `open_media_window` → `{ "url": "https://www.yo
 ```json
 { "code": "config.invalid", "message": "focusMinutes must be between 1 and 240, got 300", "field": "focusMinutes" }
 ```
+
+`BlocklistInfo` (plik z jedną pominiętą linią; listy skrócone, `message` przykładowy):
+
+```json
+{ "revision": 2, "path": "C:\\Users\\ola\\AppData\\Roaming\\com.focusmode.app\\websiteblacklist.txt",
+  "domains": ["kwejk.pl", "jbzd.com.pl", "reddit.com"],
+  "patterns": ["linkedin\\.com/feed", "youtube\\.com/shorts"],
+  "issues": [{ "line": 42, "text": "(reddit|wykop\\.pl", "message": "Niepoprawne wyrażenie regularne: brak zamykającego nawiasu." }],
+  "error": null }
+```
+
+`BridgeState` (Focus, blokada włączona):
+
+```json
+{ "active": true, "blocklist": ["kwejk.pl", "reddit.com"], "patterns": ["youtube\\.com/shorts"],
+  "phase": "focus", "remainingSecs": 1712 }
+```
+
+### 6.5 Lista blokowanych stron (`websiteblacklist.txt`, ADR-013 pkt 4)
+
+Lista stron do blokowania nie jest częścią `Config`: **jedynym źródłem jest plik `websiteblacklist.txt`** w katalogu konfiguracji
+(`app_config_dir()`, na Windows `%APPDATA%\com.focusmode.app\websiteblacklist.txt`). Pole `shields.blocklist` usunięto z `ShieldsConfig`.
+Zostaje włącznik `shields.blockSites`. Stary `config.json` z polem `shields.blocklist` nadal się wczytuje, a to pole jest ignorowane.
+
+- `BlocklistInfo { revision, path, domains, patterns, issues, error }`: `path` to bezwzględna ścieżka pliku, `domains` to znormalizowane domeny
+  (zwykłe linie), a `patterns` to źródła regexów (linie w `/…/` albo ze znakami regexu). Obie listy zachowują kolejność z pliku, bez duplikatów.
+  `issues` to pominięte linie, a `error` jest ustawiony, gdy pliku nie da się przeczytać; wtedy w użyciu zostaje poprzednia lista (albo domyślna).
+- `BlocklistIssue { line, text, message }`: numer linii (od 1), linia jak w pliku (przycięta, najwyżej 200 znaków) i polski opis
+  dla Ustawień (niepoprawna domena, niepoprawny albo zbyt złożony regex, przekroczony limit).
+- Parsowanie i walidacja to czysta funkcja w `focus-core` (`blocklist.rs`, crate `regex`). Plik tworzy, czyta i przeładowuje powłoka
+  (`src-tauri/src/blocklist.rs`): przy starcie, automatycznie po zapisaniu i przez `reload_blocklist`. Domyślna treść
+  (`crates/focus-core/assets/websiteblacklist.txt`) jest wbudowana w aplikację, a przy braku pliku zostaje do niego skopiowana.
+- Dopasowanie: domena blokuje siebie i swoje subdomeny. Regex jest dopasowywany bez rozróżniania wielkości liter: w rozszerzeniu
+  do pełnego adresu URL karty, a w awaryjnym nudge'u trackera do tytułu okna przeglądarki.
 
 ## 7. Model wątków i współbieżności
 

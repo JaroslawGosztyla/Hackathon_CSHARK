@@ -31,7 +31,8 @@ Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu).
   - wyciszenie powiadomień Windows („Nie przeszkadzać”); w przerwie, po Stop i przy wyjściu powiadomienia są włączane z powrotem
     (jeśli „Nie przeszkadzać” było włączone już przed focusem, FocusMode go nie rusza),
   - status **„Nie przeszkadzać” w Microsoft Teams** (przez Microsoft Graph, wymaga jednorazowej konfiguracji),
-  - **blokada rozpraszających stron** (reddit, 9gag, kwejk, jbzd, tiktok… lista do edycji) przez rozszerzenie przeglądarki,
+  - **blokada rozpraszających stron** (kwejk, jbzd, reddit, facebook, tiktok… lista w pliku tekstowym
+    [`websiteblacklist.txt`](#lista-blokowanych-stron-websiteblacklisttxt), z domenami i wyrażeniami regularnymi) przez rozszerzenie przeglądarki,
     które przekierowuje na stronę „Wracaj do pracy”; gdy rozszerzenie nie odezwało się w ostatnich 90 s (np. go nie ma),
     FocusMode rozpoznaje stronę po tytule okna przeglądarki i przywołuje cię powiadomieniem,
   - ekran i komputer nie usypiają się w trakcie skupienia.
@@ -62,8 +63,43 @@ Działa w Chrome, Edge, Brave, Operze i Vivaldi (Chromium). Firefox nie jest na 
 4. W Ustawieniach FocusMode status zmieni się na „Rozszerzenie połączone” (najpóźniej po 30 s).
 
 Rozszerzenie co 30 s (i przy zmianie karty) pyta aplikację o stan pod `http://127.0.0.1:47615/v1/state`. W trakcie skupienia przekierowuje
-domeny z listy na lokalną stronę „Wracaj do pracy”, a w przerwie wszystko otwiera się normalnie. Gdy aplikacja nie działa, rozszerzenie niczego nie blokuje.
+strony z listy (niżej) na lokalną stronę „Wracaj do pracy”, a w przerwie wszystko otwiera się normalnie. Gdy aplikacja nie działa, rozszerzenie niczego nie blokuje.
 Szczegóły: [browser-extension/README.md](browser-extension/README.md).
+
+## Lista blokowanych stron (websiteblacklist.txt)
+
+Listę stron blokowanych w trakcie skupienia trzymasz w zwykłym pliku tekstowym:
+
+```
+%APPDATA%\com.focusmode.app\websiteblacklist.txt
+```
+
+Przy pierwszym uruchomieniu FocusMode tworzy go z domyślnej listy popularnych rozpraszaczy, polskich i anglojęzycznych
+(memy, media społecznościowe, plotki, sport, wideo, gry, zakupy). Otworzysz go z **Ustawienia → Blokuj rozpraszające strony**:
+jeden przycisk otwiera plik w domyślnym edytorze tekstu, drugi wczytuje go ponownie. Po zapisaniu plik wczytuje się sam, bez restartu
+(rozszerzenie dostaje nową listę najpóźniej po 30 s), a Ustawienia pokazują liczbę domen i wzorców oraz linie, które zostały pominięte (z numerem linii i powodem).
+
+Format:
+
+- jedna pozycja w linii; linie zaczynające się od `#` to komentarze, puste linie są pomijane,
+- **zwykła linia to domena**: blokuje ją razem ze wszystkimi subdomenami (`https://` i ścieżka są ignorowane, liczy się tylko domena;
+  adres ze znakiem `?`, np. `youtube.com/watch?v=…`, jest już wyrażeniem regularnym, więc wpisz samą domenę),
+- **wyrażenie regularne**: linia ujęta w ukośniki `/…/` albo zawierająca któryś ze znaków `\ ^ $ * + ? ( ) [ ] { } |`.
+  Jest dopasowywane do **całego adresu strony** (np. `https://www.youtube.com/shorts/abc`), bez rozróżniania wielkości liter.
+  Składnia RE2, taka jak w Chrome: bez lookahead, lookbehind i odwołań wstecznych. Kropka oznacza „dowolny znak”, więc w domenach pisz `\.`.
+  Wzorzec bez kotwic pasuje do dowolnego miejsca adresu; żeby trafić tylko w konkretną stronę, zacznij od `^https?://`.
+
+Przykłady:
+
+| Linia | Co blokuje |
+|---|---|
+| `kwejk.pl` | kwejk.pl i wszystkie subdomeny (`www.kwejk.pl`, `m.kwejk.pl`) |
+| `youtube\.com/shorts` | tylko YouTube Shorts; zwykłe filmy działają |
+| `^https?://(www\.)?onet\.pl/?$` | tylko stronę główną Onetu; `poczta.onet.pl` działa dalej |
+
+Żeby odblokować stronę, usuń linię albo dopisz na jej początku `#`. Domyślna lista zawiera też zakomentowane pozycje
+(cały YouTube, portale informacyjne, komunikatory), które włączysz, usuwając `#`.
+Bez rozszerzenia FocusMode porównuje z listą tylko tytuł okna przeglądarki, więc wzorce pisane pod adres (np. z `^https?://`) wtedy nie zadziałają.
 
 ## Teams „Nie przeszkadzać” (opcjonalnie)
 
@@ -99,8 +135,8 @@ W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
 - **Śledzenie aplikacji** zapisuje tylko nazwę procesu na pierwszym planie i czas bezczynności, raz na sekundę i tylko w trakcie
   biegnącego skupienia (nie w pauzie i nie w przerwie). Tytułów okien nie zapisujemy: służą wyłącznie w pamięci do awaryjnego rozpoznania
   rozpraszającej strony. Śledzenie wyłączysz w Ustawieniach.
-- **Rozszerzenie nie wysyła historii przeglądania** ani do aplikacji, ani nigdzie indziej. Samo pobiera z aplikacji stan i listę domen,
-  a adres karty porównuje lokalnie w przeglądarce. Nie ładuje zdalnego kodu. Jedynym adresem, z którym się łączy, jest `127.0.0.1:47615`.
+- **Rozszerzenie nie wysyła historii przeglądania** ani do aplikacji, ani nigdzie indziej. Samo pobiera z aplikacji stan i listę domen
+  oraz wzorców z `websiteblacklist.txt`, a adres karty porównuje lokalnie w przeglądarce. Nie ładuje zdalnego kodu. Jedynym adresem, z którym się łączy, jest `127.0.0.1:47615`.
 - **Lokalny most** nasłuchuje tylko na `127.0.0.1` (nie jest widoczny w sieci) i udostępnia wyłącznie odczyt stanu.
 - **Ruch sieciowy** jest tylko taki, jaki sam wybierzesz: odtwarzacz łączy się z YouTube / adresem streamu / linkami jak zwykła przeglądarka,
   a opcjonalna integracja z Teams łączy się z Microsoft Graph. YouTube gra w osadzonym iframe, którym aplikacja steruje przez `postMessage`.
@@ -114,7 +150,8 @@ W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
   gdy było wyłączone. Zaraz po włączeniu FocusMode zapisuje, co trzeba cofnąć (`shields-restore.json`), i dodaje wpis `FocusModeRestore`
   w `HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce`, który przy następnym logowaniu uruchamia FocusMode z `--restore-shields`.
   Powiadomienia wracają w przerwie, po Stop i przy wyjściu, a po awarii przy następnym uruchomieniu aplikacji albo najpóźniej przy następnym logowaniu.
-- Dane leżą lokalnie w `%APPDATA%\com.focusmode.app`: `config.json` (ustawienia), `history.jsonl` (podsumowania sesji),
+- Dane leżą lokalnie w `%APPDATA%\com.focusmode.app`: `config.json` (ustawienia), `websiteblacklist.txt` (lista blokowanych stron),
+  `history.jsonl` (podsumowania sesji),
   `teams-token.bin` (jeśli połączysz Teams), `shields-restore.json` (tylko w trakcie wyciszenia). Logi: `%LOCALAPPDATA%\com.focusmode.app\logs`,
   dane WebView2 (w tym ciasteczka YouTube z okna YouTube i z osadzonego playera): `%LOCALAPPDATA%\com.focusmode.app\EBWebView`.
 
@@ -158,7 +195,7 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Katalog | Zawartość |
 |---|---|
-| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów, config, blocklista, statystyki; kontrakt IPC w `api.rs` |
+| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów, config, parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki; kontrakt IPC w `api.rs` |
 | `crates/focus-audio` | dzwonki (rodio) na dedykowanym wątku |
 | `crates/focus-platform` | integracje Windows: aktywne okno, wyciszenie powiadomień, keep-awake, Teams (Graph) |
 | `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray |

@@ -35,6 +35,12 @@ zadania z oknami przerwy, ćwiczeniami, ostrzeżeniem, trybem spotkania, tint i 
   albo linku nie da się osadzić (`/@kanał/live`, `/channel/<id>/live`, `/@kanał`), link gra w ukrytym oknie Tauri `media` ze stroną YouTube (odtwarzacz w tle, bez uprawnień IPC,
   sterowany przez powłokę; widoczne tylko do pierwszego wyboru ciasteczek YouTube). Domyślny stream: `@LofiGirl/live`. E2E release 2026-10-13: 12/12 + zgoda 5/5. Kontrakt: `open_media_window` / `control_media_window` / `get_media_window` + `media://window`; dokumentacja: ADR-013, ARCHITECTURE §6, README.
   DoD: domyślny stream Lofi Girl gra z zainstalowanego buildu; Pauza / Wznów / Stop / głośność działają na okno.
+- [~] **SR-11** (B) Lista stron w pliku `websiteblacklist.txt` (ADR-013 pkt 4): `%APPDATA%\com.focusmode.app\websiteblacklist.txt`, tworzony z domyślnej listy
+  (`crates/focus-core/assets/websiteblacklist.txt`, rozpraszacze PL + EN); domeny + regexy RE2 (bez rozróżniania wielkości liter, w rozszerzeniu do pełnego URL,
+  w nudge'u do tytułu okna), komentarze `#`, auto-przeładowanie po zapisie; w Ustawieniach przyciski „otwórz w edytorze” i „wczytaj ponownie”, liczniki i pominięte linie.
+  Usunięte `config.shields.blocklist`. Kontrakt: `get_blocklist` / `open_blocklist_file` / `reload_blocklist` + `blocklist://changed`, `BridgeState.patterns`;
+  dokumentacja: ADR-013, ARCHITECTURE §6, README, CLAUDE.md.
+  DoD: w Focus `reddit.com` i `youtube.com/shorts/…` → „Wracaj do pracy”, zwykły film YouTube i `poczta.onet.pl` działają; zapis pliku z błędnym regexem → pominięta linia w Ustawieniach, reszta listy działa bez restartu.
 
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
@@ -207,3 +213,4 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   - **Kompilacja nie jest zweryfikowana**: na maszynie B moduł antywirusa ESET (`ebehmoni.dll`) wywala procesy przy wyjściu, w tym build scripty cargo. Po pullu uruchom `/check` (fmt, clippy, testy); `cargo test -p focus-core` zregeneruje `src/lib/bindings/` (na razie pisane ręcznie w formacie ts-rs), więc `git diff src/lib/bindings` powinien być pusty.
   - Do wspólnej decyzji: statusy starych tasków M0–M4 (porzucić albo przenieść po demo) i aktualizacja DESIGN/ARCHITECTURE (SR-09).
 - [2026-10-13] (B→A) Kontrakt: okno YouTube — komendy open_media_window / control_media_window / get_media_window, event media://window (MediaWindowStatus z rewizją); powód: Lofi Girl i część YouTube Music odmawia osadzania (błąd 150).
+- [2026-10-13] (B→A) Kontrakt: websiteblacklist.txt — komendy get_blocklist / open_blocklist_file / reload_blocklist, event blocklist://changed (BlocklistInfo z rewizją), BridgeState.patterns, usunięte shields.blocklist z Config.

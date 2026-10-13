@@ -202,7 +202,7 @@ Odpadają okna przerwy, ostrzeżenia i `tint-*`, `window_ready`, heartbeat, watc
 ---
 
 ## ADR-013: Speedrun: pivot produktu
-**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2)
+**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4)
 
 **Kontekst:** termin oddania to **jutro** (2026-10-13). Po T0-2/T0-3 nie było jeszcze kontraktu (T0-4), maszyny stanów ani okien przerwy,
 a plan M1–M4 zakładał jeszcze ok. 10 dni pracy. Równocześnie właściciel produktu zmienił wymagania:
@@ -287,11 +287,42 @@ i nie odpowiada na nowe wymagania. rodio nie odtworzy YouTube ani streamu bez po
    |---|---|---|---|
    | Powiadomienia Windows | „Nie przeszkadzać” (Windows 11) / Focus Assist „Tylko priorytetowe” (Windows 10) przez nieudokumentowaną klasę COM bieżącego użytkownika `QuietHoursSettings` (`IQuietHoursSettings::put_UserSelectedProfile`, tej samej używa centrum powiadomień), bez praw administratora, bez rejestru i restartu Explorera. Stan sprzed focusa czytamy przez `get_UserSelectedProfile`, a awaryjnie ze stanu WNF `WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED` (tylko odczyt). DND włączamy tylko wtedy, gdy był wyłączony | wył. | w przerwie, po Stop i przy wyjściu DND jest wyłączany z powrotem, ale tylko jeśli włączył go FocusMode (włączonego wcześniej nie ruszamy). Zaraz po włączeniu `MuteToken` trafia do `shields-restore.json`, a w `HKCU\…\RunOnce` powstaje wpis `FocusModeRestore` (FocusMode z `--restore-shields`). Po crashu albo kill powiadomienia przywraca następny start aplikacji, a jeśli nikt jej nie uruchomi, następne logowanie |
    | Teams „Nie przeszkadzać” | Microsoft Graph `setUserPreferredPresence` (delegowane `Presence.ReadWrite`, device code flow, własna rejestracja aplikacji w Entra ID, token odświeżania szyfrowany DPAPI) z `expirationDuration` = focus + 5 min | wył. | `clearUserPreferredPresence` na przerwę i po Stop; gdy aplikacja zginie, status sam wygasa |
-   | Blokada stron | rozszerzenie MV3 pyta `GET http://127.0.0.1:47615/v1/state` (co 30 s, przy zmianie karty i nawigacji) i przekierowuje domeny z blocklisty na swoją stronę „Wracaj do pracy”. Awaryjnie, zawsze gdy rozszerzenie nie odpytało mostu w ostatnich 90 s (np. nie jest zainstalowane), tracker porównuje tytuł okna przeglądarki z blocklistą → `focus://nudge`, toast i okno FocusMode na wierzch | wł. | most zwraca `active: false`, rozszerzenie zdejmuje reguły; strona blokady w przerwie pokazuje link do oryginału |
+   | Blokada stron | rozszerzenie MV3 pyta `GET http://127.0.0.1:47615/v1/state` (co 30 s, przy zmianie karty i nawigacji) i przekierowuje strony z listy `websiteblacklist.txt` (domeny i regexy, niżej) na swoją stronę „Wracaj do pracy”. Awaryjnie, zawsze gdy rozszerzenie nie odpytało mostu w ostatnich 90 s (np. nie jest zainstalowane), tracker porównuje tytuł okna przeglądarki z listą → `focus://nudge`, toast i okno FocusMode na wierzch | wł. | most zwraca `active: false`, rozszerzenie zdejmuje reguły; strona blokady w przerwie pokazuje link do oryginału |
    | Nie usypiaj | `PowerCreateRequest` + `PowerSetRequest` (ekran + system) | wł. | `PowerClearRequest`; żądanie znika razem z procesem |
 
    Most HTTP słucha tylko na loopbacku, obsługuje tylko odczyt stanu (`GET`) i wysyła nagłówki CORS tylko originom rozszerzeń.
    Adresy odwiedzanych stron nie trafiają do aplikacji: rozszerzenie dopasowuje je u siebie.
+
+   **Lista stron w pliku `websiteblacklist.txt` (2026-10-13).**
+   - *Dlaczego:* właściciel produktu chce listy, którą edytuje się jak zwykły plik tekstowy, z obsługą wyrażeń regularnych
+     i od razu wypełnionej popularnymi rozpraszaczami dla polskich i anglojęzycznych użytkowników (kwejk, jbzd, reddit, facebook…).
+     Same domeny nie wystarczą, gdy trzeba zablokować tylko część serwisu (YouTube Shorts, tablica LinkedIn, strona główna portalu z pocztą).
+   - *Gdzie:* `websiteblacklist.txt` w katalogu konfiguracji aplikacji (na Windows `%APPDATA%\com.focusmode.app\websiteblacklist.txt`).
+     Przy pierwszym starcie (brak pliku) powłoka tworzy go z domyślnej listy wbudowanej w aplikację (`crates/focus-core/assets/websiteblacklist.txt`).
+     **Plik to jedyne źródło listy**: pole `config.shields.blocklist` zostało usunięte, a `shields.blockSites` zostaje jako włącznik osłony.
+     Stary `config.json` z tym polem nadal się wczytuje, a pole jest ignorowane.
+   - *Format:* jedna pozycja w linii; linia zaczynająca się od `#` to komentarz, puste linie są pomijane.
+     Zwykła linia to domena (normalizowana: bez schematu, ścieżki, portu i początkowego `www.`), która blokuje siebie i wszystkie subdomeny.
+     Linia ujęta w ukośniki `/…/` (co najmniej 3 znaki) to regex ze środka. Linia zawierająca któryś ze znaków `\ ^ $ * + ? ( ) [ ] { } |`
+     to regex w całości (sama kropka nie robi z linii regexu, więc `kwejk.pl` jest domeną). Wklejony adres ze znakiem `?`
+     (np. `https://www.youtube.com/watch?v=…`) byłby regexem, który nie pasuje nawet do samego siebie, więc trafia do `issues` z podpowiedzią (sama domena albo `\?`).
+     Regexy mają składnię RE2 (wspólną dla crate'u `regex` i Chrome: bez lookaround i odwołań wstecznych) i są dopasowywane bez rozróżniania
+     wielkości liter: **w rozszerzeniu do pełnego adresu URL karty**, a **w awaryjnym nudge'u do tytułu okna przeglądarki**.
+   - *Jak:* `focus-core` (`blocklist.rs`) parsuje tekst czystą funkcją, bez I/O. Linie z błędem (niepoprawna domena, niepoprawny albo zbyt złożony regex,
+     przekroczony limit) są pomijane i trafiają do `issues` z numerem linii i polskim opisem, a reszta listy działa.
+     Powłoka (`src-tauri/src/blocklist.rs`) wczytuje plik przy starcie, **automatycznie po każdym zapisie** i na żądanie (`reload_blocklist`).
+     Zmiana wyniku daje `blocklist://changed` (`BlocklistInfo` z rewizją, getter `get_blocklist`), a most od razu podaje nowe `blocklist` i `patterns` (rozszerzenie bierze je przy następnym odpytaniu, najpóźniej po 30 s).
+     Gdy pliku nie da się przeczytać, `BlocklistInfo.error` opisuje błąd, a w użyciu zostaje poprzednia lista (albo domyślna).
+   - *UI:* w Ustawieniach (blokada stron) przycisk otwiera plik w **domyślnym edytorze tekstu systemu** (`open_blocklist_file`), drugi wczytuje go
+     ponownie. Obok są liczba domen i wzorców, ścieżka pliku i lista pominiętych linii.
+   - *Domyślna lista:* polskie i anglojęzyczne rozpraszacze w sekcjach (memy, media społecznościowe i fora, plotki, sport, wideo i streaming, gry, zakupy).
+     LinkedIn jest blokowany tylko na tablicy (`linkedin\.com/feed`), a YouTube tylko w Shorts (cały YouTube jest zakomentowany).
+     Portale (onet, wp, interia, o2, gazeta) są blokowane **tylko na stronie głównej** regexem `^https?://(www\.)?(onet|wp|interia|o2|gazeta)\.pl/?(\?.*)?$`,
+     więc ich poczta i inne usługi działają dalej. Wiadomości i komunikatory są zakomentowane, do włączenia przez usunięcie `#`.
+   - *Konsekwencje:* regexy wykonują się w czasie liniowym (RE2 / `regex`), więc wzorzec z pliku nie zawiesi aplikacji ani przeglądarki.
+     Wzorce pisane pod adres URL (np. z `^https?://`) nie pasują do tytułu okna, więc bez rozszerzenia nudge łapie głównie domeny.
+     Prywatność się nie zmienia: rozszerzenie dostaje listę z mostu i dopasowuje adres lokalnie, a tytułów okien nie zapisujemy.
+     Nowa zależność: `regex` w `focus-core` (czysta biblioteka, więc zasada „core bez I/O” zostaje).
 5. **Śledzenie aktywnej aplikacji.** Co 1 s w trakcie biegnącego Focus (nie w pauzie i nie w przerwie) pobieramy nazwę procesu okna na pierwszym planie
    i czas bezczynności (`GetLastInputInfo`; próg 120 s, w demo 30 s). Zapisujemy tylko sumy sekund per proces oraz „Bezczynność” i „Nieznane”.
    Tytułów okien nie zapisujemy. Po Stop `SessionSummary` trafia do `history.jsonl` i na ekran podsumowania z wykresem słupkowym według procesu.
@@ -322,7 +353,8 @@ i nie odpowiada na nowe wymagania. rodio nie odtworzy YouTube ani streamu bez po
   Gdy port 47615 jest zajęty, mostu nie ma i zostaje awaryjny nudge po tytule okna.
 - Muzyka zależy od WebView2 i sieci (poza folderem i szumem). Część linków YouTube nie pozwala na osadzanie; grają w osobnym oknie YouTube (pkt 2).
 - Nowe zależności: `windows` 0.62 i `reqwest` 0.13 w `focus-platform`; pluginy Tauri dialog, notification, single-instance, autostart i log,
-  a także `tokio`, `tiny_http` i `anyhow` w powłoce; pluginy JS dialog, notification, autostart i log. `rodio =0.22.2` zostaje, tylko dla dzwonków.
+  a także `tokio`, `tiny_http` i `anyhow` w powłoce; pluginy JS dialog, notification, autostart i log; `regex` w `focus-core` (lista stron, pkt 4).
+  `rodio =0.22.2` zostaje, tylko dla dzwonków.
 - DESIGN.md i ARCHITECTURE.md są w części nieaktualne (w ARCHITECTURE aktualny jest §6, kontrakt IPC). Do czasu ich aktualizacji wygrywa ten ADR i `api.rs`.
 
 **Co zastępuje:**
