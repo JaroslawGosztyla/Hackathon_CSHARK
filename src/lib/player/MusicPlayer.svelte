@@ -1,14 +1,16 @@
 <script lang="ts">
   // Persistent music dock (lives in the root layout, so music survives navigation).
   // Playing rule: play while a phase runs; pause on Pause; stop on Stop; keep playing in the break
-  // unless `music.pauseDuringBreak`. Links whose owner refuses embedding play in a separate YouTube window
-  // (the engine routes play/pause/volume there); the dock then offers "Pokaż okno" / "Otwórz ponownie".
+  // unless `music.pauseDuringBreak`. Links whose owner refuses embedding (and, when signed in to YouTube, every YouTube
+  // item, ADR-021) play in a separate YouTube window (the engine routes play/pause/volume there); the dock then offers
+  // "Pokaż okno" / "Otwórz ponownie".
   import { onMount, untrack } from "svelte";
   import { config } from "$lib/state/config.svelte";
   import { mediaWindow } from "$lib/state/mediaWindow.svelte";
   import { music } from "$lib/state/music.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
+  import { youtubeAccount } from "$lib/state/youtubeAccount.svelte";
   import { strings } from "$lib/strings";
   import { EMPTY_VIEW, MusicEngine, type EngineView } from "./engine";
   import { buildPlaylist, describeSource } from "./sources";
@@ -100,9 +102,13 @@
         return view.count > 1 ? strings.player.trackOf(view.index + 1, view.count) : sourceText;
     }
   });
-  /** Full explanation on hover while the window plays. */
+  /** Full explanation on hover while the window plays (signed in to YouTube: it plays there on the user's account). */
   const subtitleHint = $derived(
-    inWindow && !view.windowClosed && view.status === "playing" ? strings.player.windowMode : subtitle,
+    inWindow && !view.windowClosed && view.status === "playing"
+      ? youtubeAccount.signedIn
+        ? strings.youtube.playerWindowHint
+        : strings.player.windowMode
+      : subtitle,
   );
 
   onMount(() => {
@@ -129,6 +135,14 @@
   // Bundled music → track list (listed once; the shell allows its folder in the asset protocol scope).
   $effect(() => {
     if (musicCfg?.source === "library") untrack(() => void music.ensureLibrary());
+  });
+
+  // YouTube sign-in → where YouTube plays (ADR-021). Declared before the playlist effect, so a known sign-in already
+  // routes the first item of a new playlist to the YouTube window.
+  $effect(() => {
+    const signedIn = youtubeAccount.signedIn;
+    const eng = engine;
+    if (eng) untrack(() => eng.setSignedIn(signedIn));
   });
 
   $effect(() => {

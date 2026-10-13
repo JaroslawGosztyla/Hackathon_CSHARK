@@ -134,6 +134,11 @@ class SummaryStore {
   /** Deletes the whole history in the shell (the UI confirmed first), then empties the views. Throws on failure. */
   async clear(): Promise<void> {
     await api.clearHistory();
+    this.forget();
+  }
+
+  /** The shell has deleted the history (here or from the privacy panel, ADR-020): empties the views. */
+  forget(): void {
     this.generation++;
     this.real = { last: null, history: [] };
     this.selectedId = null;

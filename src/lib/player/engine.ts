@@ -1,5 +1,6 @@
 // Music engine: one playlist, four backends (YouTube iframe, separate YouTube window, <audio>, WebAudio noise).
-// The session decides *whether* music should play (`setPlaying`); the engine decides *what* plays.
+// The session decides *whether* music should play (`setPlaying`); the engine decides *what* plays and where: YouTube goes
+// to the embedded iframe, or to the separate window when embedding is refused or the user is signed in to YouTube (ADR-021).
 import { errorText, strings } from "$lib/strings";
 import type { MediaWindowStatus } from "$lib/types";
 import { isEmbedBlocked, rememberEmbedBlocked } from "./embedBlocks";
@@ -7,7 +8,7 @@ import { HtmlAudioBackend, type AudioFailure } from "./htmlAudio";
 import { MediaWindowBackend } from "./mediaWindow";
 import { NoiseBackend } from "./noise";
 import type { PlayItem } from "./sources";
-import { EMBED_OWNER_REFUSED_CODES, EMBED_REFUSED_CODES, YouTubeBackend } from "./youtube";
+import { EMBED_OWNER_REFUSED_CODES, EMBED_REFUSED_CODES, parseHttpUrl, YouTubeBackend } from "./youtube";
 
 export type EngineStatus = "stopped" | "loading" | "playing" | "paused" | "error";
 
@@ -52,6 +53,20 @@ function displayUrl(url: string): string {
   return url.replace(/^https:\/\/(www\.)?/, "");
 }
 
+/** Playlist ids as `youtube.ts` accepts them. */
+const PLAYLIST_ID = /^[A-Za-z0-9_-]{2,80}$/;
+
+/**
+ * `/playlist?list=X` (YouTube or YouTube Music) only lists the videos; `www.youtube.com/watch?list=X` plays the playlist
+ * from its first video. Any other page is returned unchanged.
+ */
+function playlistWatchPage(pageUrl: string): string {
+  const url = parseHttpUrl(pageUrl);
+  const list = url?.searchParams.get("list") ?? null;
+  if (url?.pathname !== "/playlist" || list === null || !PLAYLIST_ID.test(list)) return pageUrl;
+  return `https://www.youtube.com/watch?${new URLSearchParams({ list }).toString()}`;
+}
+
 export class MusicEngine {
   private items: PlayItem[] = [];
   private index = 0;
@@ -65,6 +80,11 @@ export class MusicEngine {
   private via: Backend | null = null;
   /** The user closed the YouTube window of the loaded item. */
   private windowClosed = false;
+  /**
+   * Signed in to YouTube (ADR-021): every YouTube item plays in the YouTube window, the only place where the account
+   * (and Premium, no ads) applies. The embedded player runs on the app's origin, where youtube.com cookies are third-party.
+   */
+  private signedIn = false;
   private failures = 0;
   private volume = 0.6;
   private view: EngineView = { ...EMPTY_VIEW };
@@ -159,6 +179,24 @@ export class MusicEngine {
     this.noise.setVolume(this.volume);
   }
 
+  /**
+   * YouTube sign-in state (`youtube://account`, known and signed in). Signing in moves a YouTube item that the embedded
+   * player holds to the YouTube window right away, so Premium applies without waiting for the next item (the shell reloads
+   * an open window by itself). Signing out changes only where the next item loads: the current one keeps playing.
+   */
+  setSignedIn(signedIn: boolean): void {
+    if (signedIn === this.signedIn) return;
+    this.signedIn = signedIn;
+    if (!signedIn || this.current()?.kind !== "youtube" || !this.isLive("youtube")) return;
+    if (this.desired) {
+      this.loadCurrent();
+      return;
+    }
+    // Paused: drop the embed now; resuming loads the item into the window.
+    this.unloadEmbedded();
+    this.emit({ status: "stopped" });
+  }
+
   /** New status of the separate YouTube window (from `media://window`). */
   setWindowStatus(status: MediaWindowStatus): void {
     this.win.applyStatus(status);
@@ -190,10 +228,22 @@ export class MusicEngine {
     return this.items[this.index];
   }
 
-  /** Page for the separate YouTube window when the item cannot (or may not) use the embedded player. */
+  /**
+   * Page for the separate YouTube window: every YouTube item when signed in to YouTube, otherwise only items that cannot
+   * (or may not) use the embedded player.
+   */
   private windowPageOf(item: PlayItem): string | null {
     if (item.kind !== "youtube") return null;
+    if (this.signedIn) return this.windowUrlOf(item);
     return item.target === null || isEmbedBlocked(item.target) ? item.pageUrl : null;
+  }
+
+  /**
+   * Page the window opens for a YouTube item. Signed in, playlist links (which the embedded player would have played)
+   * open as a playing watch page instead of the playlist overview, which plays nothing (ADR-021).
+   */
+  private windowUrlOf(item: YouTubeItem): string {
+    return this.signedIn ? playlistWatchPage(item.pageUrl) : item.pageUrl;
   }
 
   private advance(): void {
@@ -262,7 +312,7 @@ export class MusicEngine {
     this.windowClosed = false;
     this.emit({ status: "loading" });
     this.win.setVolume(this.volume);
-    this.win.load(item.pageUrl, this.desired);
+    this.win.load(this.windowUrlOf(item), this.desired);
   }
 
   private resumeCurrent(item: PlayItem): void {

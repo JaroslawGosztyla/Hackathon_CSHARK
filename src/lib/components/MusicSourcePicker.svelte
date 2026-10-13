@@ -13,6 +13,7 @@
   import { config } from "$lib/state/config.svelte";
   import { music } from "$lib/state/music.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
+  import { youtubeAccount } from "$lib/state/youtubeAccount.svelte";
   import { strings } from "$lib/strings";
   import type { MusicSourceKind, NoiseColor } from "$lib/types";
 
@@ -50,6 +51,15 @@
     return playsInWindow(streamText) ? strings.music.detected.youtubeWindow : detectedText(streamKind);
   });
   const folderReady = $derived(m?.folder !== null && m?.folder !== undefined && music.folder === m.folder);
+
+  const isYouTubeKind = (kind: LinkKind | null) =>
+    kind === "youtubeVideo" || kind === "youtubePlaylist" || kind === "youtubeWindow";
+  /** The stream or one of the links is YouTube: the YouTube account line applies. */
+  const usesYouTube = $derived(
+    m?.source === "stream"
+      ? isYouTubeKind(streamKind)
+      : m?.source === "links" && linkRows.some((row) => isYouTubeKind(row.kind)),
+  );
 
   // The bundled library is listed here too, so the picker can show its track count before the first session.
   $effect(() => {
@@ -307,6 +317,18 @@
       {:else}
         <p class="hint">{strings.music.noneHint}</p>
       {/if}
+      {#if usesYouTube && youtubeAccount.known}
+        <!-- YouTube Premium applies only when signed in (ADR-021). -->
+        <p class="hint premium">
+          {#if youtubeAccount.signedIn}
+            {strings.youtube.pickerSignedIn}
+          {:else}
+            {strings.youtube.pickerHint}
+            <!-- Straight to the "YouTube account" row: at 640 px it sits below the fold of the Sound card. -->
+            <a href="/settings#youtube-account-title">{strings.youtube.pickerLink}</a>
+          {/if}
+        </p>
+      {/if}
     </div>
   {:else}
     <p class="hint">{strings.player.loading}</p>
@@ -414,6 +436,10 @@
 
   .credit {
     font-size: 0.8rem;
+  }
+
+  .premium {
+    margin-top: -4px;
   }
 
   .link-btn {

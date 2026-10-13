@@ -9,6 +9,8 @@
     open: boolean;
     title: string;
     body: string;
+    /** Optional bullet list under the body (e.g. everything a delete removes). */
+    list?: readonly string[];
     confirmLabel: string;
     cancelLabel?: string;
     /** Red confirm button for destructive actions. */
@@ -21,6 +23,7 @@
     open = $bindable(false),
     title,
     body,
+    list = [],
     confirmLabel,
     cancelLabel = strings.dialog.cancel,
     danger = false,
@@ -116,6 +119,13 @@
 >
   <h2 id="{uid}-title">{title}</h2>
   <p id="{uid}-body" class="body">{body}</p>
+  {#if list.length > 0}
+    <ul class="list">
+      {#each list as entry, i (i)}
+        <li>{entry}</li>
+      {/each}
+    </ul>
+  {/if}
   {#if error}
     <p class="field-error error" role="alert">{error}</p>
   {/if}
@@ -155,6 +165,18 @@
 
   .body {
     color: var(--text-2);
+  }
+
+  .list {
+    margin: 10px 0 0;
+    padding-left: 20px;
+    max-height: min(40vh, 320px);
+    overflow-y: auto;
+    color: var(--text-2);
+  }
+
+  .list li + li {
+    margin-top: 4px;
   }
 
   .error {

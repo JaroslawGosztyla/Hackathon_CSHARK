@@ -8,6 +8,7 @@ import { calendar, reportCalendarError } from "./calendar.svelte";
 import { config } from "./config.svelte";
 import { mediaWindow } from "./mediaWindow.svelte";
 import { nudge } from "./nudge.svelte";
+import { privacy } from "./privacy.svelte";
 import { session } from "./session.svelte";
 import { shields } from "./shields.svelte";
 import { summary } from "./summary.svelte";
@@ -15,6 +16,7 @@ import { teams } from "./teams.svelte";
 import { tint } from "./tint.svelte";
 import { toasts } from "./toasts.svelte";
 import { reportWorkError, work } from "./work.svelte";
+import { youtubeAccount } from "./youtubeAccount.svelte";
 
 /** Length of one focus phase in the profile in use (idle snapshots report it too), for the mascot's Stop cue. */
 function focusSecs(): number {
@@ -58,6 +60,7 @@ export function initAppState(): () => void {
   keep(api.subscribeCalendar((c) => calendar.apply(c), reportCalendarError));
   // Same for the developer tools (a detail could come from a tool's server); tokens never reach the UI.
   keep(api.subscribeWork((w) => work.apply(w), reportWorkError));
+  keep(api.subscribeYoutubeAccount((a) => youtubeAccount.apply(a), reportError));
   keep(
     api.onPhaseChanged((change) => {
       session.announce(change);
@@ -72,7 +75,8 @@ export function initAppState(): () => void {
       // Before the summary page opens, so its axolotl still sees the cue as fresh.
       const cue = cueForSummary(s, focusSecs());
       if (cue) mascotCues.emit(cue);
-      void goto("/summary");
+      // A delete in the privacy panel stopped the session: the user stays in the panel (ADR-020).
+      if (!privacy.deleting) void goto("/summary");
     }),
   );
 

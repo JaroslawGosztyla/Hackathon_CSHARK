@@ -8,11 +8,13 @@
   import ExtensionGuide from "$lib/components/ExtensionGuide.svelte";
   import HistorySettings from "$lib/components/HistorySettings.svelte";
   import LauncherSettings from "$lib/components/LauncherSettings.svelte";
+  import PrivacySettings from "$lib/components/PrivacySettings.svelte";
   import Switch from "$lib/components/Switch.svelte";
   import TeamsSettings from "$lib/components/TeamsSettings.svelte";
   import ThemeSettings from "$lib/components/ThemeSettings.svelte";
   import TintSettings from "$lib/components/TintSettings.svelte";
   import WorkSettings from "$lib/components/WorkSettings.svelte";
+  import YoutubeAccountSettings from "$lib/components/YoutubeAccountSettings.svelte";
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
@@ -51,13 +53,18 @@
     return lang ? LANGUAGE_NAMES[lang] : null;
   });
 
-  onMount(() => {
+  /** The OS autostart entry (also after "Delete everything" in the privacy panel removed it). */
+  function loadAutostart() {
     getAutostart()
       .then((enabled) => (autostart = enabled))
       .catch((e: unknown) => {
         const err = toAppError(e);
         if (err.code !== ERR_NO_SHELL) toasts.error(err);
       });
+  }
+
+  onMount(() => {
+    loadAutostart();
     // Only the label of the "system" option depends on it (failures are logged by `$lib/i18n`).
     void loadSystemLanguage();
   });
@@ -259,6 +266,10 @@
             onchange={(on) => set((c) => (c.music.pauseDuringBreak = on))}
           />
         </div>
+
+        <div class="item">
+          <YoutubeAccountSettings />
+        </div>
       </div>
     </section>
 
@@ -350,6 +361,13 @@
         disabled={autostartBusy}
         onchange={(on) => void setLaunchOnLogin(on)}
       />
+    </section>
+
+    <section class="card" aria-labelledby="privacy-settings">
+      <div class="card-title">
+        <h2 id="privacy-settings">{strings.privacy.title}</h2>
+      </div>
+      <PrivacySettings onreset={loadAutostart} />
     </section>
 
     <!-- Last on purpose: a tool for tests and screenshots (ADR-019); its page itself is English only. -->

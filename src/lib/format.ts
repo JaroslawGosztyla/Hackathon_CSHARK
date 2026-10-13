@@ -127,3 +127,29 @@ export function timeToMinutes(value: string): number | null {
   if (h > 23 || m > 59) return null;
   return h * 60 + m;
 }
+
+const sizeFormats = new Map<string, Intl.NumberFormat>();
+
+/** Size on disk in KiB → `840 kB`, `12 MB`, `1.4 GB` in the Intl locale (1 KiB shown as 1 kB; at most 1 decimal). */
+export function formatSize(kib: number): string {
+  const units = ["kilobyte", "megabyte", "gigabyte"] as const;
+  let value = Math.max(0, kib);
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  const locale = intlLocale();
+  const key = `${locale}|${units[unit]}`;
+  let format = sizeFormats.get(key);
+  if (!format) {
+    format = new Intl.NumberFormat(locale, {
+      style: "unit",
+      unit: units[unit],
+      unitDisplay: "short",
+      maximumFractionDigits: unit === 0 ? 0 : 1,
+    });
+    sizeFormats.set(key, format);
+  }
+  return format.format(value);
+}
