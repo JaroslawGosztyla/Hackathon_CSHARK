@@ -10,18 +10,23 @@
 //!   that goes back never repeats or double-counts a day (`today = max(today, ledger.last_day)`).
 //! - Nothing ever subtracts: Stop, Skip, Pause, sleep gaps, unticking and early stops only leave a bonus out, and never
 //!   produce a message about it. All sums saturate.
-//! - Achievements (daily goal, comeback, streak, rest days, level up, pond full, stickers) earned while focus goes on
-//!   are recorded at once but announced only by the next moment outside focus (the break recap or the session end).
+//! - Achievements (daily goal, comeback, streak, rest days, level up, pond full, stickers, collection unlocks) earned
+//!   while focus goes on are recorded at once but announced only by the next moment outside focus (the break recap or
+//!   the session end).
+//! - The beta collection (ADR-024, [`crate::unlocks`]): every pass over the real ledger records seasonal goal days and
+//!   unlocks the items whose rules hold; the demo preview never does. The unlocks survive the beta or the rewards
+//!   going off; only a fresh ledger starts without them.
 
 use serde::{Deserialize, Serialize};
 
 use crate::api::{
-    Collection, Config, DailyGoal, DayCell, DayMark, LevelView, MomentKind, Phase, PopupRewards,
-    Rarity, RewardKind, RewardLine, RewardMoment, RewardsStatus, SessionSparks, StickerId,
-    StreakState, StreakView, SurpriseOdds, TodayView, Weekday,
+    AmbienceLayer, Collection, Config, DailyGoal, DayCell, DayMark, LevelView, MomentKind, Phase,
+    PopupRewards, Rarity, RewardKind, RewardLine, RewardMoment, RewardTheme, RewardsStatus,
+    SessionSparks, StickerId, StreakState, StreakView, SurpriseOdds, TodayView, Weekday,
 };
 use crate::session::{PhaseEnd, ProgressFact};
 use crate::timing::{BREAK_TAKEN_PERCENT, FULL_BLOCK_PERCENT, REWARD_DAY_START_MINUTE};
+use crate::unlocks::{self, Unlockable};
 
 /// Days since 1970-01-01 (civil, proleptic Gregorian) of a reward day.
 pub type RewardDay = i32;
@@ -84,6 +89,10 @@ pub const MAX_GAP_SCAN_DAYS: i32 = 400;
 /// A clock going back by at most this many reward days is clamped to the last day seen; further back is taken as the
 /// correction of a clock that was ahead (§14 of ADR-022).
 pub const CLOCK_BACK_TOLERANCE_DAYS: RewardDay = 2;
+/// Collection records kept in the ledger (ADR-024; known items always, unknown ids up to this many in all).
+pub const MAX_UNLOCK_RECORDS: usize = 64;
+/// Seasonal progress entries kept in the ledger (ADR-024; known seasons always, unknown ones up to this many in all).
+pub const MAX_SEASON_RECORDS: usize = 16;
 /// `version` of `rewards.json`.
 pub const LEDGER_VERSION: u32 = 1;
 
@@ -254,6 +263,36 @@ pub struct Ledger {
     pub stickers: Vec<StickerId>,
     /// Sessions whose goal was rewarded ("Zrobione? → Tak"), the newest [`MAX_GOAL_REWARDED`].
     pub goal_rewarded: Vec<String>,
+    /// ADR-024: the unlocked collection items, oldest first (at most [`MAX_UNLOCK_RECORDS`]). Ids are strings
+    /// (`"theme:halloween"`, `"ambience:spookyNight"`, [`crate::unlocks::key`]), so a file written by a newer app
+    /// (unknown ids) still loads, and the unknown ids survive a rewrite. Never cleared by switching the beta or the
+    /// rewards off; only a fresh ledger ("Zacznij od nowa", the privacy delete) starts without them.
+    pub unlocks: Vec<UnlockRecord>,
+    /// ADR-024: goal days inside the seasonal windows, at most one entry per season (the latest window year) and at
+    /// most [`MAX_SEASON_RECORDS`]; unknown seasons are kept.
+    pub seasons: Vec<SeasonProgress>,
+}
+
+/// One unlocked collection item in `rewards.json` (ADR-024).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UnlockRecord {
+    /// [`crate::unlocks::key`] of the item (an unknown id is kept, but ignored).
+    pub id: String,
+    /// The reward day it was unlocked.
+    pub day: RewardDay,
+}
+
+/// The daily goal met inside one window of a season (ADR-024).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SeasonProgress {
+    /// The serialized `Season` name (`"halloween"`; an unknown season is kept, but ignored).
+    pub season: String,
+    /// The civil year of the window.
+    pub year: i32,
+    /// Goal days inside that window: sorted, unique, at most `unlocks::SEASON_GOAL_DAYS`.
+    pub days: Vec<RewardDay>,
 }
 
 impl Default for Ledger {
@@ -351,12 +390,15 @@ impl Ledger {
             counters: Counters::default(),
             stickers: Vec::new(),
             goal_rewarded: Vec::new(),
+            unlocks: Vec::new(),
+            seasons: Vec::new(),
         }
     }
 
     /// Repairs a ledger read from disk: days sorted and unique (the newest [`MAX_DAYS_KEPT`]), the bank at most
     /// [`REST_BANK_MAX`], valid ranges (the newest [`MAX_NEUTRAL_RANGES`]), at most [`MAX_GOAL_REWARDED`] goal ids,
-    /// unique stickers, `best >= current` and `last_day` not before any stored day.
+    /// unique stickers, `best >= current`, `last_day` not before any stored day, and the collection records repaired
+    /// ([`crate::unlocks::normalize`]: unique ids, one entry per season, unknown ones kept).
     pub fn normalize(&mut self) {
         self.version = LEDGER_VERSION;
         self.days.sort_by_key(|record| record.day);
@@ -381,6 +423,7 @@ impl Ledger {
         if let Some(last) = self.streak.last_counted_day {
             self.last_day = self.last_day.max(last);
         }
+        unlocks::normalize(self);
     }
 
     /// The clock was ahead (a reward day more than [`CLOCK_BACK_TOLERANCE_DAYS`] after `day` was seen) and is right
@@ -521,6 +564,9 @@ pub struct Achievements {
     pub levels_gained: u32,
     pub pond_full: bool,
     pub stickers: Vec<StickerId>,
+    /// ADR-024: collection themes and ambience layers unlocked (catalogue order).
+    pub unlocked_themes: Vec<RewardTheme>,
+    pub unlocked_ambiences: Vec<AmbienceLayer>,
 }
 
 impl Achievements {
@@ -546,6 +592,28 @@ impl Achievements {
                 self.stickers.push(sticker);
             }
         }
+        // The enums are declared in catalogue order, so sorting keeps the catalogue order.
+        self.unlocked_themes.extend(later.unlocked_themes);
+        self.unlocked_themes.sort_unstable();
+        self.unlocked_themes.dedup();
+        self.unlocked_ambiences.extend(later.unlocked_ambiences);
+        self.unlocked_ambiences.sort_unstable();
+        self.unlocked_ambiences.dedup();
+    }
+
+    /// Adds the items [`unlocks::evaluate`] just recorded.
+    fn add_unlocked(&mut self, items: Vec<Unlockable>) {
+        if items.is_empty() {
+            return;
+        }
+        let mut new = Achievements::default();
+        for item in items {
+            match item {
+                Unlockable::Theme(theme) => new.unlocked_themes.push(theme),
+                Unlockable::Ambience(layer) => new.unlocked_ambiences.push(layer),
+            }
+        }
+        self.merge(new);
     }
 }
 
@@ -641,16 +709,24 @@ struct Pass<'a> {
     rules: &'a RewardRules,
     lines: Vec<RewardLine>,
     achievements: Achievements,
+    /// ADR-024: the real ledger records seasonal goal days and unlocks collection items; the demo preview never does.
+    unlocks: bool,
 }
 
 impl<'a> Pass<'a> {
-    fn new(ledger: &'a mut Ledger, today: RewardDay, rules: &'a RewardRules) -> Self {
+    fn new(
+        ledger: &'a mut Ledger,
+        today: RewardDay,
+        rules: &'a RewardRules,
+        mode: LedgerMode,
+    ) -> Self {
         Self {
             ledger,
             today,
             rules,
             lines: Vec::new(),
             achievements: Achievements::default(),
+            unlocks: mode == LedgerMode::Real,
         }
     }
 
@@ -698,6 +774,10 @@ impl<'a> Pass<'a> {
         day.goal_met = true;
         day.goal_bonus = day.goal_bonus.saturating_add(DAILY_GOAL_BONUS);
         self.achievements.daily_goal = true;
+        if self.unlocks {
+            // ADR-024: a goal day inside a seasonal window (whether the streak counts or not).
+            unlocks::record_goal_day(self.ledger, self.today);
+        }
         self.ledger
             .unlock(StickerId::DailyGoal, &mut self.achievements);
         self.credit(RewardKind::DailyGoal, DAILY_GOAL_BONUS, 1);
@@ -778,7 +858,13 @@ impl<'a> Pass<'a> {
         }
     }
 
-    fn finish(self) -> (Vec<RewardLine>, Achievements) {
+    /// Ends the pass: on the real ledger, every collection item whose rule holds now is unlocked (ADR-024; announced
+    /// like any achievement, so it waits while focus goes on).
+    fn finish(mut self) -> (Vec<RewardLine>, Achievements) {
+        if self.unlocks {
+            let unlocked = unlocks::evaluate(self.ledger, self.today);
+            self.achievements.add_unlocked(unlocked);
+        }
         let ledger = self.ledger;
         trim_front(&mut ledger.days, MAX_DAYS_KEPT);
         (self.lines, self.achievements)
@@ -967,6 +1053,9 @@ fn emit(
         quiet: extras.quiet,
         preview: mode == LedgerMode::Preview,
         sample: false,
+        // Deferred in focus like every achievement; the preview never unlocks (`Pass::unlocks`).
+        unlocked_themes: shown.unlocked_themes,
+        unlocked_ambiences: shown.unlocked_ambiences,
     })
 }
 
@@ -1001,7 +1090,7 @@ pub fn apply(
             session_id, steps, ..
         } => {
             *session = Some(SessionTally::new(session_id, profile.demo));
-            let mut pass = Pass::new(ledger, today, rules);
+            let mut pass = Pass::new(ledger, today, rules, mode);
             let day = pass.day();
             day.starts = day.starts.saturating_add(1);
             let starts = day.starts;
@@ -1038,7 +1127,7 @@ pub fn apply(
             let joined = tally.joined_ms.is_some();
             let counted_secs = tally.joined_secs(*ran_secs, now_wall_ms);
             tally.joined_ms = None;
-            let mut pass = Pass::new(ledger, today, rules);
+            let mut pass = Pass::new(ledger, today, rules, mode);
             let units = counted_secs / profile.spark_unit_secs.max(1);
             let day = pass.day();
             let paid = units.min(MINUTE_SPARKS_DAILY_CAP.saturating_sub(day.minute_sparks));
@@ -1091,7 +1180,7 @@ pub fn apply(
             // A break the rewards joined midway counts only its time since.
             let counted_secs = tally.joined_secs(*ran_secs, now_wall_ms);
             tally.joined_ms = None;
-            let mut pass = Pass::new(ledger, today, rules);
+            let mut pass = Pass::new(ledger, today, rules, mode);
             if u64::from(counted_secs) * PERCENT
                 >= u64::from(profile.break_secs) * u64::from(BREAK_TAKEN_PERCENT)
             {
@@ -1130,7 +1219,7 @@ pub fn apply(
             ..
         } => {
             let tally = tally_for(session, session_id, profile.demo, now_wall_ms);
-            let mut pass = Pass::new(ledger, today, rules);
+            let mut pass = Pass::new(ledger, today, rules, mode);
             let mut kind = MomentKind::Step;
             if *first_time && !tally.paid_steps.contains(step_id) {
                 tally.paid_steps.push(*step_id);
@@ -1243,7 +1332,7 @@ pub fn goal_done(
     let before = ledger.clone();
     ledger.goal_rewarded.push(session_id.to_owned());
     trim_front(&mut ledger.goal_rewarded, MAX_GOAL_REWARDED);
-    let mut pass = Pass::new(ledger, today, rules);
+    let mut pass = Pass::new(ledger, today, rules, mode);
     pass.credit(RewardKind::GoalDone, GOAL_DONE_SPARKS, 1);
     let (lines, achievements) = pass.finish();
     let own_session = session
@@ -1293,6 +1382,11 @@ pub fn config_changed(
         // On again while a session runs: its facts were dropped until now, so accrual starts now.
         *session = Some(SessionTally::joined(now_wall_ms));
     }
+    if !old.active && new.active {
+        // ADR-024: collection items whose rules already hold (an update while the rewards were off) are recorded
+        // silently: no moment, nothing to celebrate.
+        unlocks::evaluate(ledger, today);
+    }
     if old.counting
         && !new.counting
         && ledger.paused_since.is_none()
@@ -1328,7 +1422,7 @@ pub fn config_changed(
     }
     ledger.last_day = today;
     let before = ledger.clone();
-    let mut pass = Pass::new(ledger, today, new);
+    let mut pass = Pass::new(ledger, today, new, LedgerMode::Real);
     if can_meet {
         pass.check_goal();
     } else {
@@ -1351,6 +1445,15 @@ pub fn config_changed(
         before,
         today,
     )
+}
+
+/// ADR-024, for the shell's load of `rewards.json` while the rewards are on (the real ledger only): records every
+/// collection item whose rule holds already, silently (no moment, the session is not touched). After an update from a
+/// version without the collection, a level-8 user gets Underwater and Forest Cabin at once, without a celebration.
+/// Returns how many items were recorded (0: nothing changed).
+pub fn catch_up(state: &mut RewardsState, today: RewardDay) -> usize {
+    let today = effective_day(&state.ledger, today);
+    unlocks::evaluate(&mut state.ledger, today).len()
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1458,34 +1561,9 @@ pub fn popup_rewards(moment: &RewardMoment) -> PopupRewards {
 /// Everything in [`RewardsStatus`] except `revision`, `preview` and `pending` (the shell fills those). Read-only.
 pub fn view(state: &RewardsState, today: RewardDay, rules: &RewardRules) -> RewardsStatus {
     let today = effective_day(&state.ledger, today);
-    // While achievements wait in focus, the view shows the ledger as it was before them (plus the lines shown since):
-    // no early goal, streak, level or bonus sparks (§3.7). Pause bookkeeping is always current.
-    let waiting = state
-        .session
-        .as_ref()
-        .filter(|tally| !tally.ended)
-        .and_then(|tally| tally.shown.as_deref().map(|shown| (tally, shown)));
-    let masked = waiting.map(|(_, shown)| Ledger {
-        paused_since: state.ledger.paused_since,
-        neutral: state.ledger.neutral.clone(),
-        ..shown.clone()
-    });
+    let masked = masked_ledger(state);
     let ledger = masked.as_ref().unwrap_or(&state.ledger);
-    let mut level = level_for(ledger.total_sparks);
-    if let Some((tally, _)) = waiting
-        && let Some(up) = tally.deferred.level_up
-    {
-        // A level reached by a line shown in focus waits too: the bar shows the level before it, full.
-        let before = up.saturating_sub(tally.deferred.levels_gained).max(1);
-        if level.level > before {
-            let span = level_span(before);
-            level = LevelView {
-                level: before,
-                into: span,
-                span,
-            };
-        }
-    }
+    let level = shown_level(state, ledger);
     let record = ledger.record(today);
     RewardsStatus {
         revision: 0,
@@ -1515,7 +1593,48 @@ pub fn view(state: &RewardsState, today: RewardDay, rules: &RewardRules) -> Rewa
         odds: odds(),
         stickers: ledger.stickers.clone(),
         pending: Vec::new(),
+        // ADR-024: from the same (masked) ledger and the level shown, so no unlock shows before its moment.
+        unlocks: unlocks::view(ledger, today, level.level),
     }
+}
+
+/// The tally whose achievements wait in focus, with the ledger the view shows meanwhile.
+fn waiting(state: &RewardsState) -> Option<(&SessionTally, &Ledger)> {
+    state
+        .session
+        .as_ref()
+        .filter(|tally| !tally.ended)
+        .and_then(|tally| tally.shown.as_deref().map(|shown| (tally, shown)))
+}
+
+/// While achievements wait in focus, the view shows the ledger as it was before them (plus the lines shown since):
+/// no early goal, streak, level, bonus sparks or unlocks (§3.7). Pause bookkeeping is always current. `None` otherwise.
+fn masked_ledger(state: &RewardsState) -> Option<Ledger> {
+    waiting(state).map(|(_, shown)| Ledger {
+        paused_since: state.ledger.paused_since,
+        neutral: state.ledger.neutral.clone(),
+        ..shown.clone()
+    })
+}
+
+/// The level the view shows for `ledger` (the shown one).
+fn shown_level(state: &RewardsState, ledger: &Ledger) -> LevelView {
+    let mut level = level_for(ledger.total_sparks);
+    if let Some((tally, _)) = waiting(state)
+        && let Some(up) = tally.deferred.level_up
+    {
+        // A level reached by a line shown in focus waits too: the bar shows the level before it, full.
+        let before = up.saturating_sub(tally.deferred.levels_gained).max(1);
+        if level.level > before {
+            let span = level_span(before);
+            level = LevelView {
+                level: before,
+                into: span,
+                span,
+            };
+        }
+    }
+    level
 }
 
 fn streak_view(ledger: &Ledger, rules: &RewardRules, today: RewardDay) -> StreakView {
@@ -2297,6 +2416,8 @@ mod tests {
             || moment.levels_gained > 0
             || moment.pond_full
             || !moment.stickers.is_empty()
+            || !moment.unlocked_themes.is_empty()
+            || !moment.unlocked_ambiences.is_empty()
             || moment
                 .lines
                 .iter()
@@ -3161,6 +3282,9 @@ mod tests {
             Phase::Focus,
             NOW,
         );
+        // An October goal day: a seasonal goal day and the first unlocks (fixed ids and season names).
+        goal_day(&mut state, MON + 1, &rules, "1760342400000-4242-4");
+        assert!(!state.ledger.unlocks.is_empty() && !state.ledger.seasons.is_empty());
         let json = serde_json::to_value(&state.ledger).expect("serialize");
         fn strings(value: &serde_json::Value, out: &mut Vec<String>) {
             match value {
@@ -3170,16 +3294,27 @@ mod tests {
                 _ => {}
             }
         }
-        // The only strings: sticker ids and the session ids of rewarded goals.
+        // The only strings: sticker ids, the session ids of rewarded goals and the fixed collection ids and season
+        // names (ADR-024).
         let mut stickers = Vec::new();
         strings(&json["stickers"], &mut stickers);
         assert!(!stickers.is_empty());
         let mut goals = Vec::new();
         strings(&json["goalRewarded"], &mut goals);
         assert_eq!(goals, ["1760342400000-4242-3"]);
+        let mut unlock_ids = Vec::new();
+        strings(&json["unlocks"], &mut unlock_ids);
+        assert!(unlock_ids.iter().all(|id| unlocks::parse_key(id).is_some()));
+        let mut seasons = Vec::new();
+        strings(&json["seasons"], &mut seasons);
+        assert_eq!(seasons, ["halloween"]);
         let mut all = Vec::new();
         strings(&json, &mut all);
-        assert_eq!(all.len(), stickers.len() + goals.len(), "{all:?}");
+        assert_eq!(
+            all.len(),
+            stickers.len() + goals.len() + unlock_ids.len() + seasons.len(),
+            "{all:?}"
+        );
     }
 
     // 19. Stickers (P1) ----------------------------------------------------------------------------------------
@@ -3428,5 +3563,408 @@ mod tests {
         .expect("recap");
         assert!(recap.daily_goal && recap.streak == Some(1));
         assert_eq!(line(&recap, RewardKind::DailyGoal), DAILY_GOAL_BONUS);
+    }
+
+    // 20. The beta collection (ADR-024) --------------------------------------------------------------------------
+
+    use crate::api::{ThemeUnlock, UnlockProgress, UnlockState};
+
+    fn date(year: i32, month: u32, dom: u32) -> RewardDay {
+        reward_day(year, month, dom, 600).expect("valid date")
+    }
+
+    fn unlocked(state: &RewardsState, item: Unlockable) -> bool {
+        unlocks::is_unlocked(&state.ledger, item)
+    }
+
+    const HALLOWEEN: Unlockable = Unlockable::Theme(RewardTheme::Halloween);
+
+    /// The view of Halloween (catalogue index 8).
+    fn halloween_view(state: &RewardsState, today: RewardDay) -> ThemeUnlock {
+        let shown = view(state, today, &no_surprises()).unlocks;
+        let item = shown.themes[8].clone();
+        assert_eq!(item.theme, RewardTheme::Halloween);
+        item
+    }
+
+    #[test]
+    fn an_unlock_reached_in_focus_waits_for_the_break() {
+        let rules = no_surprises();
+        let mut state = fresh();
+        // Level 2 (60..140): the Start's 12 sparks reach level 3 while focus runs.
+        state.ledger.total_sparks = 135;
+        let start = real(&mut state, MON, &rules, &started("s", 2)).expect("start");
+        assert!(start.unlocked_themes.is_empty() && start.unlocked_ambiences.is_empty());
+        assert!(
+            unlocked(&state, Unlockable::Theme(RewardTheme::Underwater)),
+            "recorded at once"
+        );
+        // The status gives nothing away: Underwater (and Thunder, level 2) still locked, the level before it.
+        let during = view(&state, MON, &rules).unlocks;
+        assert_eq!(during.themes[0].theme, RewardTheme::Underwater);
+        assert_eq!(during.themes[0].state, UnlockState::Locked);
+        assert_eq!(
+            during.themes[0].progress,
+            Some(UnlockProgress { have: 2, need: 3 })
+        );
+        assert_eq!(during.ambiences[2].layer, AmbienceLayer::Thunder);
+        assert_eq!(during.ambiences[2].state, UnlockState::Locked);
+        let tick = real(
+            &mut state,
+            MON,
+            &rules,
+            &step_done("s", 1, true, 1, 2, Phase::Focus),
+        )
+        .expect("tick");
+        assert!(!has_achievements(&tick));
+        let recap = real(
+            &mut state,
+            MON,
+            &rules,
+            &focus_ended("s", 1, 2700, PhaseEnd::Deadline),
+        )
+        .expect("recap");
+        assert_eq!(recap.kind, MomentKind::BreakStart);
+        assert_eq!(recap.unlocked_themes, [RewardTheme::Underwater]);
+        assert_eq!(recap.unlocked_ambiences, [AmbienceLayer::Thunder]);
+        let after = view(&state, MON, &rules).unlocks;
+        assert_eq!(after.themes[0].state, UnlockState::Unlocked);
+        assert_eq!(after.themes[0].unlocked_on.as_deref(), Some("2026-10-12"));
+        // Announced once.
+        let end = real(
+            &mut state,
+            MON,
+            &rules,
+            &break_ended("s", 1, 900, PhaseEnd::Stopped),
+        )
+        .expect("end");
+        assert!(end.unlocked_themes.is_empty() && end.unlocked_ambiences.is_empty());
+        // Merged deferrals keep the catalogue order and never repeat an item.
+        let mut merged = Achievements {
+            unlocked_themes: vec![RewardTheme::Halloween],
+            ..Achievements::default()
+        };
+        merged.merge(Achievements {
+            unlocked_themes: vec![RewardTheme::Halloween, RewardTheme::Underwater],
+            unlocked_ambiences: vec![AmbienceLayer::SpookyNight, AmbienceLayer::Thunder],
+            ..Achievements::default()
+        });
+        assert_eq!(
+            merged.unlocked_themes,
+            [RewardTheme::Underwater, RewardTheme::Halloween]
+        );
+        assert_eq!(
+            merged.unlocked_ambiences,
+            [AmbienceLayer::Thunder, AmbienceLayer::SpookyNight]
+        );
+    }
+
+    #[test]
+    fn the_best_streak_unlocks_and_a_broken_streak_keeps_them() {
+        let rules = no_surprises();
+        let mut state = fresh();
+        // September: no seasonal window.
+        let base = date(2026, 9, 1);
+        for n in 0..7 {
+            let moment = goal_day(&mut state, base + n, &rules, &format!("g{n}"));
+            assert_eq!(
+                moment
+                    .unlocked_ambiences
+                    .contains(&AmbienceLayer::Fireplace),
+                n == 4,
+                "day {n}"
+            );
+            assert_eq!(
+                moment.unlocked_themes.contains(&RewardTheme::RainyWindow),
+                n == 6,
+                "day {n}"
+            );
+        }
+        assert_eq!(state.ledger.streak.current, 7);
+        assert!(state.ledger.seasons.is_empty());
+        // A new streak after a long gap: the unlocks stay.
+        let later = goal_day(&mut state, base + 20, &rules, "late");
+        assert!(later.new_streak);
+        assert!(unlocked(
+            &state,
+            Unlockable::Theme(RewardTheme::RainyWindow)
+        ));
+        let shown = view(&state, base + 20, &rules).unlocks;
+        assert_eq!(shown.themes[1].state, UnlockState::Unlocked);
+        assert_eq!(shown.ambiences[4].state, UnlockState::Unlocked);
+        // Sakura Night (14) shows the best streak, not the current one.
+        assert_eq!(
+            shown.themes[3].progress,
+            Some(UnlockProgress { have: 7, need: 14 })
+        );
+    }
+
+    #[test]
+    fn three_goal_days_in_october_unlock_halloween_and_its_ambience() {
+        let rules = no_surprises();
+        let mut state = fresh();
+        let first = goal_day(&mut state, date(2026, 10, 2), &rules, "h1");
+        assert!(!first.unlocked_themes.contains(&RewardTheme::Halloween));
+        goal_day(&mut state, date(2026, 10, 9), &rules, "h2");
+        let two = halloween_view(&state, date(2026, 10, 9));
+        assert_eq!(two.state, UnlockState::AvailableNow);
+        assert_eq!(two.progress, Some(UnlockProgress { have: 2, need: 3 }));
+        // 1 November at 03:30 is still the reward day of 31 October.
+        let late = reward_day(2026, 11, 1, 3 * 60 + 30).expect("valid");
+        assert_eq!(late, date(2026, 10, 31));
+        let third = goal_day(&mut state, late, &rules, "h3");
+        assert!(third.unlocked_themes.contains(&RewardTheme::Halloween));
+        assert!(
+            third
+                .unlocked_ambiences
+                .contains(&AmbienceLayer::SpookyNight)
+        );
+        // After the window it stays; the card says when October comes again.
+        let november = halloween_view(&state, date(2026, 11, 5));
+        assert_eq!(november.state, UnlockState::Unlocked);
+        assert_eq!(november.unlocked_on.as_deref(), Some("2026-10-31"));
+        let window = november.window.expect("window");
+        assert_eq!((window.start.as_str(), window.open), ("2027-10-01", false));
+        assert!(unlocked(&state, HALLOWEEN));
+        let next_year = goal_day(&mut state, date(2027, 10, 4), &rules, "h4");
+        assert!(next_year.unlocked_themes.is_empty());
+        assert_eq!(
+            state.ledger.seasons[0].year, 2026,
+            "nothing more recorded once unlocked"
+        );
+
+        // Two days in October and one in November: locked.
+        let mut short = fresh();
+        goal_day(&mut short, date(2026, 10, 20), &rules, "a");
+        goal_day(&mut short, date(2026, 10, 21), &rules, "b");
+        goal_day(&mut short, date(2026, 11, 1), &rules, "c");
+        assert!(!unlocked(&short, HALLOWEEN));
+        assert_eq!(
+            halloween_view(&short, date(2026, 11, 1)).state,
+            UnlockState::Locked
+        );
+    }
+
+    #[test]
+    fn goal_days_of_one_day_or_of_another_year_never_add_up() {
+        let rules = no_surprises();
+        // Two sessions meeting the goal on the same day: the goal is met once, so the day counts once.
+        let mut same = fresh();
+        goal_day(&mut same, date(2026, 10, 2), &rules, "a");
+        goal_day(&mut same, date(2026, 10, 2), &rules, "b");
+        goal_day(&mut same, date(2026, 10, 3), &rules, "c");
+        assert!(!unlocked(&same, HALLOWEEN));
+        assert_eq!(
+            halloween_view(&same, date(2026, 10, 3)).progress,
+            Some(UnlockProgress { have: 2, need: 3 })
+        );
+        // Two days in October 2025 and one in October 2026.
+        let mut years = fresh();
+        goal_day(&mut years, date(2025, 10, 10), &rules, "x");
+        goal_day(&mut years, date(2025, 10, 11), &rules, "y");
+        goal_day(&mut years, date(2026, 10, 12), &rules, "z");
+        assert!(!unlocked(&years, HALLOWEEN));
+        assert_eq!(
+            halloween_view(&years, date(2026, 10, 12)).progress,
+            Some(UnlockProgress { have: 1, need: 3 })
+        );
+    }
+
+    #[test]
+    fn easter_counts_inside_its_window_only() {
+        let rules = no_surprises();
+        let mut state = fresh();
+        let easter = Unlockable::Theme(RewardTheme::Easter);
+        // 2026: the window starts on 29 March.
+        goal_day(&mut state, date(2026, 3, 28), &rules, "e0");
+        assert!(state.ledger.seasons.is_empty());
+        goal_day(&mut state, date(2026, 3, 30), &rules, "e1");
+        goal_day(&mut state, date(2026, 4, 2), &rules, "e2");
+        assert!(!unlocked(&state, easter));
+        let third = goal_day(&mut state, date(2026, 4, 29), &rules, "e3");
+        assert!(third.unlocked_themes.contains(&RewardTheme::Easter));
+        assert!(unlocked(&state, easter));
+        let shown = view(&state, date(2026, 4, 29), &rules).unlocks;
+        assert_eq!(shown.themes[6].state, UnlockState::Unlocked);
+        assert_eq!(
+            shown.themes[6].window.as_ref().map(|window| window.month),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn the_demo_preview_never_unlocks() {
+        let rules = no_surprises();
+        let mut state = fresh();
+        state.ledger.total_sparks = cumulative(10);
+        state.ledger.streak.best = 20;
+        let mut moments = Vec::new();
+        for (n, dom) in [5, 6, 7].into_iter().enumerate() {
+            let id = format!("p{n}");
+            let today = date(2026, 10, dom);
+            moments.extend(apply(
+                &mut state,
+                today,
+                &rules,
+                LedgerMode::Preview,
+                &started(&id, 0),
+                NOW,
+            ));
+            moments.extend(apply(
+                &mut state,
+                today,
+                &rules,
+                LedgerMode::Preview,
+                &focus_ended(&id, 1, 2700, PhaseEnd::Deadline),
+                NOW,
+            ));
+        }
+        assert!(moments.iter().any(|moment| moment.daily_goal));
+        assert!(moments.iter().all(
+            |moment| moment.unlocked_themes.is_empty() && moment.unlocked_ambiences.is_empty()
+        ));
+        assert!(state.ledger.unlocks.is_empty());
+        assert!(state.ledger.seasons.is_empty());
+        let shown = view(&state, date(2026, 10, 7), &rules).unlocks;
+        assert!(
+            shown
+                .themes
+                .iter()
+                .all(|item| item.state != UnlockState::Unlocked)
+        );
+    }
+
+    #[test]
+    fn with_the_rewards_off_nothing_changes_and_on_again_catches_up_silently() {
+        let rules = no_surprises();
+        let off = RewardRules {
+            active: false,
+            counting: false,
+            ..rules
+        };
+        let mut state = fresh();
+        state.ledger.total_sparks = cumulative(8);
+        let before = state.clone();
+        let today = date(2026, 10, 12);
+        assert_eq!(
+            apply(
+                &mut state,
+                today,
+                &off,
+                LedgerMode::Real,
+                &started("o", 0),
+                NOW
+            ),
+            None
+        );
+        assert_eq!(
+            apply(
+                &mut state,
+                today,
+                &off,
+                LedgerMode::Real,
+                &focus_ended("o", 1, 2700, PhaseEnd::Deadline),
+                NOW
+            ),
+            None
+        );
+        assert_eq!(state, before, "no records, no seasonal days");
+        // The view still lists the collection (usable items stay usable while the beta is on).
+        assert_eq!(view(&state, today, &off).unlocks.themes.len(), 10);
+        // On again: recorded at once, without a moment.
+        assert_eq!(
+            config_changed(&mut state, today, &off, &rules, Phase::Idle, NOW),
+            None
+        );
+        let ids: Vec<&str> = state
+            .ledger
+            .unlocks
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "theme:underwater",
+                "theme:forestCabin",
+                "ambience:thunder",
+                "ambience:cafe",
+                "ambience:forest",
+                "ambience:ocean"
+            ]
+        );
+        assert_eq!(state.session, None);
+        // Off again: nothing is taken away.
+        config_changed(&mut state, today + 1, &rules, &off, Phase::Idle, NOW);
+        assert_eq!(state.ledger.unlocks.len(), 6);
+        // The load catch-up of the shell: the same, once.
+        let mut loaded = fresh();
+        loaded.ledger.total_sparks = cumulative(8);
+        assert_eq!(catch_up(&mut loaded, today), 6);
+        assert_eq!(catch_up(&mut loaded, today), 0);
+        assert_eq!(loaded.ledger.unlocks, state.ledger.unlocks);
+        assert_eq!(loaded.session, None);
+    }
+
+    #[test]
+    fn a_session_goal_can_complete_the_seasonal_unlock() {
+        let rules = no_surprises();
+        let mut state = fresh();
+        goal_day(&mut state, date(2026, 10, 1), &rules, "a");
+        goal_day(&mut state, date(2026, 10, 2), &rules, "b");
+        let today = date(2026, 10, 3);
+        // 10 for the Start and 10 for ten minutes: 20 of 30.
+        real(&mut state, today, &rules, &started("c", 0));
+        real(
+            &mut state,
+            today,
+            &rules,
+            &focus_ended("c", 1, 600, PhaseEnd::Stopped),
+        );
+        assert!(!day_of(&state, today).goal_met);
+        let answer = goal_done(
+            &mut state,
+            today,
+            &rules,
+            LedgerMode::Real,
+            "c",
+            Phase::Idle,
+            NOW,
+        )
+        .expect("goal done");
+        assert_eq!(answer.kind, MomentKind::GoalDone);
+        assert!(answer.daily_goal);
+        assert_eq!(answer.unlocked_themes, [RewardTheme::Halloween]);
+        assert_eq!(answer.unlocked_ambiences, [AmbienceLayer::SpookyNight]);
+    }
+
+    #[test]
+    fn a_fresh_ledger_has_an_empty_collection() {
+        let rules = rules();
+        let mut state = fresh();
+        state.ledger.total_sparks = cumulative(8);
+        catch_up(&mut state, MON);
+        assert!(!state.ledger.unlocks.is_empty());
+        // "Zacznij od nowa": a fresh ledger.
+        let reset = RewardsState::new(Ledger::new(SEED + 1));
+        let shown = view(&reset, MON, &rules).unlocks;
+        assert!(
+            shown
+                .themes
+                .iter()
+                .all(|item| item.state != UnlockState::Unlocked)
+        );
+        let free: Vec<AmbienceLayer> = shown
+            .ambiences
+            .iter()
+            .filter(|item| item.state == UnlockState::Free)
+            .map(|item| item.layer)
+            .collect();
+        assert_eq!(free, [AmbienceLayer::Rain, AmbienceLayer::Wind]);
+        assert!(
+            shown.ambiences[2..]
+                .iter()
+                .all(|item| item.state == UnlockState::Locked)
+        );
     }
 }

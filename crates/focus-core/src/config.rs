@@ -5,9 +5,10 @@ use std::collections::{BTreeMap, HashSet};
 use std::ops::RangeInclusive;
 
 use crate::api::{
-    AppCategory, AppError, CalendarConfig, CelebrationLevel, ChimeKind, ChimeSound, Config,
-    CustomChimes, DailyGoal, Language, MusicConfig, MusicSourceKind, NoiseColor, RewardsConfig,
-    ShieldsConfig, Theme, TintConfig, TintLocation, Weekday, WorkConfig,
+    AmbienceConfig, AmbienceLayer, AmbienceMix, AppCategory, AppError, CalendarConfig,
+    CelebrationLevel, ChimeKind, ChimeSound, Config, CustomChimes, DailyGoal, Language,
+    MusicConfig, MusicSourceKind, NoiseColor, RewardsConfig, ShieldsConfig, Theme, TintConfig,
+    TintLocation, Weekday, WorkConfig,
 };
 use crate::blocklist::normalize_domain;
 use crate::launchers;
@@ -75,6 +76,10 @@ pub const LATITUDE_RANGE: RangeInclusive<f64> = -90.0..=90.0;
 pub const LONGITUDE_RANGE: RangeInclusive<f64> = -180.0..=180.0;
 /// Most labelled apps in `appCategories` (ADR-023).
 pub const MAX_APP_CATEGORIES: usize = 500;
+/// Default master volume of the beta ambience mixer (`ambience.volume`, ADR-024).
+pub const DEFAULT_AMBIENCE_VOLUME: f32 = 0.6;
+/// Volume of an ambience layer the user has not touched yet (ADR-024).
+pub const DEFAULT_AMBIENCE_LAYER_VOLUME: f32 = 0.5;
 
 const MAX_TENANT_LEN: usize = 253;
 const MAX_HOST_LEN: usize = 253;
@@ -120,6 +125,23 @@ impl Default for Config {
             app_categories: BTreeMap::new(),
             // A config that exists (or lacks the field) belongs to a user who never needs the wizard (ADR-023).
             onboarding_done: true,
+            reward_theme: None,
+            ambience: AmbienceConfig::default(),
+        }
+    }
+}
+
+impl Default for AmbienceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            volume: DEFAULT_AMBIENCE_VOLUME,
+            // Rain is free in the beta: turning the master switch on plays something at once.
+            layers: vec![AmbienceMix {
+                layer: AmbienceLayer::Rain,
+                on: true,
+                volume: DEFAULT_AMBIENCE_LAYER_VOLUME,
+            }],
         }
     }
 }
@@ -249,6 +271,8 @@ impl Config {
             smart_breaks,
             app_categories,
             onboarding_done,
+            reward_theme,
+            ambience,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -283,6 +307,8 @@ impl Config {
             smart_breaks,
             app_categories: normalize_app_categories(app_categories)?,
             onboarding_done,
+            reward_theme,
+            ambience: ambience.normalized()?,
         })
     }
 
@@ -332,6 +358,38 @@ impl RewardsConfig {
             rest_weekdays,
             ..self
         })
+    }
+}
+
+impl AmbienceConfig {
+    /// Ambience part of [`Config::normalized`] (ADR-024): the master volume and every layer volume must be within
+    /// 0..=1 (`config.invalid`, field `ambience.volume` / `ambience.layers`); the layers are deduplicated (the first
+    /// entry of a layer wins) and sorted in catalogue order (`AmbienceLayer::ALL`). Whether a layer is unlocked is not
+    /// checked here (the config is pure): a locked layer simply never plays.
+    pub fn normalized(self) -> Result<AmbienceConfig, AppError> {
+        check_unit_interval("ambience.volume", self.volume)?;
+        let mut layers: Vec<AmbienceMix> = Vec::with_capacity(self.layers.len());
+        for mix in self.layers {
+            check_unit_interval("ambience.layers", mix.volume)?;
+            if !layers.iter().any(|kept| kept.layer == mix.layer) {
+                layers.push(mix);
+            }
+        }
+        layers.sort_by_key(|mix| mix.layer);
+        Ok(AmbienceConfig { layers, ..self })
+    }
+
+    /// The mix of `layer`: its entry, or off at [`DEFAULT_AMBIENCE_LAYER_VOLUME`].
+    pub fn mix(&self, layer: AmbienceLayer) -> AmbienceMix {
+        self.layers
+            .iter()
+            .copied()
+            .find(|mix| mix.layer == layer)
+            .unwrap_or(AmbienceMix {
+                layer,
+                on: false,
+                volume: DEFAULT_AMBIENCE_LAYER_VOLUME,
+            })
     }
 }
 
@@ -2954,5 +3012,79 @@ mod tests {
             field_of(labels(&many).normalized()).as_deref(),
             Some("appCategories")
         );
+    }
+
+    #[test]
+    fn ambience_defaults_and_validation() {
+        let cfg = Config::default();
+        assert_eq!(cfg.reward_theme, None);
+        assert!(
+            !cfg.ambience.enabled,
+            "nothing plays until the user turns it on"
+        );
+        assert!(approx(cfg.ambience.volume, DEFAULT_AMBIENCE_VOLUME));
+        assert_eq!(
+            cfg.ambience.layers,
+            [AmbienceMix {
+                layer: AmbienceLayer::Rain,
+                on: true,
+                volume: DEFAULT_AMBIENCE_LAYER_VOLUME
+            }]
+        );
+        let untouched = cfg.ambience.mix(AmbienceLayer::Ocean);
+        assert!(!untouched.on && approx(untouched.volume, DEFAULT_AMBIENCE_LAYER_VOLUME));
+
+        let with = |ambience: AmbienceConfig| Config {
+            ambience,
+            ..Config::default()
+        };
+        let mix = |layer, on, volume| AmbienceMix { layer, on, volume };
+        let messy = with(AmbienceConfig {
+            enabled: true,
+            volume: 1.0,
+            layers: vec![
+                mix(AmbienceLayer::Ocean, true, 0.2),
+                mix(AmbienceLayer::Rain, false, 0.0),
+                mix(AmbienceLayer::Ocean, false, 0.9),
+            ],
+        })
+        .normalized()
+        .expect("valid");
+        assert_eq!(
+            messy.ambience.layers,
+            [
+                mix(AmbienceLayer::Rain, false, 0.0),
+                mix(AmbienceLayer::Ocean, true, 0.2)
+            ],
+            "deduplicated (first wins) and in catalogue order"
+        );
+        assert_eq!(
+            field_of(
+                with(AmbienceConfig {
+                    volume: 1.5,
+                    ..AmbienceConfig::default()
+                })
+                .normalized()
+            )
+            .as_deref(),
+            Some("ambience.volume")
+        );
+        assert_eq!(
+            field_of(
+                with(AmbienceConfig {
+                    layers: vec![mix(AmbienceLayer::Wind, true, f32::NAN)],
+                    ..AmbienceConfig::default()
+                })
+                .normalized()
+            )
+            .as_deref(),
+            Some("ambience.layers")
+        );
+        // A collection theme is kept as it is: whether it is unlocked is the shell's check (rewards.json).
+        let themed = Config {
+            reward_theme: Some(crate::api::RewardTheme::Halloween),
+            ..Config::default()
+        };
+        assert_eq!(themed.clone().normalized(), Ok(themed));
     }
 }

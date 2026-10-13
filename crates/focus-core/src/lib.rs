@@ -5,7 +5,7 @@
 //! catalog, UI language resolution, the warm screen tint (schedule, colour temperature, gains) and the
 //! ranking of work items for "Co dalej?" (assigned first, then waiting on the user, then notifications) and
 //! the pure parts of the privacy panel (delete plan, sizes, export without secrets), and the beta rewards (sparks, daily
-//! goal, levels, streak, surprises; small steps live in the session).
+//! goal, levels, streak, surprises; small steps live in the session) with its collection of themes and ambience layers.
 //!
 //! Pure functional core (ADR-002): no Tauri, rodio, OS, network, clock or filesystem access.
 //! Time is always passed in from the outside (`session::Now`, `tint::tint_level`, `calendar::*`,
@@ -24,4 +24,5 @@ pub mod stats;
 pub mod sun;
 pub mod timing;
 pub mod tint;
+pub mod unlocks;
 pub mod work;
