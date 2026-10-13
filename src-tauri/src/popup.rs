@@ -22,6 +22,13 @@
 //! meanwhile ([`PopupHandle::resolve_meeting`]). It gets a taller window and stays up to
 //! [`MEETING_TIMEOUT`].
 //!
+//! A work digest (`PopupKind::WorkDigest` from `crate::work`: new work items held back during focus) never
+//! replaces the popup on screen: it waits until that one goes away (at a break: the break popup first, then
+//! the digest). A popup that arrives while the digest is on screen parks the digest the same way. Only the
+//! newest digest is kept, and none outlives the start of a focus phase: a focus-started popup replaces it (it
+//! is not parked) and [`PopupHandle::withdraw_work_digest`] (focus started with items held, also without phase
+//! popups) removes it from the screen and from the parked ones.
+//!
 //! The window stays focusable on purpose (no `WS_EX_NOACTIVATE`): its buttons must take clicks reliably.
 //! It still appears without activation; only the user activates it (a click, Alt+Tab). It is listed in
 //! Alt+Tab while visible.
@@ -78,6 +85,8 @@ pub struct PopupRequest {
     pub reminder: Option<String>,
     /// The meeting of a `MeetingReminder` / `BreakHeld` popup.
     pub meeting: Option<MeetingConflict>,
+    /// Number of new work items of a `WorkDigest` popup (0 otherwise).
+    pub work_count: u32,
     /// Shown instead (through the shields worker) when the popup window cannot be created.
     pub fallback: Toast,
 }
@@ -92,6 +101,7 @@ impl PopupRequest {
             launchers: Vec::new(),
             reminder: None,
             meeting: None,
+            work_count: 0,
             fallback,
         }
     }
@@ -113,6 +123,8 @@ enum PopupCmd {
     },
     /// The meeting with this id was answered: close or forget its reminder.
     ResolveMeeting(String),
+    /// Focus started while new work items are held: a work digest on screen or parked goes away.
+    WithdrawWorkDigest,
 }
 
 /// Cheap to clone; every method is non-blocking.
@@ -128,15 +140,7 @@ impl PopupHandle {
     /// Starts the popup thread. `shields` carries the fallback toasts.
     pub fn spawn(app: AppHandle, shields: ShieldsHandle) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        let info = Arc::new(Mutex::new(PopupInfo {
-            revision: 0,
-            kind: None,
-            cycle: 0,
-            phase_secs: 0,
-            launchers: Vec::new(),
-            reminder: None,
-            meeting: None,
-        }));
+        let info = Arc::new(Mutex::new(popup_info(0, None)));
         let shared = Arc::clone(&info);
         let page_loaded = Arc::new(AtomicBool::new(false));
         let loaded = Arc::clone(&page_loaded);
@@ -181,6 +185,12 @@ impl PopupHandle {
     /// The meeting `meeting_id` was answered: its reminder closes (or is not shown again).
     pub fn resolve_meeting(&self, meeting_id: &str) {
         self.send(PopupCmd::ResolveMeeting(meeting_id.to_owned()));
+    }
+
+    /// Focus started and new work items are held (`crate::work`): a work digest still on screen or waiting
+    /// behind another popup goes away, so it never shows during focus.
+    pub fn withdraw_work_digest(&self) {
+        self.send(PopupCmd::WithdrawWorkDigest);
     }
 
     /// What the popup shows now (`get_popup`). Only the popup page calls it, when it loads: from then on
@@ -244,6 +254,7 @@ impl Worker {
                     }
                 }
                 Some(PopupCmd::ResolveMeeting(id)) => self.resolve_meeting(&id),
+                Some(PopupCmd::WithdrawWorkDigest) => self.withdraw_work_digest(),
                 None => {
                     if let Some(shown_at) = self.shown_at {
                         let kind = self.current.as_ref().map(|current| current.kind);
@@ -277,16 +288,27 @@ impl Worker {
             }
             _ => {}
         }
-        // A meeting question on screen gives way to the new popup and comes back after it; a newer
-        // reminder of the same meeting replaces it.
-        let new_id = request.reminder_meeting_id().map(str::to_owned);
-        if let Some(question) = self.current.take_if(|current| {
-            current.reminder_meeting_id().is_some()
-                && current.reminder_meeting_id() != new_id.as_deref()
-        }) {
-            self.parked.push(question);
+        if matches!(
+            request.kind,
+            PopupKind::WorkDigest | PopupKind::FocusStarted
+        ) {
+            // Only the newest digest counts, and none survives into a focus phase.
+            self.parked
+                .retain(|parked| parked.kind != PopupKind::WorkDigest);
         }
-        if let Some(id) = new_id.as_deref() {
+        match arrival(self.current.as_ref(), &request) {
+            Arrival::Wait => {
+                self.parked.push(request);
+                return;
+            }
+            Arrival::ParkCurrent => {
+                if let Some(waiting) = self.current.take() {
+                    self.parked.push(waiting);
+                }
+            }
+            Arrival::Replace => {}
+        }
+        if let Some(id) = request.reminder_meeting_id() {
             self.parked
                 .retain(|parked| parked.reminder_meeting_id() != Some(id));
         }
@@ -335,6 +357,19 @@ impl Worker {
         if !self.parked.is_empty() {
             let next = self.parked.remove(0);
             self.show(next);
+        }
+    }
+
+    /// A work digest on screen or parked goes away (focus started).
+    fn withdraw_work_digest(&mut self) {
+        self.parked
+            .retain(|parked| parked.kind != PopupKind::WorkDigest);
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|current| current.kind == PopupKind::WorkDigest)
+        {
+            self.hide();
         }
     }
 
@@ -445,6 +480,7 @@ fn popup_info(revision: u32, request: Option<&PopupRequest>) -> PopupInfo {
             launchers: request.launchers.clone(),
             reminder: request.reminder.clone(),
             meeting: request.meeting.clone(),
+            work_count: request.work_count,
         },
         None => PopupInfo {
             revision,
@@ -454,7 +490,43 @@ fn popup_info(revision: u32, request: Option<&PopupRequest>) -> PopupInfo {
             launchers: Vec::new(),
             reminder: None,
             meeting: None,
+            work_count: 0,
         },
+    }
+}
+
+/// How a new popup meets the one on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Arrival {
+    /// Shown now in place of the popup on screen (if any).
+    Replace,
+    /// Shown now; the popup on screen (a meeting question or a work digest) is parked and comes back after it.
+    ParkCurrent,
+    /// Parked until the popup on screen goes away (a work digest never replaces another popup).
+    Wait,
+}
+
+/// See [`Arrival`]. A newer digest updates a digest on screen; a newer reminder of the same meeting replaces
+/// its older reminder. A focus start replaces a digest on screen for good (parked, it would come back during
+/// focus).
+fn arrival(current: Option<&PopupRequest>, request: &PopupRequest) -> Arrival {
+    let Some(current) = current else {
+        return Arrival::Replace;
+    };
+    let digest = request.kind == PopupKind::WorkDigest;
+    if current.kind == PopupKind::WorkDigest {
+        return if digest || request.kind == PopupKind::FocusStarted {
+            Arrival::Replace
+        } else {
+            Arrival::ParkCurrent
+        };
+    }
+    if digest {
+        return Arrival::Wait;
+    }
+    match current.reminder_meeting_id() {
+        Some(id) if request.reminder_meeting_id() != Some(id) => Arrival::ParkCurrent,
+        _ => Arrival::Replace,
     }
 }
 
@@ -519,6 +591,100 @@ mod tests {
         assert_eq!(hide_at(shown, true, meeting), shown + MEETING_TIMEOUT);
         assert_eq!(hide_at(shown, false, meeting), shown + SAFETY_TIMEOUT);
         assert!(height_for(PopupKind::MeetingReminder) > height_for(PopupKind::BreakHeld));
+    }
+
+    fn meeting_reminder(id: &str) -> PopupRequest {
+        let conflict = MeetingConflict {
+            meeting: focus_core::api::Meeting {
+                id: id.into(),
+                source: focus_core::api::CalendarSource::Ics,
+                subject: "Planowanie".into(),
+                start_ms: 0,
+                end_ms: 1,
+                online: false,
+            },
+            break_number: 1,
+            break_start_ms: 0,
+            break_end_ms: 1,
+            choice: None,
+            next_reminder_ms: None,
+            remind_later_allowed: true,
+            too_long: false,
+        };
+        PopupRequest {
+            meeting: Some(conflict),
+            ..PopupRequest::new(
+                PopupKind::MeetingReminder,
+                1,
+                900,
+                texts::meeting_reminder_toast("Planowanie", None, 5, 1),
+            )
+        }
+    }
+
+    fn digest(count: u32) -> PopupRequest {
+        PopupRequest {
+            work_count: count,
+            ..PopupRequest::new(PopupKind::WorkDigest, 0, 0, texts::work_digest_toast(count))
+        }
+    }
+
+    #[test]
+    fn a_work_digest_waits_for_the_popup_on_screen() {
+        let break_popup = PopupRequest::new(
+            PopupKind::BreakStarted,
+            1,
+            900,
+            texts::break_toast(900, None),
+        );
+        // Nothing on screen: shown at once.
+        assert_eq!(arrival(None, &digest(3)), Arrival::Replace);
+        // The break popup stays; the digest comes after it.
+        assert_eq!(arrival(Some(&break_popup), &digest(3)), Arrival::Wait);
+        assert_eq!(
+            arrival(Some(&meeting_reminder("m1")), &digest(3)),
+            Arrival::Wait
+        );
+        // A newer digest updates the one on screen.
+        assert_eq!(arrival(Some(&digest(2)), &digest(5)), Arrival::Replace);
+        // Any other popup parks the digest on screen.
+        assert_eq!(
+            arrival(Some(&digest(2)), &break_popup),
+            Arrival::ParkCurrent
+        );
+        assert_eq!(
+            arrival(Some(&digest(2)), &meeting_reminder("m1")),
+            Arrival::ParkCurrent
+        );
+        // Meeting questions as before.
+        assert_eq!(
+            arrival(Some(&meeting_reminder("m1")), &break_popup),
+            Arrival::ParkCurrent
+        );
+        assert_eq!(
+            arrival(Some(&meeting_reminder("m1")), &meeting_reminder("m1")),
+            Arrival::Replace
+        );
+        assert_eq!(
+            arrival(Some(&meeting_reminder("m1")), &meeting_reminder("m2")),
+            Arrival::ParkCurrent
+        );
+        assert_eq!(arrival(Some(&break_popup), &break_popup), Arrival::Replace);
+        // A focus start drops the digest on screen instead of parking it (it would come back during focus).
+        let focus_popup = PopupRequest::new(
+            PopupKind::FocusStarted,
+            2,
+            2700,
+            texts::break_toast(900, None),
+        );
+        assert_eq!(arrival(Some(&digest(2)), &focus_popup), Arrival::Replace);
+
+        let info = popup_info(4, Some(&digest(7)));
+        assert_eq!(
+            (info.kind, info.work_count),
+            (Some(PopupKind::WorkDigest), 7)
+        );
+        assert_eq!(popup_info(5, None).work_count, 0);
     }
 
     #[test]

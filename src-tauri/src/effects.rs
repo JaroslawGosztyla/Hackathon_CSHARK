@@ -188,15 +188,19 @@ impl Effects {
             return;
         }
         if shutting_down {
-            if let Err(err) = self.persistence.append_history(&summary) {
+            if let Err(err) = self
+                .persistence
+                .append_history(&summary, &self.last_summary)
+            {
                 log::error!("cannot save session history: {err:#}");
             }
             return;
         }
         let persistence = self.persistence.clone();
+        let latest = Arc::clone(&self.last_summary);
         let app = self.app.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            if let Err(err) = persistence.append_history(&summary) {
+            if let Err(err) = persistence.append_history(&summary, &latest) {
                 emit_error(
                     &app,
                     AppError::new(

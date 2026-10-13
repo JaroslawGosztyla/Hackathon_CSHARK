@@ -162,6 +162,38 @@ pub fn launchers_closed_toast(names: &[&str]) -> Toast {
     )
 }
 
+/// New work items for "Co dalej?" (held back during focus, shown at the break or after the session).
+/// Fallback when the popup window cannot be shown; never names an item (titles stay in the app).
+pub fn work_digest_toast(count: u32) -> Toast {
+    let (items, waits) = match plural_pl(count) {
+        PluralPl::One => ("nowa pozycja", "czeka"),
+        PluralPl::Few => ("nowe pozycje", "czekają"),
+        PluralPl::Many => ("nowych pozycji", "czeka"),
+    };
+    Toast::new(
+        "Co dalej? 📋",
+        format!("{count} {items} z Twoich narzędzi {waits} w FocusMode."),
+    )
+}
+
+/// Polish plural form of a count: 1 → one, 2–4 (not 12–14), 22–24, … → few, otherwise many.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluralPl {
+    One,
+    Few,
+    Many,
+}
+
+fn plural_pl(count: u32) -> PluralPl {
+    if count == 1 {
+        PluralPl::One
+    } else if (2..=4).contains(&(count % 10)) && !(12..=14).contains(&(count % 100)) {
+        PluralPl::Few
+    } else {
+        PluralPl::Many
+    }
+}
+
 /// A blocked site was detected in the foreground browser window. `matched` is a domain, or a regex
 /// source when `is_pattern` (not readable as a site name, so it is not shown).
 pub fn nudge_toast(matched: &str, is_pattern: bool) -> Toast {
@@ -343,6 +375,27 @@ mod tests {
         );
         assert_eq!(local_clock(now, now, None), None);
         assert_eq!(local_clock(now, now, Some(f64::NAN)), None);
+    }
+
+    #[test]
+    fn work_digest_toast_uses_polish_plurals() {
+        assert_eq!(
+            work_digest_toast(1).body,
+            "1 nowa pozycja z Twoich narzędzi czeka w FocusMode."
+        );
+        assert_eq!(
+            work_digest_toast(3).body,
+            "3 nowe pozycje z Twoich narzędzi czekają w FocusMode."
+        );
+        assert_eq!(
+            work_digest_toast(5).body,
+            "5 nowych pozycji z Twoich narzędzi czeka w FocusMode."
+        );
+        assert!(work_digest_toast(12).body.starts_with("12 nowych pozycji"));
+        assert!(work_digest_toast(22).body.starts_with("22 nowe pozycje"));
+        assert!(work_digest_toast(0).body.starts_with("0 nowych pozycji"));
+        assert_eq!(plural_pl(114), PluralPl::Many);
+        assert_eq!(plural_pl(104), PluralPl::Few);
     }
 
     #[test]

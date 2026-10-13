@@ -4,13 +4,14 @@
 //! (several of them wait for a worker reply; the main thread must stay free for the event loop).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
     AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, CalendarSource, CalendarStatus, ChimeKind,
     ChimeSound, Config, DeviceCodePrompt, Language, MediaAction, MediaWindowStatus, MeetingChoice,
-    Phase, PopupAction, PopupInfo, SessionSnapshot, SessionSummary, ShieldStatus, TeamsStatus,
-    TintStatus, Track, UsageReport,
+    Phase, PopupAction, PopupInfo, SessionGoal, SessionSnapshot, SessionSummary, ShieldStatus,
+    TeamsStatus, TintStatus, Track, UsageReport, WorkSource, WorkStatus,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use tauri::{AppHandle, State};
@@ -19,11 +20,13 @@ use tauri_plugin_opener::OpenerExt;
 use crate::session_actor::ActorCmd;
 use crate::{
     AppState, calendar, chimes, close, effects, emit_error, lock, music, read_config, tracker,
-    write_config,
+    work, write_config,
 };
 
 /// Upper bound for `list_history(limit)`.
 const MAX_HISTORY: u32 = 500;
+/// Longest session id accepted by `mark_goal_done` (ids are `<ms>-<pid>-<n>`).
+const MAX_SESSION_ID_LEN: usize = 128;
 
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<SessionSnapshot, AppError> {
@@ -121,6 +124,9 @@ async fn store_config(
     }
     if normalized.calendar != previous.calendar {
         state.calendar.config_changed();
+    }
+    if normalized.work != previous.work {
+        state.work.config_changed();
     }
     Ok(normalized)
 }
@@ -343,6 +349,72 @@ pub async fn set_ics_urls(
 #[tauri::command]
 pub async fn get_ics_urls(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
     state.calendar.ics_urls().await
+}
+
+#[tauri::command]
+pub async fn get_work(state: State<'_, AppState>) -> Result<WorkStatus, AppError> {
+    state.work.get().await
+}
+
+#[tauri::command]
+pub async fn refresh_work(state: State<'_, AppState>) -> Result<WorkStatus, AppError> {
+    state.work.refresh().await
+}
+
+#[tauri::command]
+pub async fn set_work_token(
+    state: State<'_, AppState>,
+    source: WorkSource,
+    token: Option<String>,
+) -> Result<WorkStatus, AppError> {
+    // Checked here, sealed on the work thread; never logged.
+    let token = token.as_deref().map(work::validate_token).transpose()?;
+    state.work.set_token(source, token).await
+}
+
+#[tauri::command]
+pub async fn set_session_goal(
+    state: State<'_, AppState>,
+    goal: Option<SessionGoal>,
+) -> Result<(), AppError> {
+    state.actor.send(ActorCmd::SetGoal(goal))
+}
+
+#[tauri::command]
+pub async fn mark_goal_done(
+    state: State<'_, AppState>,
+    session_id: String,
+    done: bool,
+) -> Result<(), AppError> {
+    let unknown = || {
+        AppError::new(
+            "history.unknownSession",
+            "the session is not in the history",
+        )
+    };
+    if session_id.is_empty() || session_id.len() > MAX_SESSION_ID_LEN {
+        return Err(unknown());
+    }
+    let keep_history = read_config(&state.config).keep_history;
+    let persistence = state.persistence.clone();
+    let latest = Arc::clone(&state.last_summary);
+    // Rewrites history.jsonl: keep it off the async workers.
+    let marked = tauri::async_runtime::spawn_blocking(move || {
+        persistence.mark_goal_done(&session_id, done, &latest)
+    })
+    .await
+    .map_err(|err| AppError::new("persistence.history", err.to_string()))?
+    .map_err(|err| {
+        AppError::new(
+            "persistence.history",
+            format!("cannot update the session history: {err:#}"),
+        )
+    })?;
+    // With the history off a session that is not in the file only lives in memory (or is gone): no-op.
+    if keep_history && !marked.in_memory && !marked.in_file {
+        return Err(unknown());
+    }
+    Ok(())
 }
 
 #[tauri::command]

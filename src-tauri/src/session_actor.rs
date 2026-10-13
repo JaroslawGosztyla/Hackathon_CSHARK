@@ -10,12 +10,16 @@
 //! every Start and Resume and every [`HOLDS_RESYNC`] while a session runs (so the monotonic times follow
 //! the wall clock after a sleep). Whenever the session timing changes (phase, pause, cycle, profile, a
 //! meeting extension) the actor tells `crate::calendar`, which plans the breaks from it.
+//!
+//! The session goal ("Co dalej?", `set_session_goal`) lives in the core session: it is part of every
+//! snapshot and moves into the summary on Stop. Every phase change is reported to `crate::work`, which holds
+//! new work items back during focus and shows them at the break or after the session.
 
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
-    AppError, Meeting, MeetingChoice, MeetingConflict, Phase, SessionSnapshot, events,
+    AppError, Meeting, MeetingChoice, MeetingConflict, Phase, SessionGoal, SessionSnapshot, events,
 };
 use focus_core::session::{Effect, Input, MeetingHold, NotifyKind, Now, Session};
 use focus_core::timing::TimingProfile;
@@ -28,6 +32,7 @@ use crate::calendar::{CalendarHandle, SessionPlan};
 use crate::effects::{Effects, HeldBreak};
 use crate::tracker::TrackerHandle;
 use crate::tray::Tray;
+use crate::work::WorkHandle;
 use crate::{SharedConfig, lock, read_config};
 
 /// While a session runs, the meeting holds are rebuilt from the wall clock this often.
@@ -47,6 +52,8 @@ pub enum ActorCmd {
     /// Every meeting answered with `Extend` / `PauseAtBreak` (from `crate::calendar`): replaces the
     /// session's meeting holds.
     SetMeetings(Vec<(Meeting, MeetingChoice)>),
+    /// The goal of the coming or running session (`set_session_goal`); `None` clears it.
+    SetGoal(Option<SessionGoal>),
     /// App exit: stop the session (history written synchronously), then ack.
     Shutdown(std_mpsc::Sender<()>),
 }
@@ -96,6 +103,8 @@ pub struct ActorContext {
     pub tray: Option<Tray>,
     /// Plans the breaks against the calendars; told about every timing change.
     pub calendar: CalendarHandle,
+    /// "Co dalej?": told about every phase change (holds new items during focus).
+    pub work: WorkHandle,
 }
 
 pub fn spawn(ctx: ActorContext, rx: mpsc::UnboundedReceiver<ActorCmd>) {
@@ -116,6 +125,7 @@ async fn run(ctx: ActorContext, mut rx: mpsc::UnboundedReceiver<ActorCmd>) {
         meetings: Vec::new(),
         holds_synced_at: Instant::now(),
         last_plan: None,
+        last_work_phase: None,
     };
     let profile = actor.profile();
     actor.session.set_idle_profile(profile);
@@ -171,6 +181,8 @@ struct Actor {
     holds_synced_at: Instant,
     /// Timing last reported to the calendar.
     last_plan: Option<PlanKey>,
+    /// Phase last reported to the work service.
+    last_work_phase: Option<Phase>,
 }
 
 /// What the calendar's break plan depends on; a new plan is sent when it changes. A running phase keeps
@@ -206,6 +218,8 @@ impl Actor {
                 self.sync_holds();
                 self.publish(false);
             }
+            // Cleaned by the core; shown by every snapshot, copied into the summary on Stop.
+            ActorCmd::SetGoal(goal) => self.apply(Input::SetGoal(goal)),
             ActorCmd::Stop => self.apply(Input::Stop),
             ActorCmd::Skip => self.apply(Input::SkipPhase),
             ActorCmd::ConfigChanged => {
@@ -379,6 +393,10 @@ impl Actor {
         let mut snapshot = self.session.snapshot(now);
         if !self.shutting_down {
             self.report_plan(&snapshot, now);
+            if self.last_work_phase != Some(snapshot.phase) {
+                self.last_work_phase = Some(snapshot.phase);
+                self.ctx.work.session_changed(snapshot.phase);
+            }
         }
         if !force {
             let unchanged = self.last_published.as_ref().is_some_and(|last| {

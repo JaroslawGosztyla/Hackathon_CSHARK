@@ -1,10 +1,12 @@
 //! All file IO of the app: config, session history, the crash-restore files of the shields (muted
-//! notifications) and of the screen tint, the custom chime folder, the meeting choices and the paths of the
-//! sealed secrets (Teams and Google tokens, ICS links; read and written through `focus_platform`).
+//! notifications) and of the screen tint, the custom chime folder, the meeting choices, the seen work items
+//! and the paths of the sealed secrets (Teams and Google tokens, ICS links, work tool tokens; read and
+//! written through `focus_platform`).
 //! `websiteblacklist.txt` lives next to `config.json`, but `crate::blocklist` reads and watches it.
 //!
 //! Every method is blocking. Callers on the async runtime use `spawn_blocking`; the shields
-//! and Teams workers call it from their own threads. Writes are serialized by one lock.
+//! and Teams workers call it from their own threads. Writes are serialized by one lock; every change of
+//! `history.jsonl` additionally holds the history lock for the whole read-modify-write.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
-use focus_core::api::{AppError, Config, SessionSummary};
+use focus_core::api::{AppError, Config, SessionSummary, WorkSource};
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use focus_platform::notifications::MuteToken;
 use serde::Serialize;
@@ -33,6 +35,8 @@ const GOOGLE_TOKEN_FILE: &str = "google-token.bin";
 const ICS_LINKS_FILE: &str = "ics-links.bin";
 /// How the user answered meetings that collide with breaks (meeting ids only, no subjects).
 const MEETING_CHOICES_FILE: &str = "meeting-choices.json";
+/// Work items the user has seen in "Co dalej?" (item ids only, no titles).
+const WORK_SEEN_FILE: &str = "work-seen.json";
 /// Folder (in the app data directory) with the user's imported chime files.
 const SOUNDS_DIR: &str = "sounds";
 
@@ -52,8 +56,21 @@ struct Inner {
     google_token_path: PathBuf,
     ics_links_path: PathBuf,
     meeting_choices_path: PathBuf,
+    work_seen_path: PathBuf,
+    data_dir: PathBuf,
     sounds_dir: PathBuf,
     write_lock: Mutex<()>,
+    /// Held for every change of `history.jsonl` (taken before `write_lock`).
+    history_lock: Mutex<()>,
+}
+
+/// Where [`Persistence::mark_goal_done`] found the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GoalMarked {
+    /// The last summary (in memory) is that session.
+    pub in_memory: bool,
+    /// `history.jsonl` has that session.
+    pub in_file: bool,
 }
 
 impl Persistence {
@@ -84,10 +101,58 @@ impl Persistence {
                 google_token_path: data_dir.join(GOOGLE_TOKEN_FILE),
                 ics_links_path: data_dir.join(ICS_LINKS_FILE),
                 meeting_choices_path: data_dir.join(MEETING_CHOICES_FILE),
+                work_seen_path: data_dir.join(WORK_SEEN_FILE),
+                data_dir: data_dir.to_path_buf(),
                 sounds_dir: data_dir.join(SOUNDS_DIR),
                 write_lock: Mutex::new(()),
+                history_lock: Mutex::new(()),
             }),
         })
+    }
+
+    /// The sealed access token of a work tool (read and written by `crate::work` via `focus_platform`).
+    pub fn work_token_path(&self, source: WorkSource) -> PathBuf {
+        focus_platform::work::token_path_for(&self.inner.data_dir, source)
+    }
+
+    /// Stores the ids of the seen work items (`crate::work`) atomically.
+    pub fn save_work_seen<T: Serialize>(&self, seen: &T) -> anyhow::Result<()> {
+        self.save_json(&self.inner.work_seen_path, seen, "seen work items")
+    }
+
+    /// The stored seen work items; `None` when there are none. A corrupted file is deleted.
+    pub fn load_work_seen<T: DeserializeOwned>(&self) -> Option<T> {
+        self.load_json(&self.inner.work_seen_path, "seen work items")
+    }
+
+    /// Writes `value` as pretty JSON to `path` atomically.
+    fn save_json<T: Serialize>(&self, path: &Path, value: &T, what: &str) -> anyhow::Result<()> {
+        let json = serde_json::to_vec_pretty(value).with_context(|| format!("serialize {what}"))?;
+        let _guard = lock(&self.inner.write_lock);
+        write_atomic(path, &json)
+    }
+
+    /// Reads JSON from `path`; `None` when it is missing or unreadable. A corrupted file is deleted.
+    fn load_json<T: DeserializeOwned>(&self, path: &Path, what: &str) -> Option<T> {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == ErrorKind::NotFound => return None,
+            Err(err) => {
+                log::warn!("cannot read {what}: {err}");
+                return None;
+            }
+        };
+        match serde_json::from_str::<T>(&text) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                log::warn!("corrupted {what} file, deleting it: {err}");
+                let _guard = lock(&self.inner.write_lock);
+                if let Err(err) = remove_if_present(path) {
+                    log::warn!("cannot delete {what}: {err:#}");
+                }
+                None
+            }
+        }
     }
 
     pub fn teams_token_path(&self) -> PathBuf {
@@ -106,32 +171,12 @@ impl Persistence {
 
     /// Stores the meeting choices (`crate::calendar`) atomically.
     pub fn save_meeting_choices<T: Serialize>(&self, choices: &T) -> anyhow::Result<()> {
-        let json = serde_json::to_vec_pretty(choices).context("serialize meeting choices")?;
-        let _guard = lock(&self.inner.write_lock);
-        write_atomic(&self.inner.meeting_choices_path, &json)
+        self.save_json(&self.inner.meeting_choices_path, choices, "meeting choices")
     }
 
     /// The stored meeting choices; `None` when there are none. A corrupted file is deleted.
     pub fn load_meeting_choices<T: DeserializeOwned>(&self) -> Option<T> {
-        let text = match fs::read_to_string(&self.inner.meeting_choices_path) {
-            Ok(text) => text,
-            Err(err) if err.kind() == ErrorKind::NotFound => return None,
-            Err(err) => {
-                log::warn!("cannot read meeting choices: {err}");
-                return None;
-            }
-        };
-        match serde_json::from_str::<T>(&text) {
-            Ok(choices) => Some(choices),
-            Err(err) => {
-                log::warn!("corrupted meeting choices file, deleting it: {err}");
-                let _guard = lock(&self.inner.write_lock);
-                if let Err(err) = remove_if_present(&self.inner.meeting_choices_path) {
-                    log::warn!("cannot delete meeting choices: {err:#}");
-                }
-                None
-            }
-        }
+        self.load_json(&self.inner.meeting_choices_path, "meeting choices")
     }
 
     /// Folder of the imported chime files (`Config::custom_chimes` names files in it). Created on demand
@@ -200,9 +245,28 @@ impl Persistence {
         write_atomic(&self.inner.config_path, &json)
     }
 
-    /// Appends one summary as a JSON line to `history.jsonl`.
-    pub fn append_history(&self, summary: &SessionSummary) -> anyhow::Result<()> {
-        let mut line = serde_json::to_vec(summary).context("serialize summary")?;
+    /// Appends one summary as a JSON line to `history.jsonl`, with the goal answer ("Zrobione?") the user may
+    /// already have given for it in `latest` (the last summary in memory, see [`Self::mark_goal_done`]): the
+    /// append runs on the blocking pool and can come after that answer.
+    pub fn append_history(
+        &self,
+        summary: &SessionSummary,
+        latest: &Mutex<Option<SessionSummary>>,
+    ) -> anyhow::Result<()> {
+        let _history = lock(&self.inner.history_lock);
+        let answered = lock(latest)
+            .as_ref()
+            .filter(|last| last.session_id == summary.session_id)
+            .map(|last| last.goal_done)
+            .filter(|goal_done| *goal_done != summary.goal_done);
+        let mut line = match answered {
+            Some(goal_done) => serde_json::to_vec(&SessionSummary {
+                goal_done,
+                ..summary.clone()
+            }),
+            None => serde_json::to_vec(summary),
+        }
+        .context("serialize summary")?;
         line.push(b'\n');
         let _guard = lock(&self.inner.write_lock);
         let mut file = OpenOptions::new()
@@ -241,9 +305,50 @@ impl Persistence {
             .collect())
     }
 
+    /// Marks the goal of session `session_id` as done / not done ("Zrobione?"): in `latest` (the last summary,
+    /// in memory) and in `history.jsonl`, whose matching line is rewritten (temp file + rename; the other lines
+    /// stay as they are). Serialized with [`Self::append_history`], so an answer given while the session is
+    /// still being appended is kept either way.
+    pub fn mark_goal_done(
+        &self,
+        session_id: &str,
+        done: bool,
+        latest: &Mutex<Option<SessionSummary>>,
+    ) -> anyhow::Result<GoalMarked> {
+        let _history = lock(&self.inner.history_lock);
+        let in_memory = match lock(latest)
+            .as_mut()
+            .filter(|last| last.session_id == session_id)
+        {
+            Some(last) => {
+                last.goal_done = Some(done);
+                true
+            }
+            None => false,
+        };
+        let path = &self.inner.history_path;
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                return Ok(GoalMarked {
+                    in_memory,
+                    in_file: false,
+                });
+            }
+            Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+        };
+        let (rewritten, in_file) = with_goal_done(&text, session_id, done);
+        if in_file {
+            let _guard = lock(&self.inner.write_lock);
+            write_atomic(path, rewritten.as_bytes())?;
+        }
+        Ok(GoalMarked { in_memory, in_file })
+    }
+
     /// Deletes the whole session history (`history.jsonl` and a temp file a crashed write may have left).
     /// A missing file is not an error.
     pub fn clear_history(&self) -> anyhow::Result<()> {
+        let _history = lock(&self.inner.history_lock);
         let _guard = lock(&self.inner.write_lock);
         remove_if_present(&self.inner.history_path)?;
         remove_if_present(&tmp_path(&self.inner.history_path))?;
@@ -331,6 +436,35 @@ impl Persistence {
     }
 }
 
+/// `history.jsonl` text with `goalDone` set on the summary lines of `session_id` (every other line kept as
+/// it is, one per line), and whether there was such a line.
+fn with_goal_done(text: &str, session_id: &str, done: bool) -> (String, bool) {
+    let mut found = false;
+    let mut out = String::with_capacity(text.len() + 32);
+    for line in text.lines() {
+        let updated = Some(line)
+            .filter(|line| line.contains(session_id))
+            .and_then(|line| serde_json::from_str::<SessionSummary>(line).ok())
+            .filter(|summary| summary.session_id == session_id)
+            .and_then(|summary| {
+                serde_json::to_string(&SessionSummary {
+                    goal_done: Some(done),
+                    ..summary
+                })
+                .ok()
+            });
+        match updated {
+            Some(updated) => {
+                found = true;
+                out.push_str(&updated);
+            }
+            None => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    (out, found)
+}
+
 /// Deletes `path`; a missing file is fine.
 fn remove_if_present(path: &Path) -> anyhow::Result<()> {
     match fs::remove_file(path) {
@@ -402,21 +536,33 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    fn summary(id: &str, at: i64) -> SessionSummary {
+        SessionSummary {
+            session_id: id.to_owned(),
+            started_at_ms: at,
+            ended_at_ms: at + 1,
+            focused_secs: 1,
+            break_secs: 0,
+            cycles_completed: 0,
+            usage: Default::default(),
+            demo: true,
+            goal: Some(focus_core::api::SessionGoal {
+                source: WorkSource::Jira,
+                key: format!("PROJ-{at}"),
+                title: "Goal".to_owned(),
+                url: String::new(),
+            }),
+            goal_done: None,
+        }
+    }
+
     #[test]
     fn history_is_newest_first() {
         let (root, p) = temp_dirs("history");
+        let none = Mutex::new(None);
         for i in 0..3 {
-            let summary = SessionSummary {
-                session_id: format!("s{i}"),
-                started_at_ms: i,
-                ended_at_ms: i + 1,
-                focused_secs: 1,
-                break_secs: 0,
-                cycles_completed: 0,
-                usage: Default::default(),
-                demo: true,
-            };
-            p.append_history(&summary).expect("append");
+            p.append_history(&summary(&format!("s{i}"), i), &none)
+                .expect("append");
         }
         let list = p.list_history(2).expect("list");
         let ids: Vec<_> = list.iter().map(|s| s.session_id.as_str()).collect();
@@ -430,6 +576,108 @@ mod tests {
         assert!(!tmp_path(&history).exists());
         // Clearing an empty history is fine too.
         p.clear_history().expect("clear again");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn goal_done_rewrites_only_its_line() {
+        let (root, p) = temp_dirs("goal-done");
+        let latest = Mutex::new(None);
+        // No history yet: only the summary in memory can be marked.
+        let marked = p.mark_goal_done("s1", true, &latest).expect("mark");
+        assert_eq!(
+            marked,
+            GoalMarked {
+                in_memory: false,
+                in_file: false
+            }
+        );
+
+        let history = root.join("data").join(HISTORY_FILE);
+        p.append_history(&summary("s1", 1), &latest)
+            .expect("append");
+        // A line this version cannot read stays as it is.
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&history)
+            .expect("open");
+        file.write_all(b"{\"future\":true}\n").expect("write");
+        drop(file);
+        p.append_history(&summary("s2", 2), &latest)
+            .expect("append");
+
+        let marked = p.mark_goal_done("s1", true, &latest).expect("mark");
+        assert_eq!(
+            marked,
+            GoalMarked {
+                in_memory: false,
+                in_file: true
+            }
+        );
+        let text = fs::read_to_string(&history).expect("read");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[1], "{\"future\":true}");
+        let list = p.list_history(10).expect("list");
+        let done: Vec<_> = list
+            .iter()
+            .map(|s| (s.session_id.as_str(), s.goal_done))
+            .collect();
+        assert_eq!(done, [("s2", None), ("s1", Some(true))]);
+        assert_eq!(list[1].goal, summary("s1", 1).goal, "the goal is kept");
+        assert!(!tmp_path(&history).exists());
+
+        // Answered while the append is still pending: the append takes the answer from memory.
+        *latest.lock().expect("lock") = Some(summary("s3", 3));
+        let marked = p.mark_goal_done("s3", false, &latest).expect("mark");
+        assert_eq!(
+            marked,
+            GoalMarked {
+                in_memory: true,
+                in_file: false
+            }
+        );
+        p.append_history(&summary("s3", 3), &latest)
+            .expect("append");
+        let newest = p.list_history(1).expect("list");
+        assert_eq!(newest[0].goal_done, Some(false));
+        // Unknown sessions change nothing.
+        let before = fs::read_to_string(&history).expect("read");
+        let marked = p.mark_goal_done("nope", true, &latest).expect("mark");
+        assert!(!marked.in_memory && !marked.in_file);
+        assert_eq!(fs::read_to_string(&history).expect("read"), before);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn work_seen_round_trip_and_token_paths() {
+        let (root, p) = temp_dirs("work");
+        assert_eq!(p.load_work_seen::<Vec<String>>(), None);
+        p.save_work_seen(&vec!["github:o/r#1".to_owned()])
+            .expect("save");
+        assert_eq!(
+            p.load_work_seen::<Vec<String>>(),
+            Some(vec!["github:o/r#1".to_owned()])
+        );
+        fs::write(root.join("data").join(WORK_SEEN_FILE), b"{").expect("write");
+        assert_eq!(p.load_work_seen::<Vec<String>>(), None);
+        assert!(!root.join("data").join(WORK_SEEN_FILE).exists());
+        let paths: std::collections::HashSet<_> = [
+            WorkSource::Github,
+            WorkSource::Gitlab,
+            WorkSource::Jira,
+            WorkSource::AzureDevops,
+            WorkSource::Linear,
+        ]
+        .into_iter()
+        .map(|source| p.work_token_path(source))
+        .collect();
+        assert_eq!(paths.len(), 5);
+        assert!(paths.iter().all(|path| path.starts_with(root.join("data"))));
+        assert_eq!(
+            p.work_token_path(WorkSource::AzureDevops),
+            root.join("data").join("work-azure-devops-token.bin")
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

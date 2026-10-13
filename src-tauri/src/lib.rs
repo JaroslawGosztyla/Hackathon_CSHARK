@@ -24,6 +24,7 @@ mod tint;
 mod tracker;
 mod tray;
 mod window_util;
+mod work;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -86,6 +87,8 @@ pub struct AppState {
     pub tint: tint::TintHandle,
     /// Calendar meetings against the planned breaks.
     pub calendar: calendar::CalendarHandle,
+    /// "Co dalej?": work items from the developer tools.
+    pub work: work::WorkHandle,
     /// The open "minimize to tray?" question of the first X.
     pub close: close::ClosePrompt,
 }
@@ -173,6 +176,11 @@ pub fn run() {
             commands::disconnect_calendar,
             commands::set_ics_urls,
             commands::get_ics_urls,
+            commands::get_work,
+            commands::refresh_work,
+            commands::set_work_token,
+            commands::set_session_goal,
+            commands::mark_goal_done,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");
@@ -309,6 +317,19 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         calendar_rx,
     )
     .context("spawn calendar thread")?;
+    // Work items ("Co dalej?"): told about every phase change by the actor.
+    let (work, work_rx) = work::WorkHandle::channel();
+    work::spawn(
+        work::WorkContext {
+            app: handle.clone(),
+            config: Arc::clone(&config),
+            persistence: persistence.clone(),
+            popup: popup.clone(),
+        },
+        &work,
+        work_rx,
+    )
+    .context("spawn work items thread")?;
     session_actor::spawn(
         session_actor::ActorContext {
             app: handle.clone(),
@@ -329,6 +350,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
             bridge: Arc::clone(&bridge),
             tray,
             calendar: calendar.clone(),
+            work: work.clone(),
         },
         actor_rx,
     );
@@ -355,6 +377,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         popup,
         tint,
         calendar,
+        work,
         close: close::ClosePrompt::default(),
     });
     chimes::clean_up_at_startup(&handle);
