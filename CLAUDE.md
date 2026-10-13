@@ -7,7 +7,7 @@ Teams „Nie przeszkadzać” (Graph; nie rusza „offline” ani własnego DND 
 nieusypianie ekranu, zamknięcie launcherów gier. W przerwie osłony schodzą, a muzyka gra dalej; przerwa pokazuje poradę i przypomnienie użytkownika.
 Opcjonalnie ciepłe kolory ekranu według pory dnia (Oświetlenie nocne Windows albo gamma). Motywy i pakiety dzwonków (także własny plik).
 Maskotka: aksolotl w słuchawkach z arkuszy klatek właściciela (mruga, reaguje na sesję, „mówi” porady ruchem ust, wygląda zza krawędzi okienek; ADR-018).
-Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014…019**;
+Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014…021**;
 wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
 Architektura multiplatformowa, **odbiór i gwarancje UX tylko na Windows** (ADR-008).
 Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), prowadzony z pomocą AI.
@@ -36,7 +36,8 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `tint.rs` (harmonogram odcienia: poziom 0–100 z minuty doby; temperatura `kelvin_for_level` i mnożniki gammy `rgb_gain_for_kelvin`),
   `launchers.rs` (launchery gier i ich dokładne nazwy procesów), `language.rs` (obsługiwane języki, tag systemu → `Language`),
   `calendar.rs` (planowane przerwy, kolizje ze spotkaniami, pory przypomnień 30/20/10; w `session.rs` blokady spotkań `MeetingHold`),
-  `work.rs` (kolejność „Co dalej?”: przypisane → czeka na ciebie → powiadomienia, wynik, powody; cel sesji `Input::SetGoal`).
+  `work.rs` (kolejność „Co dalej?”: przypisane → czeka na ciebie → powiadomienia, wynik, powody; cel sesji `Input::SetGoal`),
+  `privacy.rs` (czyste części panelu prywatności: plan usuwania, rozmiar w KiB, config i dokument eksportu bez sekretów; ADR-020).
   `src/api.rs` = kontrakt IPC. `assets/websiteblacklist.txt` = domyślna lista stron wbudowana w aplikację (ADR-013 pkt 4).
 - `crates/focus-audio/` — dedykowany wątek rodio, dzwonki (`ChimePlayer`): syntetyczne pakiety `ChimeSound` i własny plik użytkownika. Muzyka nie gra w Ruście.
 - `crates/focus-platform/` — integracje OS za traitami z `Noop`: `foreground` (aktywne okno z klasą okna + bezczynność),
@@ -51,11 +52,16 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
 - `src-tauri/src/` — powłoka: `commands.rs` (cienkie adaptery), `session_actor.rs` (aktor + tick 1 s), `effects.rs` (dispatch efektów),
   `shields.rs` (wątek osłon z generacją, `shields-restore.json` + wpis RunOnce `FocusModeRestore` → `--restore-shields`; także zamykanie launcherów),
   `tracker.rs` (próbkowanie aktywnej aplikacji + awaryjny nudge po tytule okna, gdy rozszerzenie nie odpytało mostu przez 90 s),
-  `bridge.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia: `GET /v1/state` i jedyny zapis, zgłoszenie `POST /v1/report`; ADR-018),
+  `bridge.rs` + `bridge/http.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia na własnym minimalnym serwerze: limity rozmiaru i czasu, jedno zapytanie
+  na połączenie; `GET /v1/state` i jedyny zapis, zgłoszenie `POST /v1/report`; ADR-018),
   `persistence.rs` (`config.json`, `history.jsonl`, `keepHistory`, `clear_history`),
   `blocklist.rs` (`websiteblacklist.txt` w katalogu konfiguracji: utworzenie z domyślnej listy, odczyt, auto-przeładowanie po zapisie, `blocklist://changed`;
   wzorce, których przeglądarka nie przyjęła jako reguł, ze zgłoszenia rozszerzenia jako `extensionSkipped`),
-  `music.rs` (skan folderu i muzyka w zestawie; asset scope tylko dla znalezionych plików audio), `media_window.rs` (ukryte okno YouTube, ADR-013 pkt 2),
+  `music.rs` (skan folderu i muzyka w zestawie; asset scope tylko dla znalezionych plików audio), `media_window.rs` (ukryte okno YouTube, ADR-013 pkt 2; po zalogowaniu do YouTube gra całą muzykę z YouTube, ADR-021),
+  `privacy.rs` (panel „Prywatność i dane”: wątek „focus-privacy”, skan co 3 s i po eventach modułów, `privacy://changed`; eksport do jednego JSON poza folderami
+  aplikacji; usuwanie po Stop i zejściu osłon; „Usuń wszystko” → `Config::default()`; ADR-020),
+  `youtube_account.rs` (okno `youtube-login` ze stroną Google, zalogowanie tylko po nazwach ciasteczek youtube.com, wylogowanie bez `SOCS`/`CONSENT`,
+  `youtube://account`; ADR-021),
   `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`; czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie, poza próbkami trybu dewelopera, ADR-019), `tint.rs` (ciepło ekranu przez Oświetlenie nocne albo gammę, harmonogram, podgląd,
   `tint-restore.json`, `tint://changed`; ADR-015), `safety_net.rs` (jeden wpis RunOnce `FocusModeRestore` dla osłon i kolorów ekranu),
   `close.rs` (X na oknie głównym: zasobnik, wyjście albo pytanie `app://close-requested`), `window_util.rs` (opcje WebView2 okna głównego dla
@@ -71,6 +77,7 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `src/lib/mascot/` = maskotka (ADR-018): manifesty klatek, komponent rysujący jedną klatkę z atlasu, sterownik stanów (mruganie, reakcje na sesję,
   ruch ust według samogłosek, pikselizacja w motywie 8-bit); wyłącza ją `Config.showMascot`.
   Kalendarze: `MeetingConflicts.svelte` (Skupienie), `MeetingHoldBanner.svelte`, `CalendarSettings.svelte`; „Co dalej?”: `NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`.
+  Prywatność: `PrivacySettings.svelte` + `state/privacy.svelte.ts`; konto YouTube: `YoutubeAccountSettings.svelte` + `state/youtubeAccount.svelte.ts`.
   Tryb dewelopera (ADR-019, `Config.developerMode`): trasa `src/routes/(app)/dev/` (tylko po angielsku: `src/lib/i18n/dev.ts`), stan `src/lib/state/dev.svelte.ts`, próbki danych tylko w pamięci `src/lib/state/samples.ts` (id `dev-sample-…`, linki `https://dev-sample.invalid/`), komenda `dev_trigger` w `commands.rs` (próbki okienek i toastów w `src-tauri/src/dev.rs`, skrócenie fazy `Input::DevSetRemaining`).
   Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w trybie dewelopera też Deweloper; w layoucie odtwarzacz i animowana nawigacja),
   `src/routes/(overlay)/` = lekka strona okna `popup`, **bez odtwarzacza** (inaczej muzyka grałaby w kilku oknach).
@@ -148,6 +155,8 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
     Tracker zapisuje nazwy procesów i sumy czasu, a tytuły okien **tylko przy włączonym `trackTitles`**: przycięte, tylko lokalnie w `history.jsonl`
     (przy wyłączonym `keepHistory` nic), **nigdy w logach** (także nie w `Debug`), moście, rozszerzeniu ani w sieci (ADR-015).
     Powierzchnie powłoki Windows (pasek zadań, pulpit, menu Start, `ShellExperienceHost`…) pomijamy. Tokenów nie logujemy.
+    Eksport danych (panel prywatności) nigdy nie zawiera tokenów, linków ICS ani ciasteczek (ADR-020). Logowanie do YouTube tylko na stronie Google
+    w oknie aplikacji: aplikacja nie widzi hasła i nie czyta wartości ciasteczek, tylko ich nazwy (ADR-021).
     Launchery gier zamykamy tylko po dokładnych nazwach exe z `focus-core/src/launchers.rs`, tylko w bieżącej sesji,
     nigdy usług, procesów gier ani niczego, co wymaga praw administratora (ADR-014).
 

@@ -38,6 +38,11 @@ Zmienia ADR-013, 014 i 015.
 z przyciskami wywołującymi okienka, toasty, maskotkę i skrócenie fazy, do zrzutów ekranu na prezentację. Próbki nie są zapisywane i nic nie opuszcza komputera
 (przyciski wyglądu i okna to skróty do prawdziwych ustawień); strona Deweloper jest tylko po angielsku, a jej okienka nie czekają na koniec prezentacji. Zmienia ADR-014 i 018.
 
+**Stan na 2026-10-13 (prywatność i YouTube):** [ADR-020](#adr-020-panel-prywatności) dokłada panel „Prywatność i dane”: co aplikacja trzyma na komputerze
+(pozycja po pozycji, z plików szyfrowanych tylko obecność), eksport do JSON bez sekretów, usuwanie pojedyncze i „Usuń wszystko” (sesja najpierw się kończy,
+osłony wracają). [ADR-021](#adr-021-logowanie-do-youtube) dokłada logowanie do YouTube na stronie Google w oknie aplikacji, żeby Premium działało:
+po zalogowaniu YouTube gra w oknie `media`, a aplikacja nie widzi hasła ani wartości ciasteczek. Oba są wdrożone (powłoka, UI, testy). Zmienia ADR-013.
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -1369,6 +1374,30 @@ Z testów wyszły też poprawki, które trafiają do tej samej rundy:
   zasada 11 (most tylko udostępnia stan, z wyjątkiem `POST /v1/report`); Struktura (`src/lib/mascot/`, `static/mascot/`, `art/mascot/`, `tools/mascot/`,
   `focus-platform/src/notification_state.rs`, `/v1/report` w `bridge.rs`, czekanie okienek w `popup.rs`); Komendy (`--demo` przy działającej aplikacji).
 
+**Uzupełnienie (2026-10-13, B): utwardzenie mostu.**
+- **Problem.** Most stał na `tiny_http` 0.12, który nie daje się zabezpieczyć ustawieniami:
+  - zapytanie odrzucone bez czytania treści (np. `413` albo `403`) przy zwalnianiu „dopija” resztę zadeklarowanej treści (`util/equal_reader.rs`, `Drop`) na jedynym
+    wątku mostu, alokując przy tym bufor wielkości całej reszty (`vec![0; remaining]`). `Content-Length: 2147483648` to 2 GB pamięci i wątek czekający na dane, które
+    nie przyjdą; `Content-Length: 18446744073709551615` kończy się paniką „capacity overflow”, a przy `panic = "abort"` w wydaniu zamyka całą aplikację;
+  - brak limitu długości wiersza i liczby nagłówków (`client.rs` dokłada bajty do bufora bez końca) i brak limitu czasu odczytu: powolny klient trzyma wątek połączenia
+    bez końca (slow-loris), a wątki puli rosną z liczbą połączeń;
+  - błąd `accept` (np. klient, który zerwał połączenie przed przyjęciem) kończy pętlę nasłuchu na zawsze (`lib.rs`).
+- **Decyzja.** Własny minimalny serwer HTTP/1.1 tylko na potrzeby rozszerzenia (`src-tauri/src/bridge/http.rs`) na jednowątkowym runtime Tokio w wątku `focus-bridge`.
+  Bez nowych crate'ów: funkcje `net` i `io-util` crate'a `tokio` są już w drzewie zależności (przez `reqwest`); `tiny_http` usunięty z `Cargo.toml` i `Cargo.lock`
+  (razem z `ascii`, `chunked_transfer`, `httpdate`). Trasy, `Host`, `Origin`, CORS i parsowanie zgłoszenia zostają w `bridge.rs` (`Router`).
+  Zachowanie widoczne dla rozszerzenia bez zmian (ścieżki, nagłówki, CORS, kody `200` / `204` / `400` / `403` / `404` / `413`); nowe jest `Connection: close` w każdej odpowiedzi.
+- **Zasady** (szczegóły i limity: ARCHITECTURE §6.10, „Ochrona HTTP mostu”): jedno zapytanie na połączenie; głowa ≤ 16 KiB i ≤ 48 pól (`431`) w łącznym terminie 2 s (`408`);
+  treść czytana tylko dla uprawnionego `POST /v1/report` i tylko przy `Content-Length` ≤ `REPORT_MAX_BYTES`: większa albo nieznana długość (`Transfer-Encoding`) → `413` bez czytania,
+  bez alokacji i z zamknięciem połączenia zamiast „drenażu”; treść przy innej metodzie niż `POST`, sprzeczne lub zdublowane nagłówki ram → `400`; treść w 5 s, najwyżej 2 naraz (czytane albo obsługiwane);
+  zapis odpowiedzi w 2 s; powyżej 64 połączeń nowe zamyka najstarsze otwarte co najmniej 100 ms (poza czytającymi treść), twardo najwyżej 1024 otwarte (kolejne zamykane od razu), nowe przyjmowane po jednym na obrót runtime;
+  błąd `accept` nie kończy nasłuchu.
+- **Konsekwencje.** Lokalny proces nie wyczerpie pamięci mostu, nie zablokuje go na stałe i nie zamknie aplikacji. Zalewem połączeń nadal może spowolnić przyjmowanie, gdy kolejka systemu jest pełna
+  (jak każdy proces użytkownika może po prostu zamknąć aplikację); bezczynne połączenia ustępują nowym, a nowe połączenie ma 100 ms na zapytanie, zanim nowsze mogą je zamknąć,
+  więc ani trzymanie, ani zalew połączeń nie odcina rozszerzenia (dopiero ponad 1024 nowe połączenia w 100 ms zamykają kolejne nowe, także jego).
+  Odpowiedź na treść odrzuconą bez czytania może dotrzeć jako reset połączenia, gdy klient już ją wysyła (rozszerzenie nigdy nie wysyła takiej treści).
+  Serwer obsługuje tylko to, czego potrzebuje rozszerzenie (bez keep-alive, potokowania i `chunked`), więc każda nowa trasa mostu wymaga sprawdzenia tych limitów.
+- **Co zmienia:** CLAUDE.md, Struktura (propozycja): przy `bridge.rs` dopisać „własny minimalny serwer HTTP w `bridge/http.rs`: limity rozmiaru i czasu, jedno zapytanie na połączenie”.
+
 ## ADR-019: Tryb dewelopera
 **Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
 
@@ -1430,3 +1459,114 @@ z dużą liczbą przycisków wywołujących okienka i inne efekty.
 - ADR-018 pkt 5: przykładowe okienka nie czekają na koniec prezentacji (pkt 5).
 - CLAUDE.md: Struktura (trasa `/dev`, `src/lib/state/dev.svelte.ts`, `src/lib/state/samples.ts`, `dev_trigger` w `commands.rs`), zakres ADR-014…019,
   wyjątek od zasady tekstów UI w „Konwencjach” i wpis `popup.rs` (próbki nie czekają na koniec prezentacji).
+
+## ADR-020: Panel prywatności
+**Status:** Przyjęta i wdrożona (2026-10-13, B na prośbę właściciela produktu, priorytet 2; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** aplikacja trzyma na komputerze coraz więcej danych: ustawienia, historię sesji (opcjonalnie z tytułami okien), wybory dla spotkań,
+widziane pozycje „Co dalej?”, tokeny Microsoft, Google i narzędzi pracy, linki ICS (DPAPI), własne dzwonki, listę stron, pliki przywracania osłon
+i kolorów, profil przeglądarki WebView2 (ciasteczka, w tym zgoda i logowanie YouTube, cache) i logi. Użytkownik nie ma jednego miejsca, w którym
+zobaczy, co jest zapisane, zabierze swoje dane albo je usunie. Prośba właściciela: sekcja „Prywatność i dane” w Ustawieniach.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Raport pozycja po pozycji + eksport bez sekretów + usuwanie pojedyncze i „Usuń wszystko”** | pełna przejrzystość; usuwanie przez istniejące ścieżki (rozłączenia, `clear_history`) | kilka nowych komend i event |
+| Tylko „Otwórz folder danych” | zero logiki | pliki DPAPI i profil WebView2 nic nie mówią użytkownikowi; ręczne kasowanie w trakcie sesji łamie zasadę 7 |
+| Odinstalowanie jako jedyne „usuń wszystko” | nic do zrobienia | instalator NSIS zostawia dane w `%APPDATA%`; nie da się zacząć od zera bez reinstalacji |
+
+**Decyzja:**
+1. **Raport** `PrivacyReport { revision, folders, items, busy }`, po jednej pozycji `PrivacyItem { kind, present, sizeKib, count, deletable, includesTitles }`
+   na każdy `PrivacyItemKind` (18 rodzajów, osobno każdy token narzędzia pracy), także nieobecne. Rozmiar w KiB jako `u32` (zasada liczb w kontrakcie).
+   Z plików DPAPI i ciasteczek tylko obecność (dla linków ICS najwyżej ich liczba), **nigdy treść**. Getter + `privacy://changed` z rewizją (ADR-012);
+   moduły zgłaszają zapis, powłoka skanuje ponownie z opóźnieniem i wysyła raport tylko przy innym wyniku.
+2. **Eksport** do jednego pliku JSON wskazanego w oknie zapisu: config bez sekretów (`calendar.googleClientSecret` puste), historia, wybory dla spotkań,
+   widziane pozycje. **Nigdy** tokeny, linki ICS, ciasteczka, dźwięki ani logi; UI mówi to przy przycisku. Format w ARCHITECTURE §6.12.
+3. **Usuwanie pojedyncze** przez istniejące ścieżki: historia jak `clear_history`, tokeny jak `teams_disconnect` / `disconnect_calendar` / `set_work_token(null)`,
+   własne dzwonki, wybory spotkań, widziane pozycje, lista stron (wraca domyślna), logi, dane przeglądarki (`clear_all_browsing_data`: wylogowuje
+   też z YouTube, ADR-021). Ustawień nie usuwa się pojedynczo, a plików przywracania wcale: znikają same, gdy powłoka przywróci ustawienia Windows (zasada 7).
+4. **„Usuń wszystko”** za oknem potwierdzenia, które wymienia, co zniknie: wszystkie pozycje usuwalne i powrót do ustawień domyślnych. Aplikacja zostaje
+   zainstalowana; nic poza folderami aplikacji nie jest ruszane (wyjątek to rzeczy samej aplikacji: wpis autostartu znika razem z `launchOnLogin`,
+   a ustawienia Windows wracają jak po Stop).
+5. **Każde usuwanie najpierw zatrzymuje trwającą sesję** (jak Stop: osłony wracają, status Teams wraca, zanim zniknie token) i czeka na zejście osłon.
+6. **Kontrakt:** komendy `get_privacy_report`, `open_data_folder`, `export_privacy_data { path }`, `delete_privacy_data { kinds } -> Config`,
+   `delete_all_data -> Config` (zwracają zapisany config, bo usunięcie własnych dzwonków albo całości go zmienia, a configu nie ma w żadnym evencie),
+   event `privacy://changed`. Szczegóły: ARCHITECTURE §6.12.
+7. **Wdrożenie:** czyste decyzje w `focus_core::privacy` (plan usuwania, rozmiar w KiB, config do eksportu bez sekretów, dokument eksportu), pliki
+   i usuwanie w `src-tauri/src/privacy.rs` (wątek „focus-privacy”: skan co 3 s z samych metadanych i ~0,4 s po eventach modułów; profil WebView2
+   najwyżej co 30 s), UI w `PrivacySettings.svelte` + `state/privacy.svelte.ts`. Wspomagające zmiany: `Persistence::files` / `clear_meeting_choices` /
+   `clear_work_seen` / `remove_config_leftovers`, `CalendarHandle::clear_choices`, `WorkHandle::clear_seen` (+ `Announcer::remember`),
+   `BlocklistService::restore_default`, `ConfirmDialog.list`, `commands::store_config` dostępne dla modułu prywatności.
+
+**Konsekwencje:**
+- Usunięcie danych przeglądarki czyści też `localStorage` aplikacji (zapamiętane linki odmawiające osadzenia) i zgodę YouTube na ciasteczka:
+  następne okno YouTube znów pokaże pytanie o ciasteczka (istniejąca ścieżka pierwszego uruchomienia).
+- Usunięcie czegokolwiek w trakcie sesji kończy sesję; okno potwierdzenia to mówi.
+- `work-seen.json` wraca, gdy użytkownik znów obejrzy listę „Co dalej?” (do tego czasu bieżące pozycje są na niej „nowe”, ale nie wracają jako okienko).
+- Panel sprawdza pliki także sam (co 3 s), więc pokazuje również zmiany zrobione ręcznie w otwartym folderze danych; koszt to kilkanaście odczytów
+  metadanych co 3 s i przejście profilu WebView2 najwyżej co 30 s.
+- Eksport nie przyjmie ścieżki w folderach aplikacji (`privacy.export`, pole `path`), żeby nie nadpisać jej danych.
+- Eksport historii może zawierać tytuły okien (jeśli były zapisywane): to dane użytkownika, zapisane tam, gdzie sam wskaże.
+
+**Co zmienia:**
+- CLAUDE.md (propozycja do zatwierdzenia przez użytkownika): Struktura — moduł powłoki panelu prywatności (raport, eksport, usuwanie, `privacy://changed`)
+  i komponent ustawień; zasada 11 — dopisek „eksport danych (`export_privacy_data`) nigdy nie zawiera tokenów, linków ICS, ciasteczek ani innych sekretów”.
+
+## ADR-021: Logowanie do YouTube
+**Status:** Przyjęta i wdrożona (2026-10-13, B na prośbę właściciela produktu, priorytet 3, „najważniejsza funkcja”; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`).
+Kod: `src-tauri/src/youtube_account.rs`, `src/lib/state/youtubeAccount.svelte.ts`, `src/lib/components/YoutubeAccountSettings.svelte`, `src/lib/player/engine.ts`.
+
+**Kontekst:** użytkownik z YouTube Premium słyszy w aplikacji reklamy, bo odtwarzacz nie jest zalogowany. Dziś YouTube gra na dwa sposoby: iframe
+osadzony w oknie `main` (origin `tauri.localhost`) albo ukryte okno `media` ze stroną youtube.com najwyższego poziomu (linki odmawiające osadzania
+i strony kanałów, ADR-013 pkt 2). Wszystkie okna mają jeden profil WebView2 (te same opcje środowiska, `window_util::with_main_webview_options`),
+więc ciasteczka youtube.com są wspólne. Premium działa tylko tam, gdzie ciasteczka youtube.com są własne (first-party), czyli w oknie `media`;
+w iframe na `tauri.localhost` są ciasteczkami stron trzecich i nie można na nich polegać.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Logowanie na stronie Google w widocznym oknie aplikacji (ten sam profil WebView2) + po zalogowaniu YouTube zawsze w oknie `media`** | użytkownik loguje się raz, sam, na stronie Google; aplikacja nie widzi hasła; Premium działa | Google może odmówić logowania we wbudowanej przeglądarce |
+| Import ciasteczek z przeglądarki użytkownika | bez logowania | czytanie cudzych danych przeglądarki, łamie zasadę 11; odrzucone |
+| Logowanie OAuth i YouTube Data API | oficjalne API | API nie odtwarza muzyki i nie daje sesji Premium w odtwarzaczu; odrzucone |
+| Zostawić iframe i liczyć na ciasteczka stron trzecich | bez zmian w routingu | zależy od polityki ciasteczek WebView2 i YouTube; niepewne |
+
+**Decyzja:**
+1. **Wiersz „Konto YouTube”** w Ustawieniach muzyki: „Zaloguj się do YouTube” otwiera widoczne, wyśrodkowane okno `youtube-login` z wyraźnym tytułem,
+   z tym samym profilem WebView2 co `media`, na stronie logowania Google (`accounts.google.com/ServiceLogin?service=youtube&continue=…youtube.com`).
+   Użytkownik wpisuje dane na stronie Google; aplikacja nie ma w tym oknie skryptu ani `eval`, nie widzi hasła i nie obsługuje danych logowania.
+2. **Wykrycie zalogowania tylko po nazwach ciasteczek** youtube.com (`LOGIN_INFO`, `SAPISID`, `__Secure-3PAPISID`), nigdy po wartościach (nie trafiają
+   do stanu aplikacji ani do logów). Po zalogowaniu okno zamyka się samo, gdy przepływ wróci na stronę YouTube (albo YouTube zapisze `LOGIN_INFO`),
+   najpóźniej 8 s po pojawieniu się ciasteczek, a wiersz pokazuje „Zalogowano” (bez nazwy kanału: wymagałaby dodatkowego ruchu).
+3. **Routing:** zalogowany → każda pozycja YouTube gra w oknie `media` (Premium działa); niezalogowany → bez zmian (najpierw iframe, okno dla odmów
+   osadzania). Zalogowanie przenosi pozycję YouTube z osadzonego odtwarzacza do okna od razu, a otwarte okno `media` przeładowuje stronę przy każdej
+   zmianie stanu zalogowania, żeby odtwarzacz YouTube użył nowych ciasteczek: reklamy znikają bez czekania na następny utwór. Wylogowanie nie przerywa
+   bieżącej pozycji; następna ładuje się jak dotąd. Link do playlisty (`/playlist?list=X`) okno otwiera po zalogowaniu jako `/watch?list=X`
+   na www.youtube.com: strona playlisty niczego nie odtwarza, strona odtwarzania gra playlistę od pierwszego filmu.
+4. **„Wyloguj”** usuwa ciasteczka google.com / google.<kraj> / youtube.com profilu, z wyjątkiem ciasteczek zgody (`SOCS`, `CONSENT`), więc obsługa
+   zgody działa dalej. WebView2 usuwa ciasteczko po dokładnej domenie (`.youtube.com` to inna domena niż `youtube.com`), a Tauri podaje ją bez kropki,
+   więc usunięcie idzie w obu formach (nieistniejąca to no-op); potem powłoka sprawdza, że ciasteczek logowania już nie ma.
+   Usunięcie danych przeglądarki w panelu prywatności (ADR-020) też wylogowuje (`YoutubeAccountHandle::close_sign_in_window` + `refresh(app, true)`).
+5. **Odmowa Google** („Ta przeglądarka lub aplikacja może nie być bezpieczna”) jest wykrywana po adresie strony (`/signin/rejected`) i UI wyjaśnia ją
+   jednym zdaniem. Żadnych obejść: bez importu ciasteczek, bez zmiany identyfikacji przeglądarki.
+6. **Kontrakt:** `get_youtube_account -> YoutubeAccount { revision, known, signedIn, signInOpen, browserRejected }`, `youtube_sign_in`, `youtube_sign_out`,
+   event `youtube://account` (getter + event z rewizją, ADR-012). Szczegóły: ARCHITECTURE §6.13.
+
+**Konsekwencje:**
+- Po zalogowaniu YouTube zapisuje odtwarzane utwory w historii konta użytkownika (zwykłe zachowanie Google); UI mówi to jednym zdaniem przy przycisku.
+  Ciasteczka zostają w lokalnym profilu WebView2 aplikacji.
+- Zalogowany użytkownik bez Premium dalej słyszy reklamy, tylko w oknie `media` zamiast w iframe.
+- Okno `media` nie wysyła zdarzeń odtwarzania (TODO w `src/lib/player/mediaWindow.ts`), więc po zalogowaniu wszystkie linki YouTube mają to ograniczenie
+  (koniec filmu nie przechodzi dalej na playliście linków; „Następny” działa).
+- Google może w każdej chwili zacząć odmawiać logowania we WebView2; wtedy funkcja zostaje z jednozdaniowym wyjaśnieniem.
+- Konta, które Google przekierowuje do zewnętrznego dostawcy logowania (SSO w Google Workspace), się nie zalogują: okno otwiera samo tylko hosty
+  Google i YouTube, inne strony idą do przeglądarki systemowej. Linki z `target=_blank` na stronie Google nic nie robią (okno nie dostaje skryptu,
+  który przechwytywałby je jak w `media`); zwykłe linki (pomoc, prywatność) otwierają się w przeglądarce systemowej.
+- Zalogowanie w trakcie sesji przeładowuje stronę w oknie `media`: stream wraca na żywo, film zaczyna się od nowa (raz, przy zmianie konta).
+
+**Co zmienia:**
+- ADR-013 pkt 2: okno `media` nie jest już tylko fallbackiem; po zalogowaniu gra całą muzykę z YouTube.
+- CLAUDE.md (propozycja do zatwierdzenia przez użytkownika): Struktura — moduł powłoki konta YouTube (okno `youtube-login`, obecność ciasteczek,
+  `youtube://account`); zasada 11 — dopisek „logowanie do YouTube tylko na stronie Google w oknie aplikacji; aplikacja nie widzi hasła i nie czyta
+  wartości ciasteczek; ciasteczka zostają w lokalnym profilu WebView2”.

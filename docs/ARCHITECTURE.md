@@ -260,7 +260,8 @@ config spoza zakresów → błąd walidacji.
 
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
-> Stan na 2026-10-13 (z ADR-019, tryb dewelopera), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> Stan na 2026-10-13 (z ADR-020, panel prywatności, i ADR-021, logowanie do YouTube, oba wdrożone),
+> zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
 `#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu w ms od epoki Unix
@@ -329,6 +330,14 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `set_session_goal` | `goal: SessionGoal \| null` | `()` | cel sesji (pozycja z „Co dalej?”), w każdej fazie, bez efektów (`Input::SetGoal`); widoczny w `SessionSnapshot.goal`, na Stop trafia do `SessionSummary.goal`; `null` czyści |
 | `mark_goal_done` | `sessionId: string, done: boolean` | `()` | odpowiedź na „Zrobione?” w podsumowaniu: `goalDone` w ostatnim podsumowaniu i przy tej sesji w `history.jsonl` (powłoka przepisuje plik atomowo). Sesji nie ma ani w pamięci, ani w pliku → `history.unknownSession`; błąd zapisu → `persistence.history`; przy wyłączonym `keepHistory` zmienia tylko ostatnie podsumowanie |
 | `dev_trigger` | `action: DevAction` | `()` | przycisk strony Deweloper (ADR-019, §6.11): przykładowe okienko, toast fazy albo skrócenie bieżącej fazy; przy wyłączonym `developerMode` → `developerModeOff`. Nic nie zapisuje na dysku i nic nie wysyła |
+| `get_privacy_report` | – | `PrivacyReport` | co aplikacja trzyma na tym komputerze, pozycja po pozycji (ADR-020, §6.12): obecność, rozmiar w KiB, liczba wpisów. Nigdy treść tokenu, linku ICS ani ciasteczka |
+| `open_data_folder` | – | `()` | otwiera folder danych aplikacji (`PrivacyReport.folders[0]`) w menedżerze plików |
+| `export_privacy_data` | `path: string` | `()` | jeden plik JSON pod ścieżką z okna zapisu: config bez sekretów, historia, wybory dla spotkań, widziane pozycje „Co dalej?” (format w §6.12). **Nigdy** tokeny, linki ICS, ciasteczka ani inne sekrety. Błąd → `privacy.export` |
+| `delete_privacy_data` | `kinds: PrivacyItemKind[]` | `Config` | usuwa wskazane pozycje (tylko `deletable`, inaczej `privacy.notDeletable`, pole `kinds`); trwającą sesję najpierw zatrzymuje (osłony wracają, zasada 7). Zwraca zapisany config (usunięcie własnych dzwonków go zmienia); nowy raport przychodzi jako `privacy://changed`. Błąd → `privacy.delete` |
+| `delete_all_data` | – | `Config` | „Usuń wszystko”: zatrzymuje sesję, usuwa wszystkie pozycje `deletable` i przywraca ustawienia domyślne (zwraca je). Nie rusza niczego poza folderami aplikacji; aplikacja zostaje zainstalowana |
+| `get_youtube_account` | – | `YoutubeAccount` | stan zalogowania do YouTube we wspólnym profilu WebView2 (ADR-021, §6.13); tylko obecność ciasteczek, nigdy ich wartości |
+| `youtube_sign_in` | – | `()` | otwiera (albo aktywuje) widoczne okno logowania `youtube-login` ze stroną Google; zamyka się samo, gdy pojawią się ciasteczka logowania youtube.com. Postęp w `youtube://account` |
+| `youtube_sign_out` | – | `()` | usuwa ciasteczka google.com / youtube.com profilu WebView2 (ciasteczka zgody `SOCS` / `CONSENT` zostają) |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -336,6 +345,8 @@ wyrażeń regularnych (RE2) dopasowywanych do pełnego adresu URL bez rozróżni
 `patterns` ma `#[serde(default)]`, więc stan bez tego pola też się wczytuje.
 Jedyny zapis do mostu (ADR-018): `POST http://127.0.0.1:47615/v1/report` z treścią `{ "skipped": string[] }`, w którym rozszerzenie zgłasza wzorce
 z `patterns`, których przeglądarka nie przyjęła jako reguł; aplikacja pokazuje je jako `BlocklistInfo.extensionSkipped`. Warunki i limity: §6.10.
+HTTP mostu to własny minimalny serwer HTTP/1.1 (`src-tauri/src/bridge/http.rs`, bez `tiny_http`): jedno zapytanie na połączenie (`Connection: close`),
+limity rozmiaru i czasu, treść tylko dla `/v1/report`; szczegóły w „Ochrona HTTP mostu” (§6.10).
 
 ### 6.2 Eventy
 
@@ -357,6 +368,8 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `tint://changed` | `TintStatus` | zmienił się poziom ciepła, podgląd, użyty mechanizm (`mode`), ograniczenie siły (`capped`) albo błąd |
 | `calendar://changed` | `CalendarStatus` | po każdej synchronizacji kalendarzy, zmianie wyboru dla spotkania, zmianie połączenia (także postęp logowania Google) i zmianie kolizji |
 | `work://changed` | `WorkStatus` | po każdej synchronizacji narzędzi pracy, zmianie tokenu i zmianie wstrzymanych pozycji (`heldCount`, `unseen`) |
+| `privacy://changed` | `PrivacyReport` | po każdej zmianie zapisanych danych (ponowny skan z opóźnieniem, wysyłany tylko przy innym wyniku) oraz na początku i końcu usuwania albo eksportu (`busy`) (ADR-020) |
+| `youtube://account` | `YoutubeAccount` | po pierwszym sprawdzeniu ciasteczek, przy otwarciu i zamknięciu okna logowania, po zalogowaniu, wylogowaniu, odmowie Google (`browserRejected`) i po usunięciu danych przeglądarki (ADR-021) |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -371,6 +384,8 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `TintStatus` | `get_tint_status` | `tint://changed` |
 | `CalendarStatus` | `get_calendar` (także wynik `refresh_calendar`, `set_meeting_choice`, `disconnect_calendar` i `set_ics_urls`) | `calendar://changed` |
 | `WorkStatus` | `get_work` (także wynik `refresh_work` i `set_work_token`) | `work://changed` |
+| `PrivacyReport` | `get_privacy_report` | `privacy://changed` |
+| `YoutubeAccount` | `get_youtube_account` | `youtube://account` |
 
 Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
 1. **najpierw** rejestruje `listen(...)`,
@@ -410,7 +425,8 @@ Odtwarzacz (osadzony i okno YouTube) milknie, gdy `musicMuted`, i wraca do zwyk�
 | Okno | Zawartość | Uprawnienia IPC |
 |---|---|---|
 | `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia, przy `developerMode` także Deweloper, ADR-019) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
-| `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
+| `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2; po zalogowaniu do YouTube cała muzyka z YouTube, ADR-021) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
+| `youtube-login` | widoczne, wyśrodkowane okno ze stroną logowania Google (ADR-021, §6.13), ten sam profil WebView2 co `media`; zamyka się samo po zalogowaniu | **żadnych** (strona zdalna, bez skryptu kontrolera); stan wraca do UI jako `youtube://account` |
 | `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014); także przypomnienie o spotkaniu `meetingReminder`, wstrzymana przerwa `breakHeld` (ADR-016) i paczka nowych pozycji „Co dalej?” `workDigest` (ADR-017). Gdy użytkownik prezentuje albo gra na pełnym ekranie, okienko czeka (ADR-018, §6.10); przy `showMascot` z maskotką „zza krawędzi” | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu, `showMascot`) i `popup://show`, a przy `meetingReminder` także `set_meeting_choice` |
 
 Okien przerwy i ostrzeżenia nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
@@ -624,6 +640,33 @@ Argumenty komend okna YouTube: `open_media_window` → `{ "url": "https://www.yo
 { "active": true, "blocklist": ["kwejk.pl", "reddit.com"], "patterns": ["youtube\\.com/shorts"],
   "phase": "focus", "remainingSecs": 1712 }
 ```
+
+`PrivacyReport` (ADR-020; Teams i GitHub połączone, historia z tytułami okien, bez kalendarza Google i ICS; `items` skrócone, w pełnym raporcie
+jest po jednej pozycji na każdy `PrivacyItemKind`, w jego kolejności):
+
+```json
+{ "revision": 7,
+  "folders": ["C:\\Users\\ola\\AppData\\Roaming\\com.focusmode.app", "C:\\Users\\ola\\AppData\\Local\\com.focusmode.app"],
+  "items": [
+    { "kind": "settings", "present": true, "sizeKib": 3, "count": null, "deletable": false, "includesTitles": false },
+    { "kind": "history", "present": true, "sizeKib": 182, "count": 46, "deletable": true, "includesTitles": true },
+    { "kind": "microsoftToken", "present": true, "sizeKib": 4, "count": null, "deletable": true, "includesTitles": false },
+    { "kind": "googleToken", "present": false, "sizeKib": null, "count": null, "deletable": true, "includesTitles": false },
+    { "kind": "githubToken", "present": true, "sizeKib": 1, "count": null, "deletable": true, "includesTitles": false },
+    { "kind": "shieldsRestore", "present": false, "sizeKib": null, "count": null, "deletable": false, "includesTitles": false },
+    { "kind": "browserData", "present": true, "sizeKib": 48211, "count": null, "deletable": true, "includesTitles": false }
+  ],
+  "busy": false }
+```
+
+`YoutubeAccount` (ADR-021; zalogowany, okno logowania już zamknięte):
+
+```json
+{ "revision": 4, "known": true, "signedIn": true, "signInOpen": false, "browserRejected": false }
+```
+
+Argumenty: `export_privacy_data` → `{ "path": "C:\\Users\\ola\\Documents\\focusmode-export.json" }`,
+`delete_privacy_data` → `{ "kinds": ["history", "meetingChoices", "browserData"] }`.
 
 ### 6.5 Lista blokowanych stron (`websiteblacklist.txt`, ADR-013 pkt 4)
 
@@ -943,6 +986,25 @@ Rozszerzenie (`browser-extension/background.js`, `BRIDGE_REPORT_URL` w `common.j
 jedno zgłoszenie naraz, raz na każdą nową listę w danym focusie (zapamiętaną w `chrome.storage.session`; poza focusem zapomina ją, więc następny focus zgłasza
 od nowa). Gdy aplikacja nie odpowie, ponawia przy następnym odświeżeniu stanu; każda odpowiedź HTTP (także `404` ze starszej aplikacji) kończy próby dla tej listy.
 
+**Ochrona HTTP mostu** (`src-tauri/src/bridge/http.rs`, limity w `Limits::DEFAULT`; ADR-018, „Uzupełnienie: utwardzenie mostu”). Własny minimalny serwer
+HTTP/1.1 na osobnym wątku `focus-bridge` z jednowątkowym runtime Tokio (`net`, `io-util`); trasy, `Host`, `Origin`, CORS i parsowanie zgłoszenia zostają w `bridge.rs`.
+Lokalny proces, który łamie protokół, nie może wyczerpać pamięci, zablokować wątku mostu ani zamknąć aplikacji:
+
+| | |
+|---|---|
+| Połączenie | jedno zapytanie na połączenie; każda odpowiedź ma `Connection: close`, po niej most zamyka połączenie. Nieprzeczytanej treści nie „drenuje” (zamknięcie może wtedy zresetować połączenie) |
+| Głowa zapytania | wiersz zapytania i nagłówki razem ≤ 16 KiB i ≤ 48 pól (inaczej `431`); cała głowa w 2 s od przyjęcia połączenia (`408`; termin łączny, więc wysyłanie po bajcie go nie przedłuża); tylko `HTTP/1.0` / `HTTP/1.1` (`505` dla innych wersji), poza tym poprawne tokeny i wartości bez znaków sterujących (`400`) |
+| Ramy treści | `400`: kilka `Host` / `Content-Length` / `Origin` / `X-FocusMode-Extension`, `HTTP/1.1` bez `Host`, `Content-Length`, który nie jest liczbą (albo nie mieści się w `u64`), `Content-Length` razem z `Transfer-Encoding`, treść przy metodzie innej niż `POST` (np. `GET` z `Content-Length: 5`, odrzucany bez czekania na treść). `Expect` inne niż `100-continue` → `417` |
+| Treść | czytana tylko dla `POST /v1/report` z originem rozszerzenia i nagłówkiem `X-FocusMode-Extension: 1`, tylko z `Content-Length` ≤ `REPORT_MAX_BYTES`. Większa zadeklarowana długość (np. 2 GB) albo `Transfer-Encoding` (np. `chunked`) → `413` od razu, bez czytania i bez bufora o zadeklarowanej wielkości; bufor rośnie dopiero z nadchodzącymi bajtami. `100 Continue` wychodzi dopiero po sprawdzeniu limitu. Cała treść w 5 s (`408`); najwyżej 2 treści czytane albo obsługiwane naraz (pozwolenie trwa do końca obsługi zgłoszenia, więc wolna obsługa nie zbiera treści w pamięci; kolejna czeka w tym terminie, potem `503`). Odpowiedzi `413` / `408` / `503` też mają `Cache-Control: no-store` i CORS dla originu rozszerzenia |
+| Odpowiedź | zapis w 2 s, potem połączenie jest zamykane |
+| Wiele połączeń | powyżej 64 otwartych nowe połączenie zamyka najstarsze, ale tylko te otwarte co najmniej 100 ms (czas na wysłanie zapytania) i nigdy czytające treść; bezczynne albo powolne połączenia nie odetną więc rozszerzenia, a zalew nowych połączeń nie zamknie jego połączenia, zanim zapytanie zostało przeczytane. Twardy limit 1024 otwartych (wszystkie w swoich 100 ms): kolejne nowe połączenie jest od razu zamykane bez odpowiedzi (pamięć: najwyżej ok. 20 KiB na połączenie). Jedno nowe połączenie na obrót runtime, więc przyjęte wcześniej działają pomiędzy. Każde połączenie i tak kończy się w kilka sekund. Błąd `accept` samego połączenia (reset, przerwane) → nasłuch dalej bez przerwy; inny błąd (np. brak gniazd) → 50 ms przerwy i nasłuch dalej |
+
+Testy na prawdziwych gniazdach (`src-tauri/src/bridge/server_tests.rs`): zwykłe zapytania rozszerzenia (`200`, `204`, preflight, `Expect: 100-continue`,
+najdłuższe możliwe zgłoszenie), `Content-Length` 2 GB i `u64::MAX` (`413` w < 1 s, połączenie zamknięte, żadna alokacja ≥ 256 MiB w całym procesie testów),
+treść `chunked`, `GET` z treścią, powolne i za duże nagłówki, zatrzymana treść, limit czytanych treści, wolna obsługa zgłoszenia (druga treść czeka), 30 bezczynnych połączeń przy limicie 8, zalew połączeń (4 klienci otwierający je bez przerwy: każde z 50 zapytań rozszerzenia dostaje `200`), kolejka połączeń przed startem serwera (zapytanie rozszerzenia za 40 i przed 60 pustymi, także wysłane z opóźnieniem 50 ms przy limicie 16), twardy limit otwartych połączeń i 16 równoległych klientów obok
+40 bezczynnych połączeń. Uwaga: oprogramowanie zabezpieczające, które sprawdza HTTP (spotkane na komputerze deweloperskim z Windows), potrafi wstrzymać niepełną
+głowę `GET` / `POST` na loopbacku, aż będzie kompletna; testy niepełnych głów używają więc metody, której ono nie rozpoznaje (`FOO`), bo do końca głowy serwer traktuje wszystkie metody tak samo.
+
 **Okienka a prezentacja** (`focus-platform/src/notification_state.rs`, `src-tauri/src/popup.rs`):
 - `notification_state::user_is_presenting() -> bool`: `SHQueryUserNotificationState`. `true` dla `QUNS_BUSY` (2), `QUNS_RUNNING_D3D_FULL_SCREEN` (3),
   `QUNS_PRESENTATION_MODE` (4) i `QUNS_APP` (7); `false` dla `QUNS_NOT_PRESENT` (1), `QUNS_ACCEPTS_NOTIFICATIONS` (5), `QUNS_QUIET_TIME` (6), wartości nieznanej
@@ -1014,6 +1076,147 @@ jak każde okienko, a prawdziwe okienko zastępuje próbkę. Próbka `sticky` ni
 Frontend: trasa `src/routes/(app)/dev/+page.svelte`, stan `src/lib/state/dev.svelte.ts` (próbki i „Clean screenshots” tylko w pamięci; Ctrl+Shift+D przywraca
 ukrytą zakładkę), próbki danych w `src/lib/state/samples.ts` (budowane w chwili kliknięcia, id `dev-sample-…`, linki `https://dev-sample.invalid/`, których
 aplikacja nie otwiera; magazyny podsumowania, kalendarza, „Co dalej?” i sesji mają warstwę `sample` nad prawdziwą, a prawdziwe podsumowanie nowej sesji ją usuwa), teksty strony Deweloper tylko po angielsku w `src/lib/i18n/dev.ts` (poza typem `Strings`; przełącznik w Ustawieniach i nazwa zakładki są w 10 językach).
+
+### 6.12 Panel prywatności (ADR-020)
+
+Ustawienia → „Prywatność i dane”: lista tego, co aplikacja trzyma na komputerze, z akcjami. Komendy `get_privacy_report`, `open_data_folder`,
+`export_privacy_data { path }`, `delete_privacy_data { kinds }`, `delete_all_data` (§6.1), stan `PrivacyReport` z rewizją (`get_privacy_report` + `privacy://changed`).
+
+```rust
+pub struct PrivacyReport { pub revision: u32, pub folders: Vec<String>, pub items: Vec<PrivacyItem>, pub busy: bool }
+pub struct PrivacyItem {
+    pub kind: PrivacyItemKind,
+    pub present: bool,
+    pub size_kib: Option<u32>,   // KiB w górę (niepusty plik ≥ 1); None: brak, nieznany albo za drogi do policzenia
+    pub count: Option<u32>,      // sesje, wybory, id, linki, pliki, wpisy listy — tam, gdzie ma sens
+    pub deletable: bool,         // = PrivacyItemKind::is_deletable()
+    pub includes_titles: bool,   // tylko `history`: któraś zapisana sesja ma tytuły okien
+}
+```
+
+`folders`: wszystkie foldery z danymi aplikacji, bez powtórzeń i bez zagnieżdżonych w innych z listy; pierwszy otwiera `open_data_folder`
+(`app_data_dir`, na Windows `%APPDATA%\com.focusmode.app`: ustawienia, historia, tokeny, dźwięki), dalej `app_config_dir`, gdy jest inny (Linux),
+i `app_local_data_dir` (`%LOCALAPPDATA%\com.focusmode.app`: profil WebView2 `EBWebView` i logi).
+
+| `PrivacyItemKind` | Co to jest | `count` | Usuwanie (`delete_privacy_data`) |
+|---|---|---|---|
+| `settings` | `config.json` + `config.json.bak` | – | nie pojedynczo; `delete_all_data` zapisuje `Config::default()` jak `update_config` i usuwa `.bak` |
+| `history` | `history.jsonl` (`includesTitles`, gdy któraś sesja ma tytuły okien) | sesje | jak `clear_history` (plik + ostatnie podsumowanie) |
+| `meetingChoices` | `meeting-choices.json` (id spotkań i wybory, bez tematów) | wybory | plik + wybory w pamięci modułu kalendarzy (blokady spotkań znikają z planu) |
+| `workSeen` | `work-seen.json` (id pozycji, bez tytułów) | id | plik + pamięć modułu „Co dalej?”; bieżące pozycje trafiają do znanych (`Announcer::remember`), więc nie wracają jako okienko `workDigest`, a na liście są „nowe”, dopóki użytkownik jej nie obejrzy (wtedy plik wraca) |
+| `microsoftToken` | `teams-token.bin` (DPAPI): logowanie Microsoft dla Teams i kalendarza | – | jak `teams_disconnect` (status Teams przywrócony wcześniej przez Stop) |
+| `googleToken` | `google-token.bin` (DPAPI) | – | jak `disconnect_calendar(google)` |
+| `icsLinks` | `ics-links.bin` (DPAPI) | linki, gdy znane | jak `disconnect_calendar(ics)` |
+| `githubToken` … `linearToken` | `work-<narzędzie>-token.bin` (DPAPI), po jednym na narzędzie (`PrivacyItemKind::work_source`) | – | jak `set_work_token(source, null)` |
+| `customChimes` | własne dzwonki w folderze `sounds` | pliki | pliki `custom-*` + `customChimes` w configu na puste; `chimeSound: custom` → domyślny `midnight` |
+| `blocklist` | `websiteblacklist.txt` | domeny + wzorce | zapis domyślnej listy wbudowanej w aplikację (→ `blocklist://changed`) |
+| `shieldsRestore` | `shields-restore.json` (tylko gdy osłony są podniesione albo po awarii) | – | **nigdy** (zasada 7): znika sam po przywróceniu ustawień Windows |
+| `tintRestore` | `tint-restore.json` (tylko gdy odcień działa albo po awarii) | – | **nigdy** (zasada 7) |
+| `browserData` | profil WebView2 (`EBWebView`): ciasteczka (też logowanie i zgoda YouTube), cache, localStorage | – | najpierw zamyka okna `media` i `youtube-login`, potem `clear_all_browsing_data()` na oknie głównym (wspólny profil); wylogowuje z YouTube (`youtube://account`), czyści `localStorage` aplikacji (lista linków odmawiających osadzenia, stan strony Deweloper); przy następnym oknie YouTube znów pytanie o ciasteczka |
+| `logs` | pliki logu (`app_log_dir`) | pliki | usuwa starsze pliki, bieżący (`<productName>.log`) skraca do zera (logger trzyma go otwartym; plik, którego nie da się usunąć, też jest skracany) |
+
+Zasady:
+- **Usuwanie zatrzymuje trwającą sesję** (`ActorCmd::Stop`, jak Stop z UI) i czeka (do 8 s) na fazę Idle i zejście osłon (`ShieldStatus.active == false`),
+  potem jeszcze 0,5 s na dopisanie podsumowania do `history.jsonl` (dzieje się na puli blokującej), więc usunięcie historii obejmuje także tę sesję.
+  UI w tym czasie nie przechodzi do Podsumowania (`privacy.deleting`). Usuwania i eksporty idą po jednym; na ich czas `busy: true`.
+- Lista rodzajów z `delete_privacy_data` przechodzi przez `focus_core::privacy::deletion_plan` (bez powtórzeń, zawsze w kolejności `PrivacyItemKind::ALL`;
+  rodzaj nieusuwalny odrzuca całe żądanie, zanim cokolwiek zniknie). Błąd jednej pozycji nie zatrzymuje pozostałych; na końcu `privacy.delete` z listą
+  rodzajów, które się nie udały, a UI pobiera wtedy config na nowo (`get_config`).
+- `delete_all_data` po kolei: Stop → zamknięcie okien `media` i `youtube-login` → wszystkie pozycje `deletable` → `Config::default()` zapisany jak przez
+  `update_config` (odcień wyłączony: kolory wracają, `tint-restore.json` znika; `launchOnLogin` wyłączony: wpis autostartu aplikacji znika; `closeToTray`
+  znów `null`, więc pierwsze X znów pyta) → `privacy://changed`. UI przejmuje cały zwrócony config. Poza folderami aplikacji zmieniają się tylko rzeczy
+  samej aplikacji: wpis autostartu i ustawienia Windows przywracane jak przy Stop (zasada 7). Rozszerzenie przeglądarki zostaje (usuwa je użytkownik).
+- Eksport (`export_privacy_data`) pisze atomowo (plik tymczasowy + zmiana nazwy) pod ścieżkę z okna zapisu (`pickSaveFile` w `api.ts`; domyślna nazwa
+  `focusmode-export-RRRR-MM-DD.json`, brak rozszerzenia → `.json`). Ścieżka musi być pełna i leżeć poza folderami aplikacji (`folders`, porównanie bez
+  wielkości liter), inaczej `privacy.export` z polem `path`: eksport nigdy nie nadpisze danych aplikacji. Dokument buduje `focus_core::privacy::Export`. Format:
+
+```json
+{ "format": "focusmode-export", "version": 1, "exportedAtMs": 1760360000000, "appVersion": "0.1.0",
+  "config": { "focusMinutes": 45, "...": "...", "calendar": { "...": "...", "googleClientSecret": "" } },
+  "history": [ { "sessionId": "1760350000000-12345-1", "...": "..." } ],
+  "meetingChoices": "zawartość meeting-choices.json albo null",
+  "workSeen": "zawartość work-seen.json albo null" }
+```
+
+  `config` bez sekretów: `calendar.googleClientSecret` puste. Tokeny, linki ICS, ciasteczka, dźwięki i logi **nigdy** nie trafiają do eksportu
+  (UI mówi to jednym zdaniem przy przycisku). Historia jest taka, jak zapisana (z tytułami okien, jeśli były).
+- Raport liczy powłoka (`src-tauri/src/privacy.rs`, wątek „focus-privacy”; getter skanuje od razu na puli blokującej): rozmiary z metadanych plików;
+  `history.jsonl`, `meeting-choices.json` i `work-seen.json` są parsowane tylko po zmianie rozmiaru albo czasu modyfikacji (same liczby); liczba linków ICS
+  pochodzi ze statusu kalendarzy, liczba wpisów listy stron z `BlocklistInfo` (pliku DPAPI nikt tu nie otwiera); `browserData` przez przejście folderu
+  `EBWebView` (bez dowiązań) z limitem 20 000 wpisów albo 2 s (potem `sizeKib: null`), najwyżej co 30 s, od razu po wyczyszczeniu.
+  Odświeżanie: co 3 s (same metadane, więc panel widzi też pliki usunięte ręcznie w folderze) i ~0,4 s po eventach modułów, które coś zapisują
+  (`calendar://changed`, `work://changed`, `teams://status`, `blocklist://changed`, `tint://changed`, `shields://status`, `session://summary`,
+  `youtube://account`) oraz po każdym usuwaniu i eksporcie. Event tylko przy innym wyniku; skan trzyma swój zamek do publikacji, więc starszy wynik
+  nigdy nie nadpisze nowszego.
+- Kody błędów: `privacy.export` (pole `path` przy złej ścieżce), `privacy.delete`, `privacy.notDeletable` (pole `kinds`), `privacy.openFolder`,
+  `privacy.report` (skan się nie udał).
+- UI: `src/lib/components/PrivacySettings.svelte` (sekcja Ustawień przed „Deweloper”, grupy: ustawienia i historia, połączenia, przeglądarka i logi,
+  pliki przywracania), stan `src/lib/state/privacy.svelte.ts` (subskrypcja tylko, gdy panel jest widoczny). Każde usuwanie za `ConfirmDialog`
+  (skutek pozycji + „sesja zostanie zatrzymana”, gdy trwa); „Usuń wszystko” wymienia obecne pozycje i ustawienia (`ConfirmDialog.list`).
+  Pozycja `browserData` ma znaczek „Zalogowano do YouTube” (`strings.youtube.signedIn`), gdy `YoutubeAccount` mówi, że w tych ciasteczkach
+  jest logowanie do YouTube (ADR-021, §6.13); stan bierze z `state/youtubeAccount.svelte.ts`, raport prywatności go nie powiela.
+
+### 6.13 Logowanie do YouTube dla Premium (ADR-021)
+
+Komendy `get_youtube_account`, `youtube_sign_in`, `youtube_sign_out` (§6.1), stan `YoutubeAccount` z rewizją (`get_youtube_account` + `youtube://account`).
+
+```rust
+pub struct YoutubeAccount {
+    pub revision: u32,
+    pub known: bool,            // ciasteczka sprawdzone co najmniej raz od startu
+    pub signed_in: bool,        // jest któreś z: LOGIN_INFO, SAPISID, __Secure-3PAPISID na https://www.youtube.com/
+    pub sign_in_open: bool,     // okno `youtube-login` jest otwarte
+    pub browser_rejected: bool, // Google pokazał „Ta przeglądarka lub aplikacja może nie być bezpieczna” (URL z `/signin/rejected`)
+}
+```
+
+Moduł powłoki: `src-tauri/src/youtube_account.rs` (`YoutubeAccountHandle` w `AppState.youtube`). UI: `src/lib/state/youtubeAccount.svelte.ts`
+(subskrypcja w `state/app.ts`), wiersz „Konto YouTube” w Ustawieniach → Dźwięk (`YoutubeAccountSettings.svelte`), linijka w wyborze muzyki
+(`MusicSourcePicker.svelte`, gdy stream albo linki to YouTube) i podpowiedź w pasku odtwarzacza. Teksty: `strings.youtube` (10 języków), tytuł okna
+`texts.youtube_sign_in_title`; kody błędów `youtube.signIn`, `youtube.signOut`.
+
+- **Okno `youtube-login`**: widoczne, wyśrodkowane, 480×640 (min. 380×480, logiczne px), tytuł z `texts` (10 języków, zmienia się z językiem),
+  `with_main_webview_options`, czyli ten sam profil WebView2 co `main` i `media` (wspólne ciasteczka). Startuje na
+  `https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F` (Google przekierowuje na bieżący formularz).
+  Bez skryptu inicjalizacyjnego i bez `eval`: aplikacja nie widzi tego, co użytkownik wpisuje. Nawigacja tylko https na `accounts.google.com`,
+  `consent.google.com`, `myaccount.google.com`, `gds.google.com` (krok „zadbaj o możliwość logowania”), `www.google.com` (sprawdzenie „nietypowy ruch”),
+  `youtube.com` z subdomenami (też `accounts.youtube.com` i `consent.youtube.com`) i `accounts.google.<kraj>` (`google.pl`, `google.co.uk`,
+  `google.com.au`; ta sama reguła doszła do okna `media`, bo zalogowana strona może odświeżać logowanie przez te hosty); reszta i każde nowe okno →
+  przeglądarka systemowa (`window_util::open_link_externally`, najwyżej raz na 2 s na okno, w logu tylko host). Okno ma zwykłe X (bez chowania).
+  Ponowne `youtube_sign_in` aktywuje otwarte okno, a po odmowie Google wraca na stronę logowania i zeruje `browserRejected`.
+- **Wykrycie zalogowania**: co 1,5 s zadanie async czyta na wątku blokującym (odczyt ciasteczek WebView2 na głównym wątku się zakleszcza) adres strony
+  okna (`url()`) i nazwy ciasteczek dla `https://www.youtube.com/` (`cookies_for_url`); wartości są odrzucane od razu, porównywane są **tylko nazwy**.
+  Któraś z `LOGIN_INFO`, `SAPISID`, `__Secure-3PAPISID` oznacza zalogowanie; gdy do tego przepływ wrócił na
+  stronę YouTube (`www`/`m`/`music.youtube.com`, poza `/signin…`) albo YouTube zapisał `LOGIN_INFO` (najpóźniej 8 s po pojawieniu się ciasteczek),
+  1 s później `signedIn: true` (dopiero wtedy, żeby przeładowanie okna `media` dostało komplet ciasteczek) i okno się zamyka (`destroy`).
+  Sprawdzanie kończy się z oknem (albo po 30 min; okno wtedy zostaje). Zamknięcie okna → `signInOpen: false`; gdy zamknął je użytkownik (X), jeszcze
+  jedno sprawdzenie ciasteczek (mógł zamknąć okno zaraz po zalogowaniu). Okno zamknięte przez samą aplikację (po zalogowaniu, przy wylogowaniu, przy
+  usuwaniu danych przeglądarki) tego sprawdzenia nie robi: odczyt sprzed zastosowania usunięcia mógłby opublikować „zalogowano” już po wyniku
+  sprawdzenia wylogowania. Strona odmowy Google (`/signin/rejected`, też `/v3/…`, na `accounts.google.*`;
+  wykrywana w `on_navigation` i w odpytywaniu `url()`, bo formularz Google bywa SPA) → `browserRejected: true`; okno zostaje, żeby było widać wyjaśnienie
+  Google, a UI pokazuje jedno zdanie do następnej próby.
+- **Start aplikacji** (poza `--restore-shields`, `YoutubeAccountHandle::start`): sprawdzenie nazw ciasteczek przez okno główne na wątku blokującym (do 5 prób co 3 s,
+  gdy WebView2 jeszcze nie odpowiada) → `known: true`. Do tego czasu wiersz w Ustawieniach pokazuje „Sprawdzam…” (logowanie już działa), a
+  odtwarzacz zachowuje się jak bez logowania.
+- **Wylogowanie**: zamyka okno logowania, potem `cookies()` okna głównego (cały profil) i `delete_cookie` dla domen `youtube.com`, `google.com`,
+  `google.<kraj>` i ich subdomen, **poza** `SOCS` i `CONSENT` (wybór ciasteczek zostaje, więc muzyka nie trafia znów na okno zgody). WebView2 usuwa po
+  nazwie, ścieżce i *dokładnej* domenie (`.youtube.com` ≠ `youtube.com`), a `cookie::Cookie::domain()` (0.18), którą Tauri podaje do WebView2, ucina
+  wiodącą kropkę; dlatego każde usunięcie idzie dwa razy: w formie z odczytu i z domeną zapisaną jako `..domena` (z niej `domain()` daje `.domena`;
+  zachowanie przypięte testem), poza `__Host-*` (zawsze host-only). Potem do 15 sprawdzeń co 400 ms, aż ciasteczek logowania nie ma (WebView2 usuwa
+  asynchronicznie); jeśli zostały → błąd `youtube.signOut`.
+- **Dla panelu prywatności** (ADR-020, `browserData`): `state.youtube.close_sign_in_window(&app)` przed `clear_all_browsing_data()`, potem
+  `state.youtube.refresh(&app, true)` (ponowne sprawdzenia jak przy wylogowaniu, wynik w `youtube://account`).
+- **Zmiana konta a okno `media`**: każda zmiana `signedIn` po pierwszym sprawdzeniu przeładowuje otwarte okno `media` (`MediaWindow::reload`; hak
+  `on_page_load` znów stosuje żądany stan grania i głośność), żeby odtwarzacz YouTube na stronie użył nowych ciasteczek (Premium od razu po zalogowaniu).
+- **Odtwarzacz** (`src/lib/player/engine.ts`, `setSignedIn` + `windowPageOf`): przy `known && signedIn` każda pozycja YouTube (link, playlista, stream)
+  gra w oknie `media`, bo tylko tam ciasteczka youtube.com są własne (strona najwyższego poziomu na youtube.com), więc działa Premium (bez reklam).
+  Osadzony iframe w `main` (origin `tauri.localhost`) dostaje je jako ciasteczka stron trzecich, na których nie polegamy. Link do playlisty
+  (`/playlist?list=X` na YouTube albo YouTube Music) okno otwiera wtedy jako `https://www.youtube.com/watch?list=X` (`windowUrlOf`): strona playlisty
+  tylko wylicza filmy i niczego nie odtwarza, a strona odtwarzania z samym `list` gra playlistę od pierwszego filmu. Zalogowanie przenosi pozycję
+  YouTube, którą trzyma iframe, do okna od razu (w pauzie: iframe się zwalnia, wznowienie ładuje okno). Bez zalogowania wszystko jak dotąd (najpierw
+  iframe, okno dla odmów osadzania); wylogowanie nie przerywa bieżącej pozycji. Efekt `setSignedIn` w `MusicPlayer.svelte` stoi przed efektem playlisty,
+  więc znany stan konta kieruje już pierwszą pozycję nowej playlisty.
+- Logi: tylko hosty i zdarzenia („signed in”, „signed out”, „rejected”), nigdy nazwy kont, adresy z parametrami ani wartości ciasteczek.
 
 ## 7. Model wątków i współbieżności
 

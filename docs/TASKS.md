@@ -205,6 +205,19 @@ na pełnym ekranie; `--demo` przy działającej aplikacji; zgłoszenie wzorców,
   `scripts/setup-windows.ps1` instaluje Git LFS, robi `git lfs install` i `git lfs pull`.
 - [ ] **SR-44** (B) Mikser dźwięków otoczenia: warstwy deszczu, tłumu/kawiarni, burzy i podobnych, każda z własną głośnością, obok muzyki
   (tylko pliki CC0/CC-BY z wpisem w `CREDITS.md` albo dźwięki syntetyczne; bez obietnic zdrowotnych). **Na później** (decyzja właściciela 2026-10-13).
+- [~] **SR-45** (B) Panel prywatności „Prywatność i dane” (ADR-020, priorytet 2 właściciela): `focus-core/src/privacy.rs` (plan usuwania, KiB, eksport bez
+  sekretów), `src-tauri/src/privacy.rs` (raport pozycja po pozycji, skan co 3 s i po eventach modułów, `privacy://changed`; eksport do jednego JSON poza
+  folderami aplikacji; usuwanie przez istniejące ścieżki po zatrzymaniu sesji i zejściu osłon; „Usuń wszystko” + `Config::default()`), UI
+  `PrivacySettings.svelte` w Ustawieniach (grupy, rozmiary, liczby, potwierdzenia, lista w „Usuń wszystko”). Teksty w 10 językach.
+  DoD (fizyczny Windows): panel pokazuje config, historię (z „tytułami okien” przy `trackTitles`), tokeny tylko jako „Zapisane”; eksport → plik JSON bez
+  `googleClientSecret`, tokenów i linków ICS; usunięcie historii w trakcie skupienia → sesja kończy się, powiadomienia Windows wracają, aplikacja zostaje
+  w Ustawieniach; „Wyczyść” dane przeglądarki → YouTube wylogowany; „Usuń wszystko” → ustawienia domyślne, brak wpisu autostartu, `shields-restore.json` nietknięty.
+- [~] **SR-46** (B) Logowanie do YouTube dla Premium (ADR-021, priorytet 3 właściciela): `src-tauri/src/youtube_account.rs` (okno `youtube-login` ze stroną
+  Google, bez skryptu i `eval`; wykrycie po samych nazwach ciasteczek youtube.com; odmowa Google po `/signin/rejected`; wylogowanie bez `SOCS`/`CONSENT`;
+  przeładowanie okna `media` przy zmianie konta), komendy `get_youtube_account` / `youtube_sign_in` / `youtube_sign_out` + `youtube://account`;
+  UI: wiersz „Konto YouTube” w Ustawieniach → Dźwięk, linijka w wyborze muzyki, po zalogowaniu cały YouTube w oknie `media` (`engine.ts`). Teksty w 10 językach.
+  DoD (fizyczny Windows, konto z Premium): zalogowanie → okno samo się zamyka, „Zalogowano” → Lofi Girl i zwykły link YouTube grają w oknie `media` bez
+  reklam; wylogowanie → „Nie zalogowano”, przy następnym oknie YouTube nie ma znów pytania o ciasteczka; w logach brak nazw kont i wartości ciasteczek.
 
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
@@ -466,3 +479,29 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   (spotkanie `dev-sample-meeting`, teksty próbek w `texts`), `popup.rs`: `PopupRequest.sample` / `sticky` (próbki od razu, także w czasie prezentacji,
   nigdy nie czekają; sticky bez timeoutu po załadowaniu strony; „Pomiń fazę” na próbce tylko zamyka), `set_meeting_choice` dla `dev-sample-…` → no-op.
 - [2026-10-13 13:05] (B→A) Git LFS: po `git pull` uruchom raz `git lfs install` i `git lfs pull` (albo `scripts/setup-windows.ps1`), inaczej muzyka, grafiki i ikony będą plikami-wskaźnikami i build Tauri się nie uda.
+- [2026-10-13] (B→A) Kontrakt, panel prywatności (ADR-020) i logowanie do YouTube (ADR-021), na razie same zaślepki `notImplemented` w `commands.rs`:
+  komendy `get_privacy_report -> PrivacyReport`, `open_data_folder`, `export_privacy_data { path }`, `delete_privacy_data { kinds: PrivacyItemKind[] } -> Config`,
+  `delete_all_data -> Config`, `get_youtube_account -> YoutubeAccount`, `youtube_sign_in`, `youtube_sign_out`; eventy `privacy://changed` (`PrivacyReport`)
+  i `youtube://account` (`YoutubeAccount`), oba z rewizją. DTO: `PrivacyItemKind` (18 rodzajów, w core `ALL`, `is_deletable()`, `work_source()`),
+  `PrivacyItem { kind, present, sizeKib: u32 | null, count, deletable, includesTitles }`, `PrivacyReport { revision, folders, items, busy }`,
+  `YoutubeAccount { revision, known, signedIn, signInOpen, browserRejected }`. Bez zmian w `Config`, `session.rs` i tabeli faz. Do zrobienia w powłoce
+  (twoje `persistence.rs` / `session_actor.rs`, proszę o review): usuwanie najpierw zatrzymuje sesję i czeka na zejście osłon (zasada 7), pliki przywracania
+  nigdy nie są usuwane wprost, eksport bez sekretów (`googleClientSecret` puste, bez tokenów i linków ICS). W `api.ts` nowy `pickSaveFile` (okno zapisu,
+  `dialog:default` już je obejmuje). Szczegóły: ARCHITECTURE §6.12–6.13.
+- [2026-10-13] (B→A) Panel prywatności (ADR-020, SR-45) wdrożony: nowe `focus-core/src/privacy.rs` i `src-tauri/src/privacy.rs` (`AppState.privacy`),
+  zaślepki prywatności w `commands.rs` zastąpione (`store_config` jest teraz `pub(crate)`). W twoich plikach małe dodatki do review: `persistence.rs`
+  (`files()`, `clear_meeting_choices`, `clear_work_seen`, `remove_config_leftovers`, testowy `with_test_dirs`), `calendar.rs` (`ClearChoices`),
+  `work.rs` + `work/model.rs` (`ClearSeen`, `Announcer::remember`), `blocklist.rs` (`restore_default`). `session_actor.rs` bez zmian: usuwanie wysyła
+  `ActorCmd::Stop` i czeka (do 8 s) na Idle i `ShieldStatus.active == false`, potem 0,5 s na dopisanie historii. Propozycja do CLAUDE.md (struktura + zasada 11) w ADR-020.
+- [2026-10-13] (B→A) Logowanie do YouTube (ADR-021, SR-46) wdrożone: nowy moduł `src-tauri/src/youtube_account.rs` (`AppState.youtube`), zaślepki
+  YouTube w `commands.rs` zastąpione. W `media_window.rs`: `MediaWindow::reload` (przy zmianie konta), strażnik nawigacji przepuszcza też
+  `accounts.google.<kraj>`, a otwieranie linków w przeglądarce przeszło do `window_util::open_link_externally` (wspólne z oknem logowania).
+  Dla panelu prywatności (`browserData`): `state.youtube.close_sign_in_window(&app)` przed `clear_all_browsing_data()`, potem
+  `state.youtube.refresh(&app, true)`. Proszę o review strażnika nawigacji i usuwania ciasteczek (ARCHITECTURE §6.13).
+- [2026-10-13] (B→A) Utwardzenie mostu (ADR-018, „Uzupełnienie: utwardzenie mostu”; ARCHITECTURE §6.10 „Ochrona HTTP mostu”): `tiny_http` zastąpiony własnym
+  minimalnym serwerem HTTP/1.1 (`src-tauri/src/bridge/http.rs`, Tokio `net` + `io-util`, bez nowych crate'ów; z `Cargo.lock` znikają `tiny_http`, `ascii`, `chunked_transfer`,
+  `httpdate`). Powód: `tiny_http` przy odrzuceniu zapytania „dopijał” zadeklarowaną treść z buforem jej wielkości (2 GB = 2 GB pamięci, `u64::MAX` = panika → abort aplikacji),
+  bez limitów nagłówków i czasu, a błąd `accept` kończył nasłuch. Zachowanie dla rozszerzenia bez zmian (poza `Connection: close`). Testy na gniazdach: `bridge/server_tests.rs`
+  (w testach powłoki jest `#[global_allocator]` liczący największą alokację — tylko `#[cfg(test)]`). Po weryfikacji: nowe połączenie ma 100 ms na zapytanie, zanim nowsze mogą je zamknąć
+  (twardo najwyżej 1024 otwarte; zalew połączeń nie zamyka już nieprzeczytanego zapytania rozszerzenia), jedno przyjęcie na obrót runtime, błąd `accept` samego połączenia
+  bez przerwy i pozwolenie na treść trzymane do końca obsługi zgłoszenia. Proszę o review `bridge/http.rs`.
