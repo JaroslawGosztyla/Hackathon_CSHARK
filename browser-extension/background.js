@@ -1,8 +1,9 @@
 // FocusMode extension service worker (Manifest V3).
 //
 // Polls the FocusMode desktop app on the loopback bridge and, while a focus phase is running, redirects
-// navigations to blocked sites to the local "go back to work" page (blocked.html). Nothing is sent
-// anywhere: the only request this extension makes is `GET http://127.0.0.1:47615/v1/state`.
+// navigations to blocked sites to the local "go back to work" page (blocked.html). Nothing leaves the
+// computer: the extension only talks to the app on the loopback interface — `GET /v1/state` (the poll)
+// and `POST /v1/report` (which of the app's own regex patterns the browser could not turn into rules).
 //
 // The blocklist (websiteblacklist.txt in the app) arrives as `blocklist` (domains, each with its
 // subdomains) and `patterns` (regex sources, RE2 syntax, case-insensitive, searched in the full URL).
@@ -20,8 +21,13 @@
 // App unreachable, `active: false` or a phase other than focus → all rules are removed on that very poll.
 // The blocked page asks for an immediate poll (MSG_POLL_NOW) as soon as it sees the break, so the rules
 // are gone before it sends the tab back to the original site.
+//
+// Skipped patterns: after the rules are installed for a focus phase, the list of patterns that did not get
+// a rule (`skippedPatterns`) is posted to the app (debounced, at most once per distinct list per focus run,
+// failures ignored), so Settings can say which lines Chrome cannot enforce on the network level.
 
 import {
+  BRIDGE_REPORT_URL,
   BRIDGE_STATE_URL,
   INITIAL_STATE,
   MSG_GET_STATE,
@@ -56,6 +62,9 @@ const MAX_REMEMBERED_TABS = 100;
 const REMEMBERED_URL_TTL_MS = 60000;
 const STORAGE_STATE_KEY = 'state';
 const STORAGE_TAB_URLS_KEY = 'blockedTabUrls';
+const STORAGE_REPORTED_KEY = 'reportedSkipped';
+/** Quiet time before the skipped-pattern list is posted; a newer list within it replaces the pending one. */
+const REPORT_DEBOUNCE_MS = 2000;
 const BADGE_FOCUS_COLOR = '#d9893b';
 const BADGE_BREAK_COLOR = '#3f9f84';
 const BADGE_TEXT_COLOR = '#1b1208';
@@ -69,6 +78,20 @@ let inflight = null;
 let lastFetchAt = 0;
 /** tabId → { url, at } of tabs this worker recently reloaded or redirected. */
 const recentRedirects = new Map();
+/**
+ * JSON of the skipped-pattern list the app has answered for in this focus run, or null; mirrors
+ * chrome.storage.session (STORAGE_REPORTED_KEY). `undefined` until read.
+ * @type {string | null | undefined}
+ */
+let reportedSkipped;
+/** @type {{ key: string, skipped: string[] } | null} list waiting for the debounce timer */
+let pendingReport = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let reportTimer = null;
+/** JSON of the list being posted right now, or null. */
+let sendingReportKey = null;
+/** Bumped whenever the reported list is forgotten, so an answer to an older post cannot restore it. */
+let reportEpoch = 0;
 
 // ---------------------------------------------------------------------------
 // Event listeners (registered synchronously at top level, as MV3 requires)
@@ -253,6 +276,7 @@ async function applyState(fetched, reason) {
   const next = { ...fetched, rulesMode, rulesKey, patternRules, skippedPatterns };
   await saveState(next);
   await updateBadge(next);
+  await syncSkippedReport(next, key);
 
   const wasBlocking = isBlocking(previous);
   const oldDomains = new Set(wasBlocking ? previous.blocklist : []);
@@ -417,6 +441,108 @@ function patternRule(mode, id, pattern) {
       resourceTypes: ['main_frame'],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Skipped-pattern report (POST /v1/report)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tells the app which patterns got no declarativeNetRequest rule. Only a list screened for the lists being
+ * blocked right now counts: a failed rule update leaves `rulesKey` null and is retried on the next refresh
+ * instead of being reported as "unsupported". Outside focus the app sends no patterns, so nothing is
+ * reported and the remembered list is dropped: the next focus run reports again (the app may have been
+ * restarted meanwhile and lost it). Never throws.
+ * @param {typeof INITIAL_STATE} state the state just applied
+ * @param {string} key the rules key of the lists that state blocks
+ */
+async function syncSkippedReport(state, key) {
+  try {
+    if (!isBlocking(state)) {
+      await forgetReportedSkipped();
+      return;
+    }
+    if (state.rulesKey !== key) return;
+    const skipped = [...state.skippedPatterns];
+    const reportKey = JSON.stringify(skipped);
+    if (reportKey === sendingReportKey || reportKey === (await loadReportedSkipped())) {
+      cancelPendingReport();
+      return;
+    }
+    if (pendingReport !== null && pendingReport.key === reportKey) return; // keep its timer running
+    pendingReport = { key: reportKey, skipped };
+    if (reportTimer !== null) clearTimeout(reportTimer);
+    reportTimer = setTimeout(() => {
+      sendPendingReport().catch(logError('report'));
+    }, REPORT_DEBOUNCE_MS);
+  } catch (err) {
+    console.warn(LOG, 'could not schedule the skipped-pattern report', err);
+  }
+}
+
+function cancelPendingReport() {
+  pendingReport = null;
+  if (reportTimer !== null) {
+    clearTimeout(reportTimer);
+    reportTimer = null;
+  }
+}
+
+async function sendPendingReport() {
+  reportTimer = null;
+  const report = pendingReport;
+  if (report === null) return;
+  if (sendingReportKey !== null) {
+    // One post at a time, so the app never receives an older list after a newer one.
+    reportTimer = setTimeout(() => {
+      sendPendingReport().catch(logError('report'));
+    }, REPORT_DEBOUNCE_MS);
+    return;
+  }
+  pendingReport = null;
+  const epoch = reportEpoch;
+  sendingReportKey = report.key;
+  try {
+    const answered = await postReport(report.skipped);
+    // Not answered: nothing is remembered, so the next refresh in focus schedules the post again.
+    if (answered && epoch === reportEpoch) await saveReportedSkipped(report.key);
+  } finally {
+    sendingReportKey = null;
+  }
+}
+
+/**
+ * Posts `{ skipped }` to the app. Returns true when the app answered at all: an older app without
+ * `/v1/report` answers 404 and would refuse every retry as well. False when it could not be reached.
+ * Never throws; a failed report does not affect blocking.
+ * @param {string[]} skipped
+ */
+async function postReport(skipped) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(BRIDGE_REPORT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-FocusMode-Extension': '1' },
+      body: JSON.stringify({ skipped }),
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      console.info(LOG, `reported ${skipped.length} skipped pattern(s) to the app`);
+    } else {
+      console.info(LOG, `the app did not take the skipped-pattern report (http-${response.status})`);
+    }
+    return true;
+  } catch (err) {
+    const why = err && err.name === 'AbortError' ? 'timeout' : 'unreachable';
+    console.info(LOG, `skipped-pattern report not delivered (${why})`);
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -648,6 +774,42 @@ async function forgetTabUrl(tabId) {
   const entries = await loadTabUrls();
   const kept = entries.filter(([id]) => id !== tabId);
   if (kept.length !== entries.length) await saveTabUrls(kept);
+}
+
+/** @returns {Promise<string | null>} JSON of the skipped-pattern list the app has answered for, or null */
+async function loadReportedSkipped() {
+  if (reportedSkipped !== undefined) return reportedSkipped;
+  let value = null;
+  try {
+    const stored = await chrome.storage.session.get(STORAGE_REPORTED_KEY);
+    if (typeof stored[STORAGE_REPORTED_KEY] === 'string') value = stored[STORAGE_REPORTED_KEY];
+  } catch (err) {
+    console.warn(LOG, 'could not read session storage', err);
+  }
+  // A save that finished while this read was running wins.
+  if (reportedSkipped === undefined) reportedSkipped = value;
+  return reportedSkipped;
+}
+
+/** @param {string | null} reportKey */
+async function saveReportedSkipped(reportKey) {
+  reportedSkipped = reportKey;
+  try {
+    if (reportKey === null) {
+      await chrome.storage.session.remove(STORAGE_REPORTED_KEY);
+    } else {
+      await chrome.storage.session.set({ [STORAGE_REPORTED_KEY]: reportKey });
+    }
+  } catch (err) {
+    console.warn(LOG, 'could not write session storage', err);
+  }
+}
+
+/** Outside focus: drop the pending post and the remembered list (an answer still on its way is ignored). */
+async function forgetReportedSkipped() {
+  cancelPendingReport();
+  reportEpoch += 1;
+  if ((await loadReportedSkipped()) !== null) await saveReportedSkipped(null);
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FocusMode — blokada rozpraszaczy",
   "short_name": "FocusMode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Podczas skupienia w aplikacji FocusMode zamienia rozpraszające strony na „Wracaj do pracy”. Działa tylko lokalnie.",
   "minimum_chrome_version": "116",
   "permissions": ["declarativeNetRequestWithHostAccess", "tabs", "alarms", "storage"],

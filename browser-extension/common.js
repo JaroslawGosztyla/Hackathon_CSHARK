@@ -1,7 +1,8 @@
 // Shared helpers for the FocusMode browser extension (service worker, popup and blocked page).
 //
 // Nothing in this module talks to the network. The only network peer of the whole extension is the
-// FocusMode desktop app on the loopback interface (see BRIDGE_STATE_URL), and only background.js calls it.
+// FocusMode desktop app on the loopback interface (BRIDGE_STATE_URL, BRIDGE_REPORT_URL), and only
+// background.js calls it.
 
 /** Loopback port of the FocusMode bridge (`BRIDGE_PORT` in crates/focus-core/src/api.rs). */
 export const BRIDGE_PORT = 47615;
@@ -12,6 +13,14 @@ export const BRIDGE_PORT = 47615;
  * from `websiteblacklist.txt` in the app and are empty when nothing is blocked.
  */
 export const BRIDGE_STATE_URL = `http://127.0.0.1:${BRIDGE_PORT}/v1/state`;
+
+/**
+ * `POST` with `{ "skipped": string[] }`: the pattern sources (exactly as received in `patterns`) that could
+ * not become declarativeNetRequest rules (refused by the browser's RE2 checks, or beyond the regex rule
+ * limit). The app shows them next to the blocklist (`BlocklistInfo.extensionSkipped`). Only patterns the
+ * app itself sent are reported; never a URL, title or anything else about browsing.
+ */
+export const BRIDGE_REPORT_URL = `http://127.0.0.1:${BRIDGE_PORT}/v1/report`;
 
 /** Runtime message: ask the service worker for the cached (or a refreshed) state. */
 export const MSG_GET_STATE = 'focusmode:get-state';

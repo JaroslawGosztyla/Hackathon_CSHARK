@@ -34,8 +34,12 @@ Wyrażenia regularne:
 - wystarczy, że pasują do fragmentu adresu — `youtube\.com/shorts` blokuje tylko Shorts, a nie cały YouTube;
 - używają składni RE2 (tej samej co Chrome): bez lookahead/lookbehind (`(?=…)`, `(?<=…)`) i odwołań wstecznych
   (`\1`). Kropka to „dowolny znak”, więc w domenach pisz `\.`;
-- wzorzec, którego przeglądarka nie przyjmie (np. zbyt złożony), jest pomijany — popup pokazuje wtedy
-  „pominięte: N”, a na liście jest przekreślony. Rozszerzenie bierze pod uwagę najwyżej 500 wzorców.
+- wzorzec, którego przeglądarka nie przyjmie jako reguły (np. zbyt złożony), jest pomijany — popup pokazuje
+  wtedy „pominięte: N”, a na liście jest przekreślony. Rozszerzenie zgłasza też takie wzorce aplikacji, a ta
+  pokazuje je w **Ustawieniach** obok listy. Pominięty wzorzec zwykle nadal działa przy ładowaniu karty
+  (rozszerzenie samo sprawdza jej adres, o ile JavaScript umie wykonać to wyrażenie), ale bez reguły sieciowej
+  strona może zdążyć się na chwilę otworzyć.
+  Rozszerzenie bierze pod uwagę najwyżej 500 wzorców.
 
 ## Instalacja
 
@@ -84,6 +88,12 @@ instalowanych spoza sklepu.
   domen i po jednej na każdy wzorzec (wcześniej sprawdzony przez przeglądarkę, `isRegexSupported`).
   Przeglądarka sama przekierowuje otwierane strony z listy (oraz subdomeny, np. `old.reddit.com`) na
   `blocked.html`. Rozszerzenie nie widzi przy tym treści stron ani zapytań sieciowych.
+- Po ustawieniu reguł rozszerzenie wysyła aplikacji listę wzorców, które nie dostały reguły:
+  `POST http://127.0.0.1:47615/v1/report` z treścią `{"skipped": [...]}` — tylko wzorce z listy otrzymanej
+  od aplikacji, dokładnie w tej postaci, w jakiej przyszły. Robi to tylko w fazie Skupienie, gdy lista się
+  zmieni (po 2 s spokoju, raz na każdą nową listę w danym skupieniu; w kolejnym skupieniu zgłasza ją od nowa).
+  Gdy aplikacja nie odpowie, rozszerzenie ponawia zgłoszenie przy następnym sprawdzeniu stanu; błąd
+  zgłoszenia nie wpływa na blokowanie.
 - Karty z blokowanymi stronami, które były już otwarte w chwili rozpoczęcia skupienia, są przeładowywane,
   żeby reguła zadziałała także dla nich. Tak samo przejście w obrębie strony bez ładowania jej od nowa
   (np. z filmu na YouTube do Shorts): rozszerzenie sprawdza nowy adres karty z listą domen i wzorców.
@@ -101,14 +111,17 @@ instalowanych spoza sklepu.
 
 ## Prywatność
 
-- **Nic nie opuszcza Twojego komputera.** Jedyne połączenie sieciowe, jakie wykonuje rozszerzenie, to
-  zapytanie do aplikacji FocusMode pod adresem `http://127.0.0.1:47615` (interfejs lokalny). Polityka
-  bezpieczeństwa treści (CSP) rozszerzenia blokuje wszystkie inne połączenia.
+- **Nic nie opuszcza Twojego komputera.** Jedyne połączenia sieciowe, jakie wykonuje rozszerzenie, to
+  zapytania do aplikacji FocusMode pod adresem `http://127.0.0.1:47615` (interfejs lokalny): odczyt stanu
+  (`GET /v1/state`) i zgłoszenie pominiętych wzorców (`POST /v1/report`). Polityka bezpieczeństwa treści
+  (CSP) rozszerzenia blokuje wszystkie inne połączenia.
 - Rozszerzenie nie wysyła aplikacji żadnych danych o przeglądaniu — ani adresów, ani tytułów stron.
-  Adres karty jest porównywany z listą domen i wzorców wyłącznie lokalnie, w przeglądarce.
+  Adres karty jest porównywany z listą domen i wzorców wyłącznie lokalnie, w przeglądarce. Zgłoszenie
+  `/v1/report` zawiera tylko wzorce z Twojej własnej listy, które aplikacja wcześniej przysłała.
 - Brak analityki, kodu ładowanego z sieci, ciasteczek i kont.
 - W pamięci sesji przeglądarki (`chrome.storage.session`, czyszczonej po zamknięciu przeglądarki) trzymany
-  jest tylko ostatni stan z aplikacji oraz — przez krótki czas — adres karty przekierowanej na stronę
+  jest tylko ostatni stan z aplikacji, ostatnio zgłoszona lista pominiętych wzorców (żeby nie wysyłać jej
+  ponownie po każdym uśpieniu rozszerzenia) oraz — przez krótki czas — adres karty przekierowanej na stronę
   „Wracaj do pracy”, żeby można ją było otworzyć w przerwie. Strona blokady zapisuje też w pamięci sesji
   tej karty (`sessionStorage`, czyszczonej po zamknięciu karty) adres i czas ostatniego automatycznego
   powrotu — tylko po to, żeby nie wpaść w pętlę przekierowań.
@@ -134,7 +147,8 @@ instalowanych spoza sklepu.
   w popupie. Po rozpoczęciu skupienia rozszerzenie może potrzebować do 30 s, zanim zacznie blokować
   (szybciej, gdy przełączysz kartę lub otworzysz popup).
 - **Wzorzec (regex) nie blokuje** — sprawdź w Ustawieniach aplikacji, czy linia nie jest na liście
-  problemów, a w popupie, czy wzorzec nie jest „pominięty” (przekreślony). Pamiętaj, że wzorzec jest
+  problemów ani wśród wzorców, których przeglądarka nie przyjęła jako reguły (lista pojawia się w trakcie
+  skupienia), a w popupie, czy wzorzec nie jest „pominięty” (przekreślony). Pamiętaj, że wzorzec jest
   dopasowywany do całego adresu z `https://` — `^youtube` nie zadziała, `^https://(www\.)?youtube` tak.
 - **Blokowana jest za duża część strony** — kropka w wyrażeniu regularnym pasuje do dowolnego znaku, a wzorzec
   wystarczy, że pasuje do fragmentu adresu; dopisz `\.`, `/` albo kotwice `^…$`.
