@@ -514,6 +514,7 @@ a parser `websiteblacklist.txt` w core zwracał opisy błędów po polsku.
      (pytanie zamknięte Escape albo zignorowane) pyta ponownie.
    - Okna głównego nie niszczymy, dopóki działa aplikacja, bo w nim gra muzyka (ADR-013 pkt 2). X albo je chowa, albo kończy cały proces.
      „Zakończ” w zasobniku działa zawsze, także gdy WebView nie odpowiada.
+   - *Zmiana 2026-10-13 (prośba właściciela):* `phasePopups` jest domyślnie **włączone** (nowe instalacje i reset); zapisany wybór w `config.json` zostaje, a brak pola daje nową wartość domyślną; toast Windows tylko przy wyłączonych okienkach albo gdy okna nie da się pokazać (także gdy jego strona się nie załadowała), nigdy oba.
    - `Config.phasePopups`, domyślnie wyłączone; włącza je wybór zasobnika przy pierwszym X albo przełącznik w Ustawieniach. Gdy jest włączone,
      zamiast toastu Windows powłoka pokazuje okno `popup` przy starcie przerwy i skupienia, przy automatycznej pauzie po uśpieniu
      i po zamknięciu launcherów (`PopupKind`: `breakStarted`, `focusStarted`, `interrupted`, `launchersClosed`). Okno jest małe, w prawym dolnym rogu ekranu,
@@ -1453,6 +1454,9 @@ z dużą liczbą przycisków wywołujących okienka i inne efekty.
   z czasem rzeczywiście spędzonym w skupieniu.
 - Toast z `toast` to prawdziwe powiadomienie Windows: przy włączonym „Nie przeszkadzać” system może go wyciszyć.
 - Strona Deweloper nie jest tłumaczona.
+- *Uzupełnienie 2026-10-13 (prośba właściciela):* `DevAction` ma też `presentationMode { on }` (profil demo z `--demo` w działającym procesie,
+  bez zapisu; w trakcie sesji od następnego Startu) i `factoryReset` (ścieżka „Usuń wszystko” z ADR-020, potem `config.json` i restart
+  jak po świeżej instalacji; poza folderami aplikacji nic). Szczegóły: ARCHITECTURE §6.11.
 
 **Co zmienia:**
 - ADR-014 pkt 5: strona Deweloper tylko po angielsku (pkt 3).
@@ -1557,8 +1561,9 @@ w iframe na `tauri.localhost` są ciasteczkami stron trzecich i nie można na ni
 - Po zalogowaniu YouTube zapisuje odtwarzane utwory w historii konta użytkownika (zwykłe zachowanie Google); UI mówi to jednym zdaniem przy przycisku.
   Ciasteczka zostają w lokalnym profilu WebView2 aplikacji.
 - Zalogowany użytkownik bez Premium dalej słyszy reklamy, tylko w oknie `media` zamiast w iframe.
-- Okno `media` nie wysyła zdarzeń odtwarzania (TODO w `src/lib/player/mediaWindow.ts`), więc po zalogowaniu wszystkie linki YouTube mają to ograniczenie
-  (koniec filmu nie przechodzi dalej na playliście linków; „Następny” działa).
+- Okno `media` nie wysyła zdarzeń odtwarzania, więc po zalogowaniu kolejne linki załatwia adres strony: ciąg filmów z listy gra jako jedna kolejka
+  `watch_videos?video_ids=…` (tymczasowa playlista YouTube w kolejności listy), strona sama się zapętla, a aplikacja śledzi pozycję po tytule okna
+  (ARCHITECTURE §6.13); koniec strony, której tytuł się nie zmienia (pojedynczy film), strona zgłasza chwilowym tytułem-znacznikiem.
 - Google może w każdej chwili zacząć odmawiać logowania we WebView2; wtedy funkcja zostaje z jednozdaniowym wyjaśnieniem.
 - Konta, które Google przekierowuje do zewnętrznego dostawcy logowania (SSO w Google Workspace), się nie zalogują: okno otwiera samo tylko hosty
   Google i YouTube, inne strony idą do przeglądarki systemowej. Linki z `target=_blank` na stronie Google nic nie robią (okno nie dostaje skryptu,
@@ -1570,3 +1575,111 @@ w iframe na `tauri.localhost` są ciasteczkami stron trzecich i nie można na ni
 - CLAUDE.md (propozycja do zatwierdzenia przez użytkownika): Struktura — moduł powłoki konta YouTube (okno `youtube-login`, obecność ciasteczek,
   `youtube://account`); zasada 11 — dopisek „logowanie do YouTube tylko na stronie Google w oknie aplikacji; aplikacja nie widzi hasła i nie czyta
   wartości ciasteczek; ciasteczka zostają w lokalnym profilu WebView2”.
+
+## ADR-022: Funkcje beta: iskierki, seria i małe kroki
+**Status:** Przyjęta (2026-10-13), funkcja w becie. Wdrożone: kontrakt IPC (`/sync-contract`, R-00), rdzeń (R-01…R-03: `timing.rs`, `config.rs`,
+małe kroki i `Effect::Progress` w `session.rs`, `rewards.rs` z testami wszystkich 19 grup, w tym naklejki P1), platforma i dźwięki (R-04), usługa
+nagród w powłoce (R-05), UI (R-07…R-12), P1: album naklejek, nastrój „pracujemy razem” i pigułka w nagłówku (R-13), atlas póz i ich wyświetlanie
+(R-14, R-15) oraz poprawki po przeglądzie. Czeka na odbiór właściciela (skrypt demo, przegląd `08-back-view` jako towarzysza; do decyzji właściciela domyślnie wyłączony: `focusCompanion = false`).
+Kod: `crates/focus-core/src/rewards.rs`, małe kroki w `crates/focus-core/src/session.rs`, `crates/focus-platform/src/clock.rs` (`local_date_time`),
+`crates/focus-audio/src/chime.rs` (`Chime::REWARDS`), `src-tauri/src/rewards.rs`; UI: `src/lib/state/rewards.svelte.ts`, `src/lib/rewards/`,
+`src/lib/components/rewards/`; atlas: `static/mascot/poses-*`, `tools/mascot/poses-atlas.*` (opis w `tools/mascot/README.md`).
+
+**Kontekst:** najtrudniejszy jest start sesji i powrót z przerwy. Pomaga natychmiastowa, mała nagroda za własny ruch użytkownika i rozbicie celu
+na bardzo małe kroki. Mechanizmy nagród łatwo jednak zamienić w presję: lęk przed utratą serii, ponaglanie poza sesją, wzorce hazardowe,
+nagradzanie przepracowania. Funkcja ma więc być opcjonalna, w pełni lokalna i łagodna z założenia.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Bez nagród (stan sprzed ADR-022) | zero ryzyka | brak wsparcia przy starcie i powrocie z przerwy |
+| **Funkcje beta za przełącznikiem: iskierki, cel dnia, poziomy, seria z dniami wolnymi i dniami oddechu, małe kroki, niespodzianki z jawnymi szansami** | wsparcie startu i przerw; wszystko lokalnie; da się wyłączyć bez utraty danych | więcej kodu i tekstów (10 języków); ryzyko wzorców presji ograniczone zasadami niżej |
+| Rankingi, znajomi, synchronizacja | motywacja społeczna | dane poza komputerem (zasada 11), porównywanie się; odrzucone |
+| Skrzynki do otwierania, waluta, sklep | silne zaangażowanie | wzorce hazardowe i płatne przewagi; odrzucone |
+
+**Decyzja (skrót; reguły w specyfikacji i w testach `rewards.rs`):**
+1. **Przełącznik `Config.betaFeatures`** (domyślnie wyłączony) i `Config.rewards: RewardsConfig` (każda część osobno: iskierki, małe kroki,
+   niespodzianki, dźwięki, poziom świętowania, seria widoczna / wstrzymana, cel dnia, dni wolne). Bez bety aplikacja działa dokładnie jak przed ADR-022.
+   Wyłączenie chowa UI i **zostawia dane**; dni z wyłączonymi nagrodami są dla serii neutralne.
+2. **Iskierki** za start, minuty skupienia (limit 300 dziennie), pełny blok (≥ 80 % długości i ≥ 10 min), wziętą przerwę (≥ 50 %), powrót z przerwy,
+   odhaczony krok (limit 45 dziennie), wszystkie kroki, „Zrobione? → Tak” i cel dnia. Stop, Pomiń, Pauza, luka snu i wcześniejszy Stop **nigdy nic nie odejmują**
+   i nie dają komunikatu. Wszystkie liczby to nazwane stałe w `rewards.rs` i `timing.rs`.
+3. **Cel dnia** 30 / 60 / 120 iskierek (domyślnie 30); **poziomy** z sumy iskierek (`min(60 + 20·(L−1), 500)` na poziom), nigdy nie spadają, bez nazw.
+4. **Seria:** dzień nagród zaczyna się o 04:00 czasu lokalnego; dzień z celem dodaje 1. Dni wolne (domyślnie sobota i niedziela), dni wstrzymane i dni
+   oddechu (bank 2, najwyżej 3, +1 co 5 dni z celem, zużywane samoczynnie) chronią serię. UI nigdy nie mówi o utracie serii i nigdy nie pokazuje 0;
+   po przerwie dłuższej niż bank seria zaczyna się od nowa („Nowy początek”), a bank, rekord i liczba dni z celem zostają.
+5. **Małe kroki:** do 5 na sesję, najwyżej 80 znaków; w focusie widać tylko następny krok („Teraz: …”); niezrobione kroki czekają na następną sesję.
+   Teksty kroków tylko lokalnie (pamięć, snapshot IPC, okienko, `history.jsonl` przy `keepHistory`), nigdy w logach (ręczny `Debug`), moście ani `rewards.json`.
+6. **Niespodzianki** tylko za pełny blok, z jawnymi szansami (brak 50 %, bąbelek 32 %, perła 15 %, złota perła 3 %) i gwarancją perły po 4 blokach bez niej;
+   pokazują się same w przerwie. Nic do otwierania, kupowania ani losowania ponownie.
+7. **„Skupienie jest święte”:** osiągnięcia zdobyte w focusie czekają do przerwy albo do Stop. W focusie animuje się tylko to, co zrobił sam użytkownik
+   (Start, odhaczenie kroku, powrót z przerwy). Żadnych okienek, toastów ani dźwięków o nagrodach poza sesją.
+8. **Rdzeń:** `Effect::Progress(ProgressFact)` dochodzi do istniejących wektorów efektów; stare efekty zachowują kolejność z ADR-013 (test
+   `old_effects_keep_their_order`). Powłoka liczy fakty synchronicznie czystą funkcją, a plik zapisuje w kolejce (zasada 3); nic nie opóźnia ani nie blokuje
+   Stop, Pomiń fazę i Pauzy (zasada 7). Sesje demo trafiają do podglądu, który nigdy nie jest zapisywany; próbki ze strony Deweloper żyją tylko w UI.
+9. **Prywatność:** `rewards.json` (+ `rewards.json.bak`) w folderze danych: liczby, numery dni i id sesji, bez tekstów, tytułów i nazw aplikacji.
+   Pozycja `rewards` w panelu prywatności (ADR-020): usuwalna (jak „Zacznij od nowa”), w eksporcie. Nic nie opuszcza komputera; tracker nie jest
+   wejściem do nagród (żadna aplikacja nie jest oceniana jako „produktywna”).
+10. **Maskotka:** tylko istniejące klatki i 11 póz z arkusza właściciela przez nowy atlas `poses`, budowany narzędziem, które je wyłącznie skaluje (zasada 10).
+11. **Powłoka (R-05):** jedna usługa `RewardsHandle` (mutex): fakt liczony synchronicznie czystą funkcją, plik zapisuje osobny wątek
+    (`focus-rewards`, tylko najnowsza księga, plik tymczasowy + rename, `rewards.json.bak` najwyżej raz na minutę, `flush` przy wyjściu). Przy wyłączonych
+    nagrodach fakty są odrzucane i nic nie jest emitowane ani zapisywane; wyjątek to wstrzymanie serii, zapisywane tylko wtedy, gdy jest seria do ochrony.
+    Uszkodzony plik: kopia z `.bak`, a gdy i ona nie działa, odłożenie jako `rewards.unreadable-<ms>.json`, nowa księga i `rewards.load` (tylko przy
+    włączonych nagrodach). Dźwięki nagród to syntetyczne `Chime::Pop` / `Sparkle` / `Fanfare` w każdym pakiecie dzwonków (bez licencjonowanego audio),
+    grane z głośnością 0,6 × dzwonek, po dzwonku fazy (+150 ms; przy czekaniu > 3 s pomijane), nigdy podczas prezentacji ani przy `numbersOnly`.
+12. **Kontrakt (R-00):** komendy `get_rewards -> RewardsStatus`, `ack_reward_moments { upTo }`, `reset_rewards -> RewardsStatus`,
+    `play_reward_sound { sound: RewardSound }`, `set_session_steps { steps: StepDraft[] }`, `set_step_done { id, done }`; event `rewards://changed`
+    (`RewardsStatus` z rewizją, ADR-012); `SessionSnapshot.steps`, `SessionSummary.steps` / `sparks` (pomijane w JSON, gdy puste), `PopupInfo.rewards` /
+    `nextStep`, `PrivacyItemKind::Rewards`. Szczegóły i przykłady: ARCHITECTURE §6.14.
+
+**Konsekwencje:**
+- Stary `config.json`, `history.jsonl` i okienka wczytują się bez zmian; bez bety linie historii są identyczne jak wcześniej.
+- Kroki z planu giną przy restarcie aplikacji (bez `plan.json`): świadome uproszczenie.
+- Nowe teksty w 10 językach (z przeglądem słów zakazanych, skrypt `tools/i18n-banned-words.mjs`) i tokeny kolorów nagród w 7 motywach.
+- Funkcja jest w becie: zakres i liczby mogą się zmienić po pierwszych testach z użytkownikami.
+- Odstępstwa od specyfikacji przy wdrożeniu (R-01…R-05): część serii w księdze to `StreakLedger` (`StreakState` to już enum widoku w `api.rs`);
+  `RewardsHandle::session_sparks` przyjmuje id sesji (podgląd demo i prawdziwa księga mogą mieć różne sesje); id momentów nadaje usługa (wspólny licznik
+  dla księgi i podglądu, więc potwierdzenie z UI nigdy nie trafi w cudzy moment); usunięcie pozycji `rewards` w panelu prywatności nie zapisuje od razu
+  nowego pliku (pozycja wraca z następną iskierką), a `reset_rewards` zapisuje go tylko przy włączonych nagrodach; usuwa też odłożone pliki
+  `rewards.unreadable-*.json`; wstrzymanie serii bez policzonego dnia niczego nie zapisuje; dzień z celem osiągniętym w czasie wstrzymania liczy się,
+  gdy liczenie wraca tego samego dnia; linie premii celu dnia i powrotu po przerwie zdobyte w focusie też czekają (moment w focusie pokazuje tylko
+  start, plan, powrót, krok i wszystkie kroki); `PopupCmd::Show` niesie `Box<PopupRequest>` (większe żądanie okienka).
+- Uściślenia po przeglądzie (rdzeń i powłoka):
+  - **Stan w focusie niczego nie zdradza:** dopóki osiągnięcia czekają, `RewardsStatus` pokazuje księgę sprzed nich plus linie pokazane w focusie
+    (`SessionTally::shown`): bez premii celu dnia w liczniku, bez celu, serii i nowego poziomu (pasek zostaje pełny na poprzednim poziomie).
+  - **„Wszystkie kroki”** płaci każde odhaczenie, które domyka plan (także ponowne po odznaczeniu), raz na sesję.
+  - **Wstrzymanie:** widok pokazuje serię z chwili wstrzymania; seria, która już czekała, czeka dalej (żadna stara liczba nie wraca na chwilę).
+  - **Włączenie w trakcie sesji:** księga dołącza do sesji „od teraz” (`SessionTally::joined`; także po „Zacznij od nowa” i usunięciu w panelu
+    prywatności): trwająca faza płaci tylko czas od włączenia, bez pełnego bloku, niespodzianki i premii za powrót; nic wstecz.
+  - **Zegar:** cofnięcie o najwyżej 2 dni nagród (`CLOCK_BACK_TOLERANCE_DAYS`: strefa czasowa, mała korekta) jest przycinane do ostatniego dnia;
+    dalsze cofnięcie to poprawka zegara, który się spieszył: dzień jest przyjmowany, a dzień serii policzony „w przyszłości” wraca na ostatni dzień
+    z celem (albo dzień wcześniej), więc seria liczy dalej. Rekordy zostają (iskierki nigdy nie maleją).
+  - **Wczytanie:** plik, którego nie da się przeczytać jako tekst, traktujemy jak uszkodzony (najpierw `.bak`). Plik zablokowany albo bez dostępu
+    jest czytany ponownie (2 × 200 ms), a potem nigdy nie jest nadpisywany ani odkładany: widać `.bak` (albo nową księgę) i w tym uruchomieniu nic się
+    nie zapisuje. Przy wyłączonych nagrodach naprawa (zapis z `.bak` albo odłożenie) i komunikat `rewards.load` czekają na ich włączenie.
+  - **Demo:** iskierki sesji demo nie trafiają do `history.jsonl` (karta podsumowania czyta je z podglądu); „Tak” dla sesji demo płaci do podglądu
+    (skrypt demo, krok 6), nigdy do `rewards.json`.
+  - **„Tak”:** iskierki za cel sesji dochodzą do `SessionSummary.sparks` w pamięci i w linii `history.jsonl`, więc karta i historia się zgadzają.
+  - **Panel prywatności:** pozycja `rewards` liczy też odłożone `rewards.unreadable-*.json` (usuwa je razem z księgą).
+- Odstępstwa od specyfikacji przy wdrożeniu UI i atlasu (R-07…R-15):
+  - Atlas póz: wspólna skala 0,3491 (trochę poniżej oczekiwanych 0,35–0,40: głowy i słuchawki zgadzają się z `blink-1`), komórka liczona ze wszystkich
+    pikseli z α > 0 (miękkie krawędzie nigdy nie są ucięte), `anchorX` przesunięty o +17 px od środka komórki (kotwica atlasu głównego to kolumna głowy),
+    bez przejścia 120 ms (twarde cięcie jak przy innych klatkach). Typ: `MascotAtlas = MascotVariant | "poses"` zamiast trzeciego `MascotVariant`.
+  - Album naklejek pokazuje pozy także przy ukrytej maskotce, ale atlas pobiera dopiero po pierwszym rozwinięciu; próbki póz i nastrojów ze strony
+    Deweloper pokazują pozę także bez bety (na czas próbki). Galeria póz jest w sekcji Maskotka strony Deweloper.
+  - Okienko: linia nagród zajmuje miejsce wiersza porady (w przerwie) albo dzieli wiersz z „Teraz: …” (po przerwie), bo na końcu wiersza tytułu
+    zawijała się i ucinała przyciski w oknie 380 × 150.
+  - Skupienie, przerwa: podsumowanie bloku jest też chipem pod przyciskami sesji („+72 ✦ · Cel dnia ✓ · Seria 5 · Poz. 8”), bo karta przerwy może być
+    poniżej linii wzroku; po zakończeniu karta zwija się do nagłówka i wiersza stanu. W focusie z małymi krokami „Teraz:” stoi nad linią celu sesji.
+  - Etykieta minut w kartach to „Skupienie +N” (bez jednostki: iskierka to jednostka profilu, w demo sekunda, z dziennym limitem).
+  - Karta „Funkcje beta” w Ustawieniach jest widoczna także przy wyłączonej becie (ma główny przełącznik); poza nią bez bety nic się nie zmienia.
+
+**Co zmienia:**
+- ADR-013, tabela faz: `Effect::Progress` wstawiony w przejściach; stare efekty w tej samej kolejności (tabela w ARCHITECTURE §6.14).
+- Zasada 2: wyjątki `REWARD_DAY_START_MINUTE`, `FULL_BLOCK_PERCENT`, `BREAK_TAKEN_PERCENT` oraz pola `TimingProfile.spark_unit_secs` / `reward_min_block_secs`.
+- ADR-018 pkt 1–2: atlas póz i lista klatek póz; reakcja na wcześniejszy Stop przy włączonej becie nie jest smutna.
+- ADR-019: próbki nagród na stronie Deweloper; próbki okienek niosą linię nagród.
+- ADR-020: nowa pozycja `rewards` (`PrivacyItemKind::ALL` ma 19 rodzajów).
+- Zasada 11: `rewards.json` (tylko liczby); teksty kroków traktowane jak tytuły celów sesji.
+- CLAUDE.md: zakres „ADR-013 … ADR-022”, Struktura (nowe moduły wyżej), zasada 11 (`rewards.json`).

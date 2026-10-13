@@ -218,6 +218,26 @@ na pełnym ekranie; `--demo` przy działającej aplikacji; zgłoszenie wzorców,
   UI: wiersz „Konto YouTube” w Ustawieniach → Dźwięk, linijka w wyborze muzyki, po zalogowaniu cały YouTube w oknie `media` (`engine.ts`). Teksty w 10 językach.
   DoD (fizyczny Windows, konto z Premium): zalogowanie → okno samo się zamyka, „Zalogowano” → Lofi Girl i zwykły link YouTube grają w oknie `media` bez
   reklam; wylogowanie → „Nie zalogowano”, przy następnym oknie YouTube nie ma znów pytania o ciasteczka; w logach brak nazw kont i wartości ciasteczek.
+- Funkcje beta: iskierki, seria i małe kroki ([ADR-022](DECISIONS.md#adr-022-funkcje-beta-iskierki-seria-i-małe-kroki), 2026-10-13; wszystko za
+  `Config.betaFeatures`, domyślnie wyłączone; bez bety aplikacja działa jak wcześniej):
+  - [x] **R-00** (B, `/sync-contract`) Kontrakt: `RewardsConfig` i enumy, DTO nagród i kroków, 6 komend, `rewards://changed`, pola snapshotu / podsumowania / okienka,
+    `PrivacyItemKind::Rewards`, testy formatu, bindingi.
+  - [x] **R-01** (B) `timing.rs` (`sparkUnitSecs` / `rewardMinBlockSecs` w profilu, stałe `REWARD_DAY_START_MINUTE`, `FULL_BLOCK_PERCENT`, `BREAK_TAKEN_PERCENT`);
+    `config.rs` (`RewardsConfig::normalized`: dni wolne bez powtórzeń, pon..niedz, najwyżej 6; `rewards_active` / `steps_active` / `streak_counting`).
+  - [x] **R-02** (B) `session.rs`: małe kroki (`normalize_steps`, `SetSteps`, `SetStepDone`, przeniesienie otwartych kroków po Stop), `Effect::Progress`
+    w miejscach z ADR-022 (testy `old_effects_keep_their_order` i dokładnej kolejności każdego przejścia); `stats::summarize` kopiuje kroki.
+  - [x] **R-03** (B) `focus-core/src/rewards.rs`: iskierki z limitami, cel dnia, poziomy, seria z dniami wolnymi, wstrzymaniem i dniami oddechu, powrót,
+    niespodzianki z gwarancją perły, „skupienie jest święte”, widok, naklejki (P1); testy wszystkich 19 grup ze specyfikacji.
+  - [x] **R-04** (B) `clock::local_date_time` (`GetLocalTime`) + test pól; `Chime::Pop` / `Sparkle` / `Fanfare` w każdym pakiecie (syntetyczne) + testy.
+  - [x] **R-05** (B) Powłoka: `src-tauri/src/rewards.rs` (wczytanie z naprawą, wątek zapisu, podgląd demo, `pending`, rewizja, zmiana dnia, bramka dźwięków),
+    `effects.rs` (`Progress`, `NotifyContext`, linia nagród i następny krok w okienkach, `SessionSummary.sparks`), `session_actor.rs` (kroki, czyszczenie planu
+    po wyłączeniu, zmiana dnia co 60 s, flush przy wyjściu), `commands.rs` (6 komend, `store_config`, `mark_goal_done`), próbki okienek w `dev.rs`
+    (+ `dev_sample_next_step` w 10 językach), panel prywatności przez usługę nagród.
+  - [x] **R-06** (B) Dokumentacja: ADR-022 (status, powłoka, odstępstwa), ARCHITECTURE §6.14 (tabela faktów, reguły, usługa, `rewards.json`), ten plik.
+    Zmiana CLAUDE.md (zakres „ADR-013 … ADR-022”, struktura, zasada 11) czeka na zatwierdzenie (notatka 2026-10-13, „funkcje beta”).
+  - [~] **R-07…R-13** (B) UI: stan i choreografia, komponenty nagród, miejsca w Skupieniu / Podsumowaniu / historii / okienku / Ustawieniach, maskotka, tokeny
+    w 7 motywach, teksty w 10 językach, sekcja Deweloper; P1: album naklejek, nastrój „razem”, plakietka w nawigacji (równoległa runda).
+  - [~] **R-14…R-15** (B) Atlas póz (`tools/mascot/poses-atlas.*`, `static/mascot/poses-*`, tylko skalowanie) i wyświetlanie póz (równoległa runda).
 
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
@@ -505,3 +525,33 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   (w testach powłoki jest `#[global_allocator]` liczący największą alokację — tylko `#[cfg(test)]`). Po weryfikacji: nowe połączenie ma 100 ms na zapytanie, zanim nowsze mogą je zamknąć
   (twardo najwyżej 1024 otwarte; zalew połączeń nie zamyka już nieprzeczytanego zapytania rozszerzenia), jedno przyjęcie na obrót runtime, błąd `accept` samego połączenia
   bez przerwy i pozwolenie na treść trzymane do końca obsługi zgłoszenia. Proszę o review `bridge/http.rs`.
+- [2026-10-13] (B→A) Kontrakt, funkcje beta: iskierki, seria i małe kroki (ADR-022, R-00; komendy na razie zaślepki `notImplemented` w `commands.rs`):
+  komendy `get_rewards -> RewardsStatus`, `ack_reward_moments { upTo }`, `reset_rewards -> RewardsStatus`, `play_reward_sound { sound: RewardSound }`,
+  `set_session_steps { steps: StepDraft[] }`, `set_step_done { id, done }`; event `rewards://changed` (`RewardsStatus` z rewizją). DTO: `RewardsConfig`, `Weekday`,
+  `DailyGoal`, `CelebrationLevel`, `MicroStep` / `StepDraft` (ręczny `Debug` bez tekstu), `PopupRewards`, `RewardsStatus`, `LevelView`, `TodayView`, `StreakView`,
+  `StreakState`, `DayCell`, `DayMark`, `SessionSparks`, `RewardLine`, `RewardKind`, `Collection`, `SurpriseOdds`, `Rarity`, `StickerId`, `RewardMoment`, `MomentKind`,
+  `RewardSound`. `Config.betaFeatures` (domyślnie `false`) i `Config.rewards` (stary config wczytuje się z wyłączoną betą); `SessionSnapshot.steps`
+  (`#[serde(default)]`, na razie zawsze puste), `SessionSummary.steps` / `sparks` (`#[serde(default, skip_serializing_if)]`: linia historii bez bety bez zmian,
+  w TS `steps?` / `sparks?`), `PopupInfo.rewards` / `nextStep` (na razie `null`). `PrivacyItemKind::Rewards` zaraz po `History` (`ALL` = 19): raport
+  (`rewards.json` + `.bak`, `count` = dni), usuwanie przez nowe `Persistence::clear_rewards` (R-05 przełączy je na `reset_rewards`), eksport z polem `rewards`
+  tylko, gdy plik istnieje (`focus_core::privacy::Export` ma czwarty parametr). UI: pozycja widoczna, gdy plik istnieje albo beta jest włączona; teksty w 10 językach.
+  Uwaga dla R-03: w `api.rs` nazwa `StreakState` to enum widoku (`first | alive | waiting | paused`), więc struktura serii w księdze potrzebuje innej nazwy
+  (np. `StreakLedger`). `Config::normalized` przepuszcza `rewards` bez zmian (`TODO(hackathon)` dla R-01). Szczegóły: ARCHITECTURE §6.14, szkielet ADR-022.
+- [2026-10-13 14:11] (B→A) Kontrakt, strona Deweloper (ADR-019, uzupełnienie): `DevAction` ma dwa nowe warianty, `presentationMode { on }` i `factoryReset`
+  (`dev_trigger` dostaje też `AppHandle`, wywołanie z UI bez zmian). Tryb prezentacji = `TimingProfile::demo()` w działającym procesie (`ActorCmd::SetPresentationMode`,
+  wspólny kod z `UseDemoProfile`; bez zapisu, w trakcie sesji od następnego Startu). Reset fabryczny = `privacy::delete_all` + `Persistence::remove_for_first_start`
+  (`config.json`, pusty `sounds`) + `request_fresh_restart` w `lib.rs` (przez zwykłe wyjście, więc `shutdown` przywraca osłony i kolory; restart bez `--autostart` / `--restore-shields`, czyli z oknem). Druga zmiana: `Config.phasePopups`
+  domyślnie `true` (zapisany wybór zostaje, brak pola = nowa wartość domyślna), a okienko, którego strona się nie załadowała, po limicie bezpieczeństwa
+  pokazuje toast, który zastępuje (`popup.rs`, nigdy oba). Do tego „Inna porada” na karcie „Dobra praktyka” (nowy `src/lib/state/workingTip.svelte.ts`, klucz `idleTips.anotherTip` w 10 językach).
+  Kolejka mowy maskotki (`src/lib/mascot/speech.svelte.ts`): wiadomość niepilna czeka nie tylko na odstęp 8 s, ale też aż bieżąca pokaże ostatnią literę (nie ucina odsłaniania).
+- [2026-10-13] (B→A) Funkcje beta (ADR-022), rdzeń i powłoka (R-01…R-06) wdrożone: zaślepki `notImplemented` usunięte, komendy działają.
+  Rdzeń: `TimingProfile.spark_unit_secs` / `reward_min_block_secs` (literały `TimingProfile { .. }` potrzebują `..normal()`), `Effect::Progress` w
+  wektorach efektów (stare efekty w tej samej kolejności), `Input::SetSteps` / `SetStepDone`, `SessionTotals.steps`, nowy `focus-core/src/rewards.rs`
+  (księga: struktura serii nazywa się `StreakLedger`). Powłoka: `AppState.rewards` / `Effects.rewards` (`RewardsHandle`), `NotifyContext` zamiast `held`
+  w `Effects::dispatch`, `PopupRequest.rewards` / `next_step`, `PopupCmd::Show(Box<PopupRequest>)` (clippy `large_enum_variant`), `ChimeHandle::play_reward`
+  i `reward_sound_wait`, `texts::sample_next_step` (pole `dev_sample_next_step` w 10 plikach `texts/*.rs`). Usuwanie `rewards` w panelu prywatności idzie przez
+  `RewardsHandle::delete_files` (wątek zapisu nagród), `Persistence::clear_rewards` usuwa też `rewards.unreadable-*.json`. Proszę o review `rewards.rs` (rdzeń).
+  Propozycja do CLAUDE.md (do zatwierdzenia przez właściciela): zakres „ADR-013 + ADR-014…022”; w Strukturze `rewards.rs` (iskierki, cel dnia, poziomy,
+  seria, niespodzianki, „skupienie jest święte”), małe kroki w `session.rs`, `src-tauri/src/rewards.rs` (usługa, `rewards.json`, wątek zapisu, podgląd demo),
+  `src/lib/components/rewards/`, `src/lib/rewards/`, `src/lib/state/rewards.svelte.ts`, `static/mascot/poses-*`, `tools/mascot/poses-atlas.*`;
+  zasada 11: `rewards.json` tylko liczby, numery dni i id sesji (także przy wyłączonym `keepHistory`), teksty kroków jak tytuły celów sesji.

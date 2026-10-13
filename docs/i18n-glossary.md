@@ -58,7 +58,7 @@ interfejsu Windows; „(sprawdzić)” = potwierdź w ustawieniach Windows w tym
 | 14 | cel sesji | session goal | Sitzungsziel | objectif de la session | obiettivo della sessione | ціль сесії | цель сессии | objetivo de la sesión | 时段目标 | セッションの目標 | „Ustaw jako cel”, „Zrobione?”. |
 | 15 | przypomnienie (w przerwie) | (break) reminder | Erinnerung | rappel | promemoria (per la pausa) | нагадування (на перерві) | напоминание (на перерыве) | recordatorio (para el descanso) | （休息）提醒 | リマインダー | Własny tekst użytkownika na n-tą przerwę. |
 | 16 | propozycja (na przerwę) | suggestion | Vorschlag | suggestion | suggerimento | ідея (для перерви) | идея (для перерыва) | sugerencia | 建议 | おすすめ | Porada ruchu/odpoczynku; nie „ćwiczenie”, nie „zalecenie”. |
-| 17 | Dobra praktyka | Good practice | Gute Gewohnheit | Bonne pratique | Buona pratica | Корисна звичка | Полезная привычка | Buena práctica | 好习惯 | よい習慣 | Porada dnia na ekranie Skupienie. |
+| 17 | Dobra praktyka | Good practice | Gute Gewohnheit | Bonne pratique | Buona pratica | Корисна звичка | Полезная привычка | Buena práctica | 好习惯 | よい習慣 | Porada dnia na ekranie Skupienie; przycisk „Inna porada” (en „Another tip”) pokazuje inną. |
 | 18 | maskotka (aksolotl) | mascot (axolotl) | Maskottchen (Axolotl) | mascotte (axolotl) | mascotte (assolotto) | талісман (аксолотль) | талисман (аксолотль) | mascota (ajolote) | 吉祥物（美西螈） | マスコット（ウーパールーパー） | Aksolotl w słuchawkach. |
 | 19 | zasobnik | tray | Infobereich | zone de notification | area di notifica | область сповіщень | область уведомлений | área de notificación | 系统托盘 | システムトレイ | Obszar powiadomień obok zegara; użyj nazwy z Windows. |
 | 20 | okienko (FocusMode) | pop-up | Pop-up | fenêtre pop-up | pop-up (di FocusMode) | спливне вікно (FocusMode) | всплывающее окно (FocusMode) | ventana emergente (de FocusMode) | 弹窗 | ポップアップ | Małe okno w rogu przy zmianie fazy; nie „powiadomienie Windows”. |
@@ -91,6 +91,20 @@ interfejsu Windows; „(sprawdzić)” = potwierdź w ustawieniach Windows w tym
 | 47 | tryb prezentacji | demo mode | Demomodus | mode démo | modalità demo | демо-режим | демо-режим | modo demo | 演示模式 | デモモード | Skrócone czasy (40 s / 20 s). |
 | 48 | token (dostępu) | (access) token | (Zugriffs-)Token | jeton (d'accès) | token (di accesso) | токен (доступу) | токен (доступа) | token (de acceso) | （访问）令牌 | （アクセス）トークン | Personal access token itd. — nazwy z danego serwisu. |
 | 49 | Język / Systemowy | Language / System | Sprache / System | Langue / Système | Lingua / Sistema | Мова / Системна | Язык / Системный | Idioma / Sistema | 语言 / 跟随系统 | 言語 / システムに合わせる | Nazwy języków na liście zawsze w ich własnym języku (English, Polski, Deutsch…). |
+| 50 | iskierka / iskierki | spark / sparks | Funke / Funken | étincelle(s) | scintilla / scintille | іскорка / іскорки | искорка / искорки | chispa(s) | 火花 | きらめき | Funkcje beta (ADR-022), blok `rewards` w plikach UI. Znak ✦. |
+| 51 | seria | streak | Serie | série | serie | серія | серия | racha | 连续天数 | 連続記録 | Ikona: bąbelek wody, nigdy płomień. Nigdy „0” ani „utracona seria”. |
+| 52 | cel dnia | daily goal | Tagesziel | objectif du jour | obiettivo del giorno | мета дня | цель дня | meta del día | 每日目标 | 今日の目標 | Iskierki dnia (30 / 60 / 120). Inny niż cel sesji (#14). |
+| 53 | dzień oddechu | rest day | Atempause-Tag | jour de répit | giorno di respiro | день перепочинку | день передышки | día de respiro | 喘息日 | ひと休みの日 | Z „banku”, sam przykrywa dzień roboczy bez celu. |
+| 54 | dzień wolny | day off | freier Tag | jour off | giorno libero | вихідний | выходной | día libre | 休息日 | 休みの曜日 | Dzień tygodnia neutralny dla serii (domyślnie sob. i niedz.). |
+| 55 | poziom | level | Stufe | niveau | livello | рівень | уровень | nivel | 等级 | レベル | Bez nazw poziomów; nigdy nie spada. |
+| 56 | małe kroki | small steps | kleine Schritte | petits pas | piccoli passi | маленькі кроки | маленькие шаги | pasos pequeños | 小步骤 | 小さなステップ | Do 5 na sesję; „Teraz:” w skupieniu. |
+| 57 | bąbelek / perła / złota perła | bubble / pearl / golden pearl | Bläschen / Perle / goldene Perle | bulle / perle / perle dorée | bollicina / perla / perla dorata | бульбашка / перлина / золота перлина | пузырек / жемчужина / золотая жемчужина | burbuja / perla / perla dorada | 泡泡 / 珍珠 / 金珍珠 | あわ / 真珠 / 金の真珠 | Niespodzianki po pełnych blokach (szanse jawne). RU bez „ё”. |
+| 58 | beta | beta | Beta | bêta | beta | бета | бета | beta | 测试版 | ベータ | Plakietka funkcji w fazie testów. |
+| 59 | świętowanie | celebrations | Feiern | célébrations | festeggiamenti | святкування | празднование | celebraciones | 庆祝效果 | お祝い演出 | Pełne / Spokojne / Tylko liczby. |
+
+Teksty nagród (blok `rewards`): bez rodzaju gramatycznego (formy bezosobowe, tryb rozkazujący, „my”), bez słów straty, porażki,
+niedoboru i pośpiechu w żadnym języku. Sprawdza to ręcznie `node tools/i18n-banned-words.mjs` (wyjątki: odpowiedź „Jeszcze nie”
+na cel sesji i poziom świętowania „Tylko liczby”).
 
 ## Wybory tłumaczy
 

@@ -260,14 +260,14 @@ config spoza zakresów → błąd walidacji.
 
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
-> Stan na 2026-10-13 (z ADR-020, panel prywatności, i ADR-021, logowanie do YouTube, oba wdrożone),
-> zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> Stan na 2026-10-13 (z ADR-020, panel prywatności, i ADR-021, logowanie do YouTube, oba wdrożone; ADR-022, funkcje beta: kontrakt z R-00,
+> rdzeń i usługa nagród w powłoce z R-01…R-05), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
 `#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu w ms od epoki Unix
 (`i64` eksportowane jako `number` przez `#[ts(type = "number")]`): `startedAtMs` / `endedAtMs` w `SessionSummary` oraz czasy spotkań i przerw z ADR-016
-(`Meeting.startMs` / `endMs`, `MeetingConflict.breakStartMs` / `breakEndMs` / `nextReminderMs`, `CalendarStatus.lastSyncMs`, `MeetingHoldView.untilMs`)
-i z ADR-017 (`WorkItem.dueMs` / `updatedMs`, `WorkStatus.lastSyncMs`).
+(`Meeting.startMs` / `endMs`, `MeetingConflict.breakStartMs` / `breakEndMs` / `nextReminderMs`, `CalendarStatus.lastSyncMs`, `MeetingHoldView.untilMs`),
+z ADR-017 (`WorkItem.dueMs` / `updatedMs`, `WorkStatus.lastSyncMs`) i z ADR-022 (`RewardMoment.atMs`). `SurpriseOdds` ma pola `u16` (promile).
 Eksport: `cargo test -p focus-core` zapisuje do `TS_RS_EXPORT_DIR` (ustawione w `.cargo/config.toml` względem workspace).
 **CI sprawdza, czy po regeneracji `src/lib/bindings/` nie ma zmian** (`git diff --exit-code`).
 Nazwy komend i eventów są stałymi w `api.rs` (`commands::*`, `events::*`), które test `export_names` zapisuje do `src/lib/bindings/names.ts`
@@ -329,15 +329,21 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `set_work_token` | `source: WorkSource, token: string \| null` | `WorkStatus` | zapisuje token narzędzia w pliku szyfrowanym DPAPI (`work-<źródło>-token.bin`), nigdy w `config.json` ani w logach; `null` usuwa token. Token: 1–4096 widocznych znaków ASCII (inaczej `work.token`, pole `token`); błąd zapisu → `work.tokenSave`. Tokenu nie da się odczytać z powrotem |
 | `set_session_goal` | `goal: SessionGoal \| null` | `()` | cel sesji (pozycja z „Co dalej?”), w każdej fazie, bez efektów (`Input::SetGoal`); widoczny w `SessionSnapshot.goal`, na Stop trafia do `SessionSummary.goal`; `null` czyści |
 | `mark_goal_done` | `sessionId: string, done: boolean` | `()` | odpowiedź na „Zrobione?” w podsumowaniu: `goalDone` w ostatnim podsumowaniu i przy tej sesji w `history.jsonl` (powłoka przepisuje plik atomowo). Sesji nie ma ani w pamięci, ani w pliku → `history.unknownSession`; błąd zapisu → `persistence.history`; przy wyłączonym `keepHistory` zmienia tylko ostatnie podsumowanie |
-| `dev_trigger` | `action: DevAction` | `()` | przycisk strony Deweloper (ADR-019, §6.11): przykładowe okienko, toast fazy albo skrócenie bieżącej fazy; przy wyłączonym `developerMode` → `developerModeOff`. Nic nie zapisuje na dysku i nic nie wysyła |
+| `dev_trigger` | `action: DevAction` | `()` | przycisk strony Deweloper (ADR-019, §6.11): przykładowe okienko, toast fazy, skrócenie bieżącej fazy, tryb prezentacji (profil demo) albo przywrócenie ustawień fabrycznych z restartem; przy wyłączonym `developerMode` → `developerModeOff`. Nic nie wysyła; na dysku zmienia coś tylko reset fabryczny (usuwa dane aplikacji) |
 | `get_privacy_report` | – | `PrivacyReport` | co aplikacja trzyma na tym komputerze, pozycja po pozycji (ADR-020, §6.12): obecność, rozmiar w KiB, liczba wpisów. Nigdy treść tokenu, linku ICS ani ciasteczka |
 | `open_data_folder` | – | `()` | otwiera folder danych aplikacji (`PrivacyReport.folders[0]`) w menedżerze plików |
-| `export_privacy_data` | `path: string` | `()` | jeden plik JSON pod ścieżką z okna zapisu: config bez sekretów, historia, wybory dla spotkań, widziane pozycje „Co dalej?” (format w §6.12). **Nigdy** tokeny, linki ICS, ciasteczka ani inne sekrety. Błąd → `privacy.export` |
+| `export_privacy_data` | `path: string` | `()` | jeden plik JSON pod ścieżką z okna zapisu: config bez sekretów, historia, wybory dla spotkań, widziane pozycje „Co dalej?”, księga nagród `rewards.json`, gdy istnieje (ADR-022) (format w §6.12). **Nigdy** tokeny, linki ICS, ciasteczka ani inne sekrety. Błąd → `privacy.export` |
 | `delete_privacy_data` | `kinds: PrivacyItemKind[]` | `Config` | usuwa wskazane pozycje (tylko `deletable`, inaczej `privacy.notDeletable`, pole `kinds`); trwającą sesję najpierw zatrzymuje (osłony wracają, zasada 7). Zwraca zapisany config (usunięcie własnych dzwonków go zmienia); nowy raport przychodzi jako `privacy://changed`. Błąd → `privacy.delete` |
 | `delete_all_data` | – | `Config` | „Usuń wszystko”: zatrzymuje sesję, usuwa wszystkie pozycje `deletable` i przywraca ustawienia domyślne (zwraca je). Nie rusza niczego poza folderami aplikacji; aplikacja zostaje zainstalowana |
-| `get_youtube_account` | – | `YoutubeAccount` | stan zalogowania do YouTube we wspólnym profilu WebView2 (ADR-021, §6.13); tylko obecność ciasteczek, nigdy ich wartości |
+| `get_youtube_account` | – | `YoutubeAccount` | stan zalogowania do YouTube we wspólnym profilu WebView2 (ADR-021, §6.13); tylko obecność ciasteczek, nigdy ich wartości. Gdy stan jest wciąż nieznany i nic nie sprawdza, uruchamia jeszcze jedno sprawdzenie (wynik jako `youtube://account`; „Sprawdź ponownie” w UI) |
 | `youtube_sign_in` | – | `()` | otwiera (albo aktywuje) widoczne okno logowania `youtube-login` ze stroną Google; zamyka się samo, gdy pojawią się ciasteczka logowania youtube.com. Postęp w `youtube://account` |
 | `youtube_sign_out` | – | `()` | usuwa ciasteczka google.com / youtube.com profilu WebView2 (ciasteczka zgody `SOCS` / `CONSENT` zostają) |
+| `get_rewards` | – | `RewardsStatus` | iskierki, cel dnia, poziom, seria, tydzień i niepotwierdzone momenty (funkcje beta, ADR-022, §6.14); okno główne |
+| `ack_reward_moments` | `upTo: number` | `()` | usuwa z `pending` momenty o `id <= upTo` (zagrane albo pokazane); tylko okno główne, okienko `popup` nigdy nie potwierdza |
+| `reset_rewards` | – | `RewardsStatus` | „Zacznij od nowa”: nowa księga z nowym ziarnem, podgląd demo znika; historii sesji nie rusza. UI najpierw pyta |
+| `play_reward_sound` | `sound: RewardSound` | `()` | krótki dźwięk nagrody (`pop` / `sparkle` / `fanfare`); no-op, gdy nagrody są nieaktywne, dźwięki nagród wyłączone, `celebrations: numbersOnly` albo użytkownik prezentuje; czeka, aż skończy się dzwonek fazy |
+| `set_session_steps` | `steps: StepDraft[]` | `()` | zastępuje małe kroki nadchodzącej albo trwającej sesji (każda faza); `id` = istniejący krok (zachowuje `done`), `null` = nowy. Błędy: `stepsOff` (małe kroki wyłączone), `tooManySteps` (pole `steps`, więcej niż 5). Nowy plan przychodzi w `session://snapshot`. Tekstów kroków nikt nie loguje |
+| `set_step_done` | `id: number, done: boolean` | `()` | odhacza / odznacza krok (Focus albo Przerwa, także w pauzie); w Idle albo dla nieznanego `id` no-op; `stepsOff` przy wyłączonych krokach |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -370,6 +376,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `work://changed` | `WorkStatus` | po każdej synchronizacji narzędzi pracy, zmianie tokenu i zmianie wstrzymanych pozycji (`heldCount`, `unseen`) |
 | `privacy://changed` | `PrivacyReport` | po każdej zmianie zapisanych danych (ponowny skan z opóźnieniem, wysyłany tylko przy innym wyniku) oraz na początku i końcu usuwania albo eksportu (`busy`) (ADR-020) |
 | `youtube://account` | `YoutubeAccount` | po pierwszym sprawdzeniu ciasteczek, przy otwarciu i zamknięciu okna logowania, po zalogowaniu, wylogowaniu, odmowie Google (`browserRejected`) i po usunięciu danych przeglądarki (ADR-021) |
+| `rewards://changed` | `RewardsStatus` | po każdym zastosowanym fakcie sesji, potwierdzeniu, resecie, zmianie configu, zmianie dnia nagród i po wczytaniu (ADR-022); przy wyłączonych funkcjach beta nigdy z `active: true` |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -386,6 +393,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `WorkStatus` | `get_work` (także wynik `refresh_work` i `set_work_token`) | `work://changed` |
 | `PrivacyReport` | `get_privacy_report` | `privacy://changed` |
 | `YoutubeAccount` | `get_youtube_account` | `youtube://account` |
+| `RewardsStatus` | `get_rewards` (także wynik `reset_rewards`) | `rewards://changed` |
 
 Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
 1. **najpierw** rejestruje `listen(...)`,
@@ -416,11 +424,32 @@ pub struct SessionSnapshot {
     pub meeting_hold: Option<MeetingHoldView>, // spotkanie przedłuża focus albo wstrzymuje przerwę (do Wznów)
     #[serde(default)]
     pub goal: Option<SessionGoal>,  // cel sesji z „Co dalej?” (ADR-017); widoczny w Idle i w trakcie sesji, czyszczony na Stop
+    #[serde(default)]
+    pub steps: Vec<MicroStep>,      // małe kroki nadchodzącej (Idle) albo trwającej sesji (funkcje beta, ADR-022); puste przy wyłączonych krokach
 }
 ```
 
 Odtwarzacz (osadzony i okno YouTube) milknie, gdy `musicMuted`, i wraca do zwykłego zachowania, gdy flaga zgaśnie. Wstrzymana przerwa
 (`pauseAtBreak`) ma już `paused: true`, więc muzyka stoi jak w każdej pauzie.
+
+**Kto włączył muzykę** (odtwarzacz, tylko frontend: `MusicIntent` w `src/lib/state/music.svelte.ts`, stosuje `MusicPlayer.svelte`;
+kontrakt IPC bez zmian). Przycisk Odtwórz/Wstrzymaj w pasku odtwarzacza działa także bez sesji (każde źródło, także okno YouTube
+po zalogowaniu; „Następny” i głośność też). Stan jest tylko w pamięci, więc start aplikacji nigdy sam nie włącza muzyki.
+
+| Stan | Skąd | Start | Stop |
+|---|---|---|---|
+| `off` (cisza) | start aplikacji; Stop muzyki sesji | → `session`: sesja włącza muzykę (nowe tasowanie playlisty, jak dotąd) | – |
+| `session` | Start z `off` | – | → `off`: muzyka staje (playlista od nowa, jak dotąd) |
+| `user` | Odtwórz w pasku (w Idle albo w trakcie sesji) | gra dalej bez restartu i bez zmiany utworu; gdy nic nie gra (wszystkie pozycje zawiodły, okno YouTube zamknięte) → `session`, jak z `off` | gra dalej; jeśli sesja trzymała ją w tej chwili w ciszy (niżej) → `off`, więc Stop nigdy nie włącza muzyki |
+| `userPaused` | Wstrzymaj w pasku | zostaje w ciszy | zostaje w ciszy |
+
+Pauza w pasku zawsze wygrywa: wstrzymana przez użytkownika muzyka milczy przez zmiany faz, Start i Stop, aż użytkownik naciśnie Odtwórz.
+W trakcie sesji sesja może trzymać muzykę w ciszy bez względu na to, kto ją włączył: Pauza, przerwa przy `music.pauseDuringBreak`
+i wyciszenie na spotkanie (`musicMuted`); sama ją potem przywraca (Wznów, koniec przerwy, koniec spotkania). Odtwórz naciśnięte w czasie
+takiej ciszy gra mimo niej (`override`), aż ta cisza się skończy; następna znów wycisza. Zmiana źródła w trakcie grania (wybór źródła
+jest na stronie Idle) trafia do playlisty dopiero po 0,8 s bez kolejnych zmian, więc wpisywanie linku nie restartuje muzyki przy każdym
+znaku ani nie próbuje odtworzyć połowy adresu. Okno `popup` dalej nie ma odtwarzacza.
+Zasobnik nie ma pozycji muzyki (wymagałaby nowego eventu do WebView, czyli zmiany kontraktu), a `navigator.mediaSession` nie jest używane.
 
 | Okno | Zawartość | Uprawnienia IPC |
 |---|---|---|
@@ -471,7 +500,7 @@ więc kolumna „Uprawnienia IPC” dla `popup` opisuje, czego to okno używa, a
 `Config`, tylko pola dodane przez ADR-014 (wartości domyślne; `tint.mode` z ADR-015):
 
 ```json
-{ "language": "system", "closeToTray": null, "phasePopups": false,
+{ "language": "system", "closeToTray": null, "phasePopups": true,
   "tint": { "enabled": false, "startMinutes": 1080, "endMinutes": 540, "strength": 45, "transitionMinutes": 30, "mode": "nightLight" },
   "shields": { "closeLaunchers": false, "launchers": ["steam", "epic", "gog", "ubisoft", "ea", "battleNet", "riot"] } }
 ```
@@ -668,6 +697,32 @@ jest po jednej pozycji na każdy `PrivacyItemKind`, w jego kolejności):
 Argumenty: `export_privacy_data` → `{ "path": "C:\\Users\\ola\\Documents\\focusmode-export.json" }`,
 `delete_privacy_data` → `{ "kinds": ["history", "meetingChoices", "browserData"] }`.
 
+`Config`, tylko pola dodane przez ADR-022 (wartości domyślne; stary config wczytuje się z wyłączonymi funkcjami beta):
+
+```json
+{ "betaFeatures": false,
+  "rewards": { "enabled": true, "microSteps": true, "surprises": true, "sounds": true, "celebrations": "full",
+               "focusCompanion": false, "showStreak": true, "streakPaused": false, "dailyGoal": "light", "restWeekdays": ["sat", "sun"] } }
+```
+
+`SessionSummary`, tylko pola dodane przez ADR-022 (sesja z dwoma krokami przy aktywnych nagrodach). Oba pola znikają z JSON-a, gdy są puste
+(`skip_serializing_if`), więc linia `history.jsonl` bez funkcji beta wygląda jak wcześniej, a w TS są opcjonalne (`steps?`, `sparks?`):
+
+```json
+{ "steps": [ { "id": 1, "text": "Napisz tytuł", "done": true }, { "id": 2, "text": "Wypisz 3 rzeczy", "done": false } ],
+  "sparks": 138 }
+```
+
+`PopupInfo` (start przerwy przy aktywnych nagrodach; pola `rewards` i `nextStep` mają `#[serde(default)]`):
+
+```json
+{ "revision": 21, "kind": "breakStarted", "cycle": 1, "phaseSecs": 900, "launchers": [], "reminder": null, "meeting": null, "workCount": 0,
+  "sticky": false, "rewards": { "sparks": 72, "dailyGoal": true, "streak": 5, "levelUp": 8, "surprise": "pearl" }, "nextStep": null }
+```
+
+Argumenty komend funkcji beta: `ack_reward_moments` → `{ "upTo": 4 }`, `play_reward_sound` → `{ "sound": "sparkle" }`,
+`set_session_steps` → `{ "steps": [ { "id": 1, "text": "Napisz tytuł" }, { "id": null, "text": "Otwórz plik" } ] }`, `set_step_done` → `{ "id": 1, "done": true }`.
+
 ### 6.5 Lista blokowanych stron (`websiteblacklist.txt`, ADR-013 pkt 4)
 
 Lista stron do blokowania nie jest częścią `Config`: **jedynym źródłem jest plik `websiteblacklist.txt`** w katalogu konfiguracji
@@ -698,7 +753,7 @@ Nowe pola `Config` (stary `config.json` bez nich wczytuje się z wartościami do
 |---|---|---|---|
 | `language` | `Language` | `system` | język UI, zasobnika, okienek i toastów: `system` albo `en`, `pl`, `de`, `fr`, `it`, `uk`, `ru`, `es`, `zh`, `ja`; `system` = język wyświetlania systemu (`get_system_language`), a gdy go nie obsługujemy, `en`. Do przebiegu tłumaczeń teksty są po polsku |
 | `closeToTray` | `boolean \| null` | `null` | X na oknie głównym: `true` chowa do zasobnika, `false` kończy aplikację, `null` = zapytaj przy pierwszym X (`app://close-requested` → `resolve_close`) |
-| `phasePopups` | `boolean` | `false` | okienka FocusMode (okno `popup`) zamiast toastów Windows; włącza je też `resolve_close { toTray: true }` |
+| `phasePopups` | `boolean` | `true` | okienka FocusMode (okno `popup`) zamiast toastów Windows (nigdy oba; toast tylko przy wyłączonych okienkach albo gdy okna nie da się pokazać); włącza je też `resolve_close { toTray: true }`. Do 2026-10-13 domyślnie `false`: zapisany `config.json` ma to pole, więc wybór użytkownika zostaje; brak pola (plik sprzed ADR-014 albo edytowany ręcznie) daje nową wartość domyślną, jak każde brakujące pole |
 | `tint.enabled` | `boolean` | `false` | ciepło ekranu według pory dnia (mechanizm: `tint.mode`, §6.7; overlay z ADR-014 usunięty przez ADR-015) |
 | `tint.startMinutes` | `number` | `1080` (18:00) | minuta doby, od której odcień narasta; 0..1439 |
 | `tint.endMinutes` | `number` | `540` (09:00) | minuta doby, w której ekran wraca do normy; 0..1439, różna od `startMinutes` (okno może przechodzić przez północ) |
@@ -1066,16 +1121,20 @@ skrócona faza w `session://snapshot`. `DevAction` to enum z tagiem `type` (`#[s
 | `popup` | `kind: PopupKind`, `leadMinutes: number \| null`, `sticky: boolean` | okienko faz z przykładowym `PopupInfo` od powłoki: cykl i długość fazy z bieżącego `TimingProfile`, przykładowe przypomnienie, przykładowe spotkanie (id z prefiksem `dev-sample-`) dla `meetingReminder` / `breakHeld`, `leadMinutes` 30 / 20 / 10 (`null` = 30; przy 10 bez „przypomnij później”), Steam + Epic dla `launchersClosed`, `workCount` 3 dla `workDigest`. Pokazuje się od razu, także w czasie prezentacji (bez czekania z §6.10) |
 | `toast` | `phase: Phase` | ten sam toast Windows co przy prawdziwej zmianie fazy (`focus` / `break`; `idle` to błąd) |
 | `setRemaining` | `secs: number` | tylko w trwającej sesji (w Idle → `notRunning`): bieżąca faza kończy się za `secs` s, przycięte do 1..=długość fazy, przez nowy `Input` w core (`Input::DevSetRemaining`); zegar monotoniczny i profil czasów bez zmian |
+| `presentationMode` | `on: boolean` | tryb prezentacji: profil `TimingProfile::demo()` (ten sam co `--demo` / `FOCUSMODE_DEMO=1`, 40 s / 20 s) albo profil z configu, do końca działania procesu (nic się nie zapisuje; restart = zwykłe czasy, chyba że z `--demo`). W Idle od razu (`SessionSnapshot.demo` w snapshocie), w trwającej albo wstrzymanej sesji dopiero od następnego Startu: bieżąca sesja zachowuje swój profil i długości faz (`ActorCmd::SetPresentationMode`, zmienia tylko profil Idle). Sesje w trybie prezentacji mają `demo: true`, jak przy `--demo` |
+| `factoryReset` | — | reset fabryczny: to samo co `delete_all_data` (ta sama ścieżka kodu, `privacy::delete_all`: najpierw Stop i zejście osłon), potem `config.json` i pusty folder `sounds` (`Persistence::remove_for_first_start`), potem restart aplikacji (`request_fresh_restart` w `lib.rs`: przez zwykłe wyjście, więc osłony i kolory ekranu wracają; nowy proces startuje po zwolnieniu blokady single-instance, bez `--autostart` i `--restore-shields`, więc z oknem głównym jak pierwsze uruchomienie; `--demo` zostaje). Pliki przywracania osłon i odcienia usuwają ich wątki po przywróceniu (zasada 7); niedokończone przywrócenie kończy następny start. Nic poza folderami aplikacji (zainstalowana aplikacja, folder rozszerzenia i foldery z muzyką zostają). Błąd usuwania → `privacy.delete` i bez restartu |
 
 Kody błędów: `developerModeOff` (tryb wyłączony, każda akcja), `notRunning` i `dev.invalidPhase` (`toast` z `idle`, `field: "phase"`). `set_meeting_choice` dla spotkania `dev-sample-…`
 jest przyjmowane jako no-op: okienko próbki się zamyka, a wynik to bieżący `CalendarStatus` (nic nie trafia do `meeting-choices.json` ani do sesji); „Pomiń fazę” (`popup_action`)
 na przykładowym okienku tylko je zamyka (decyduje wątek okienek: przycisk w ciągu 500 ms od pojawienia się nowego okienka należy do poprzedniego). Przykładowe okienka nigdy nie czekają w kolejce: zastępują inną próbkę, odkładają prawdziwe pytanie o spotkanie albo paczkę „Co dalej?”
 jak każde okienko, a prawdziwe okienko zastępuje próbkę. Próbka `sticky` nie ma limitu czasu: powłoka co 5 s sprawdza tylko, czy jej okno istnieje (zamknięte Alt+F4 → odłożone okienka wracają), a wyłączenie `developerMode` ją zamyka. Powłoka: `src-tauri/src/dev.rs` (próbki), `popup.rs` (`PopupRequest.sample` / `sticky`), `ActorCmd::DevSetRemaining`. Przykłady argumentów: `{ "action": { "type": "popup", "kind": "meetingReminder", "leadMinutes": 10, "sticky": true } }`,
-`{ "action": { "type": "toast", "phase": "break" } }`, `{ "action": { "type": "setRemaining", "secs": 5 } }`.
+`{ "action": { "type": "toast", "phase": "break" } }`, `{ "action": { "type": "setRemaining", "secs": 5 } }`, `{ "action": { "type": "presentationMode", "on": true } }`, `{ "action": { "type": "factoryReset" } }`.
 
 Frontend: trasa `src/routes/(app)/dev/+page.svelte`, stan `src/lib/state/dev.svelte.ts` (próbki i „Clean screenshots” tylko w pamięci; Ctrl+Shift+D przywraca
 ukrytą zakładkę), próbki danych w `src/lib/state/samples.ts` (budowane w chwili kliknięcia, id `dev-sample-…`, linki `https://dev-sample.invalid/`, których
 aplikacja nie otwiera; magazyny podsumowania, kalendarza, „Co dalej?” i sesji mają warstwę `sample` nad prawdziwą, a prawdziwe podsumowanie nowej sesji ją usuwa), teksty strony Deweloper tylko po angielsku w `src/lib/i18n/dev.ts` (poza typem `Strings`; przełącznik w Ustawieniach i nazwa zakładki są w 10 językach).
+Przełącznik „Presentation mode” (karta Session) pokazuje stan z `SessionSnapshot.demo`, a przełączony w trakcie sesji — zapamiętaną w pamięci wartość dla następnego Startu
+(z dopiskiem, że bieżąca sesja zachowuje długości). „Factory reset…” (karta Window & app, styl `btn-danger`) otwiera `ConfirmDialog` z listą tego, co znika; bez wpisywania potwierdzenia.
 
 ### 6.12 Panel prywatności (ADR-020)
 
@@ -1102,6 +1161,7 @@ i `app_local_data_dir` (`%LOCALAPPDATA%\com.focusmode.app`: profil WebView2 `EBW
 |---|---|---|---|
 | `settings` | `config.json` + `config.json.bak` | – | nie pojedynczo; `delete_all_data` zapisuje `Config::default()` jak `update_config` i usuwa `.bak` |
 | `history` | `history.jsonl` (`includesTitles`, gdy któraś sesja ma tytuły okien) | sesje | jak `clear_history` (plik + ostatnie podsumowanie) |
+| `rewards` | `rewards.json` + `rewards.json.bak` i odłożone `rewards.unreadable-*.json` (funkcje beta, ADR-022): liczby, numery dni i id sesji, bez tekstów | dni (z `rewards.json`) | jak `reset_rewards` (nowa księga w pamięci), przez wątek zapisu nagród, więc żaden zaległy zapis nie przywróci pliku; usuwa też odłożone `rewards.unreadable-*.json`. Nowego pliku nie zapisuje: pozycja wraca dopiero z następną iskierką |
 | `meetingChoices` | `meeting-choices.json` (id spotkań i wybory, bez tematów) | wybory | plik + wybory w pamięci modułu kalendarzy (blokady spotkań znikają z planu) |
 | `workSeen` | `work-seen.json` (id pozycji, bez tytułów) | id | plik + pamięć modułu „Co dalej?”; bieżące pozycje trafiają do znanych (`Announcer::remember`), więc nie wracają jako okienko `workDigest`, a na liście są „nowe”, dopóki użytkownik jej nie obejrzy (wtedy plik wraca) |
 | `microsoftToken` | `teams-token.bin` (DPAPI): logowanie Microsoft dla Teams i kalendarza | – | jak `teams_disconnect` (status Teams przywrócony wcześniej przez Stop) |
@@ -1135,7 +1195,8 @@ Zasady:
   "config": { "focusMinutes": 45, "...": "...", "calendar": { "...": "...", "googleClientSecret": "" } },
   "history": [ { "sessionId": "1760350000000-12345-1", "...": "..." } ],
   "meetingChoices": "zawartość meeting-choices.json albo null",
-  "workSeen": "zawartość work-seen.json albo null" }
+  "workSeen": "zawartość work-seen.json albo null",
+  "rewards": "zawartość rewards.json (pole tylko, gdy plik istnieje; ADR-022)" }
 ```
 
   `config` bez sekretów: `calendar.googleClientSecret` puste. Tokeny, linki ICS, ciasteczka, dźwięki i logi **nigdy** nie trafiają do eksportu
@@ -1155,6 +1216,7 @@ Zasady:
   (skutek pozycji + „sesja zostanie zatrzymana”, gdy trwa); „Usuń wszystko” wymienia obecne pozycje i ustawienia (`ConfirmDialog.list`).
   Pozycja `browserData` ma znaczek „Zalogowano do YouTube” (`strings.youtube.signedIn`), gdy `YoutubeAccount` mówi, że w tych ciasteczkach
   jest logowanie do YouTube (ADR-021, §6.13); stan bierze z `state/youtubeAccount.svelte.ts`, raport prywatności go nie powiela.
+  Pozycja `rewards` (ADR-022) jest na liście, gdy `rewards.json` istnieje albo funkcje beta są włączone; bez tego panel wygląda jak przed ADR-022.
 
 ### 6.13 Logowanie do YouTube dla Premium (ADR-021)
 
@@ -1183,7 +1245,8 @@ Moduł powłoki: `src-tauri/src/youtube_account.rs` (`YoutubeAccountHandle` w `A
   `youtube.com` z subdomenami (też `accounts.youtube.com` i `consent.youtube.com`) i `accounts.google.<kraj>` (`google.pl`, `google.co.uk`,
   `google.com.au`; ta sama reguła doszła do okna `media`, bo zalogowana strona może odświeżać logowanie przez te hosty); reszta i każde nowe okno →
   przeglądarka systemowa (`window_util::open_link_externally`, najwyżej raz na 2 s na okno, w logu tylko host). Okno ma zwykłe X (bez chowania).
-  Ponowne `youtube_sign_in` aktywuje otwarte okno, a po odmowie Google wraca na stronę logowania i zeruje `browserRejected`.
+  Ponowne `youtube_sign_in` aktywuje otwarte okno, a po odmowie Google wraca na stronę logowania i zeruje `browserRejected`
+  (przycisk w wierszu nazywa się wtedy „Zacznij logowanie od nowa”, a nie „Pokaż okno logowania”).
 - **Wykrycie zalogowania**: co 1,5 s zadanie async czyta na wątku blokującym (odczyt ciasteczek WebView2 na głównym wątku się zakleszcza) adres strony
   okna (`url()`) i nazwy ciasteczek dla `https://www.youtube.com/` (`cookies_for_url`); wartości są odrzucane od razu, porównywane są **tylko nazwy**.
   Któraś z `LOGIN_INFO`, `SAPISID`, `__Secure-3PAPISID` oznacza zalogowanie; gdy do tego przepływ wrócił na
@@ -1196,8 +1259,19 @@ Moduł powłoki: `src-tauri/src/youtube_account.rs` (`YoutubeAccountHandle` w `A
   wykrywana w `on_navigation` i w odpytywaniu `url()`, bo formularz Google bywa SPA) → `browserRejected: true`; okno zostaje, żeby było widać wyjaśnienie
   Google, a UI pokazuje jedno zdanie do następnej próby.
 - **Start aplikacji** (poza `--restore-shields`, `YoutubeAccountHandle::start`): sprawdzenie nazw ciasteczek przez okno główne na wątku blokującym (do 5 prób co 3 s,
-  gdy WebView2 jeszcze nie odpowiada) → `known: true`. Do tego czasu wiersz w Ustawieniach pokazuje „Sprawdzam…” (logowanie już działa), a
-  odtwarzacz zachowuje się jak bez logowania.
+  gdy WebView2 jeszcze nie odpowiada, każda najwyżej 10 s) → `known: true`. Do tego czasu wiersz w Ustawieniach pokazuje „Sprawdzam…” (logowanie już działa), a
+  odtwarzacz zachowuje się jak bez logowania. Gdy po 20 s od startu stan dalej jest nieznany (wszystkie próby zawiodły), wiersz mówi jednym zdaniem
+  „Stan logowania do YouTube nieznany”, zostawia „Zaloguj się do YouTube” i daje cichy przycisk „Sprawdź ponownie”: woła `get_youtube_account`,
+  które przy nieznanym stanie uruchamia jeszcze jedno sprawdzenie (jedno naraz); bez wyniku w 12 s wiersz wraca do „nieznany”.
+- **Odtwarzanie po zalogowaniu** (okno `media` nie zgłasza zdarzeń odtwarzania, więc postęp załatwia adres strony): ciąg pojedynczych filmów z listy
+  (od bieżącego, w kolejności po tasowaniu, najwyżej 50) okno otwiera jako `https://www.youtube.com/watch_videos?video_ids=A,B,…` (YouTube odpowiada 303
+  na tymczasową playlistę `/watch?v=A&list=TLGG…` dokładnie tych filmów i sam po niej przechodzi), linki do playlist zostają przy `list=`, a kontroler
+  w `media_window.rs` zapętla stronę `/watch` (po ostatnim filmie zatrzymuje się na początku, na 1,5 s ustawia tytuł-znacznik `END_TITLE`, który
+  powłoka zamienia na chwilowy brak tytułu, i dopiero potem `playVideoAt(0)` / `playVideo()`; gdy autoodtwarzanie YouTube zdążyło uciec,
+  raz na dokument `location.replace` na adres otwarcia). `engine.ts` śledzi postęp po tytule strony z `media://window` („n z m”, „Następny” od
+  właściwej pozycji); nowy tytuł pierwszego filmu albo chwila bez tytułu to „pełny obieg”, po którym lista z innymi pozycjami przechodzi dalej
+  (także pojedynczy film, którego tytuł się nie zmienia). „Następny” z ostatniego filmu kolejki wracający na jej początek ładuje ją od nowa
+  (ten sam adres z fragmentem `#n`, którego przeglądarka nie wysyła do YouTube), a Stop zamyka okno z kolejką.
 - **Wylogowanie**: zamyka okno logowania, potem `cookies()` okna głównego (cały profil) i `delete_cookie` dla domen `youtube.com`, `google.com`,
   `google.<kraj>` i ich subdomen, **poza** `SOCS` i `CONSENT` (wybór ciasteczek zostaje, więc muzyka nie trafia znów na okno zgody). WebView2 usuwa po
   nazwie, ścieżce i *dokładnej* domenie (`.youtube.com` ≠ `youtube.com`), a `cookie::Cookie::domain()` (0.18), którą Tauri podaje do WebView2, ucina
@@ -1217,6 +1291,146 @@ Moduł powłoki: `src-tauri/src/youtube_account.rs` (`YoutubeAccountHandle` w `A
   iframe, okno dla odmów osadzania); wylogowanie nie przerywa bieżącej pozycji. Efekt `setSignedIn` w `MusicPlayer.svelte` stoi przed efektem playlisty,
   więc znany stan konta kieruje już pierwszą pozycję nowej playlisty.
 - Logi: tylko hosty i zdarzenia („signed in”, „signed out”, „rejected”), nigdy nazwy kont, adresy z parametrami ani wartości ciasteczek.
+
+### 6.14 Funkcje beta: iskierki, seria i małe kroki (ADR-022)
+
+Kontrakt z R-00, małe kroki w sesji (R-02, `session.rs`), reguły w `focus-core/src/rewards.rs` (R-03), dźwięki i data lokalna (R-04) oraz usługa nagród
+w powłoce (R-05, `src-tauri/src/rewards.rs`). Wszystko działa tylko przy `Config.betaFeatures` (domyślnie wyłączone); bez tego aplikacja zachowuje się jak
+przed ADR-022: fakty sesji są odrzucane, `rewards://changed` nigdy nie ma `active: true`, okienka nie mają linii nagród, linie `history.jsonl` nie mają
+`sparks`, a `set_session_steps` / `set_step_done` odpowiadają `stepsOff`.
+
+```rust
+pub struct RewardsStatus {
+    pub revision: u32, pub active: bool /* betaFeatures && rewards.enabled */, pub preview: bool /* księga podglądu demo */,
+    pub total_sparks: u32, pub level: LevelView /* { level, into, span } */,
+    pub today: TodayView /* { date: "RRRR-MM-DD", sparks, goal, goalMet, pondFull } */,
+    pub streak: StreakView, pub week: Vec<DayCell> /* 7, pon..niedz */, pub session: Option<SessionSparks>,
+    pub collection: Collection /* { bubbles, pearls, golden } */, pub odds: SurpriseOdds, pub stickers: Vec<StickerId> /* P1 */,
+    pub pending: Vec<RewardMoment> /* najstarsze pierwsze, najwyżej 8 */,
+}
+pub struct StreakView { pub state: StreakState /* first | alive | waiting | paused */, pub days: u32 /* 0 dla first/waiting: UI go nie pokazuje */,
+    pub best: u32, pub active_days: u32, pub today_counted: bool, pub rest_bank: u32, pub rest_bank_max: u32, pub rest_reserved: u32,
+    pub next_rest_in: u32 /* 1..=5 */ }
+pub struct DayCell { pub date: String, pub mark: DayMark /* goal | rest | neutral | quiet | today | future */ }
+pub struct SessionSparks { pub session_id: String, pub sparks: u32, pub lines: Vec<RewardLine> }
+pub struct RewardLine { pub kind: RewardKind, pub sparks: u32, pub count: u32 }
+// RewardKind: start | firstOfDay | plan | focusTime | fullBlock | breakTaken | backFromBreak | step | allSteps | goalDone | dailyGoal | comeback | surprise
+pub struct SurpriseOdds { pub none_permille: u16, pub bubble_permille: u16, pub pearl_permille: u16, pub golden_permille: u16, pub pity_blocks: u32 }
+// Rarity: bubble | pearl | goldenPearl
+// StickerId (P1): firstStep | dailyGoal | planner | goodBreak | comeback | amazed | restDay | together | threeDays | goldenPearl | level5
+pub struct RewardMoment { pub id: u32, pub kind: MomentKind, pub at_ms: i64, pub sparks: u32, pub session_total: u32, pub lines: Vec<RewardLine>,
+    pub surprise: Option<Rarity>, pub daily_goal: bool, pub comeback: bool, pub streak: Option<u32>, pub new_streak: bool, pub milestone: Option<u32>,
+    pub rest_days_used: u32, pub rest_day_earned: bool, pub level_up: Option<u32>, pub levels_gained: u32, pub pond_full: bool,
+    pub stickers: Vec<StickerId>, pub first_step: bool, pub quiet: bool, pub preview: bool, #[serde(default)] pub sample: bool }
+// MomentKind: start | step | allSteps | backFromBreak | breakStart | sessionEnd | goalDone | update;  RewardSound: pop | sparkle | fanfare
+pub struct MicroStep { pub id: u32, pub text: String, pub done: bool }   // Debug drukuje tylko długość tekstu
+pub struct StepDraft { pub id: Option<u32>, pub text: String }           // jw.
+pub struct PopupRewards { pub sparks: u32, pub daily_goal: bool, pub streak: Option<u32>, pub level_up: Option<u32>, pub surprise: Option<Rarity> }
+// Config: beta_features: bool, rewards: RewardsConfig { enabled, micro_steps, surprises, sounds, celebrations: CelebrationLevel (full | calm | numbersOnly),
+//         focus_companion, show_streak, streak_paused, daily_goal: DailyGoal (light | regular | strong), rest_weekdays: Vec<Weekday> (mon..sun) }
+```
+
+`RewardsStatus` (seria 6 dni, dziś cel zrobiony, przerwa po pierwszym bloku sesji; jeden moment czeka na okno główne):
+
+```json
+{ "revision": 31, "active": true, "preview": false, "totalSparks": 1834,
+  "level": { "level": 12, "into": 74, "span": 280 },
+  "today": { "date": "2026-10-13", "sparks": 62, "goal": 30, "goalMet": true, "pondFull": false },
+  "streak": { "state": "alive", "days": 6, "best": 14, "activeDays": 41, "todayCounted": true,
+              "restBank": 1, "restBankMax": 3, "restReserved": 0, "nextRestIn": 2 },
+  "week": [ { "date": "2026-10-12", "mark": "goal" }, { "date": "2026-10-13", "mark": "goal" }, { "date": "2026-10-14", "mark": "future" },
+            { "date": "2026-10-15", "mark": "future" }, { "date": "2026-10-16", "mark": "future" }, { "date": "2026-10-17", "mark": "future" },
+            { "date": "2026-10-18", "mark": "future" } ],
+  "session": { "sessionId": "1760342400000-4242-3", "sparks": 72,
+               "lines": [ { "kind": "start", "sparks": 5, "count": 1 }, { "kind": "firstOfDay", "sparks": 5, "count": 1 },
+                          { "kind": "plan", "sparks": 2, "count": 1 }, { "kind": "focusTime", "sparks": 45, "count": 45 },
+                          { "kind": "fullBlock", "sparks": 10, "count": 1 }, { "kind": "surprise", "sparks": 5, "count": 1 } ] },
+  "collection": { "bubbles": 12, "pearls": 3, "golden": 0 },
+  "odds": { "nonePermille": 500, "bubblePermille": 320, "pearlPermille": 150, "goldenPermille": 30, "pityBlocks": 4 },
+  "stickers": [],
+  "pending": [ { "id": 3, "kind": "breakStart", "atMs": 1760345100000, "sparks": 60, "sessionTotal": 72,
+                 "lines": [ { "kind": "focusTime", "sparks": 45, "count": 45 }, { "kind": "fullBlock", "sparks": 10, "count": 1 },
+                            { "kind": "surprise", "sparks": 5, "count": 1 } ],
+                 "surprise": "bubble", "dailyGoal": true, "comeback": false, "streak": 6, "newStreak": false, "milestone": null,
+                 "restDaysUsed": 0, "restDayEarned": false, "levelUp": null, "levelsGained": 0, "pondFull": false, "stickers": [],
+                 "firstStep": false, "quiet": false, "preview": false, "sample": false } ] }
+```
+
+Kody błędów: `stepsOff`, `tooManySteps` (pole `steps`), `rewards.load` i `rewards.save` (oba jako `app://error`; `rewards.load` tylko przy włączonych
+nagrodach, `rewards.save` najwyżej raz na uruchomienie).
+Bez zmian w `capabilities/*.json`: okienko `popup` czyta nagrody tylko z `PopupInfo` i nigdy nie potwierdza momentów. W TS: `api.ts` ma `getRewards`,
+`ackRewardMoments`, `resetRewards`, `playRewardSound`, `setSessionSteps`, `setStepDone`, `subscribeRewards` (ADR-012) i `onRewardsChanged`.
+
+**Fakty sesji (`Effect::Progress(ProgressFact)`, `session.rs`).** Wstawione w wektory efektów ADR-013; pozostałe efekty zachowują kolejność
+(test `old_effects_keep_their_order`, a każdy wiersz ma test dokładnej kolejności z `Progress`). Fakty niosą tylko liczby i id, nigdy tekstów;
+`ranSecs` to czas biegu tylko tej fazy (bez pauz i luk snu, z przedłużeniem przez spotkanie).
+
+| Przejście | Efekty |
+|---|---|
+| Start | PhaseChanged, Shields(true), Tracking(true), Chime(FocusStart), **Progress(Started { steps })** |
+| Focus → Przerwa (termin / Pomiń) | PhaseChanged, Tracking(false), Shields(false), Chime(BreakStart), **Progress(FocusEnded { cycle, ranSecs, deadline \| skipped, held: false })**, Notify(BreakStarted) |
+| Focus → wstrzymana przerwa | jw. z `held: true` i Notify(BreakHeld) |
+| Przerwa → Focus (termin / Pomiń) | PhaseChanged, Chime(FocusStart), **Progress(BreakEnded { cycle, ranSecs })**, Notify(FocusStarted), Shields(true), Tracking(true) |
+| Stop w Focus (także w pauzie) | Tracking(false), Shields(false), PhaseChanged(→Idle), **Progress(FocusEnded { stopped })**, SessionEnded |
+| Stop w Przerwie | Tracking(false), Shields(false), PhaseChanged(→Idle), **Progress(BreakEnded { stopped })**, SessionEnded |
+| Odhaczenie kroku (false → true) w trakcie sesji | **Progress(StepDone { stepId, firstTime, done, total, phase })** |
+
+Pauza, Wznów, auto-pauza po luce, `SetGoal`, `SetMeetingHolds`, `DevSetRemaining` i `SetSteps` nie dają faktów; podwójny Stop nie daje nic.
+Małe kroki (`Input::SetSteps` po `normalize_steps`: przycięte, znaki sterujące → spacje, puste odrzucone, najwyżej 80 znaków z `…`, najwyżej 5)
+przeżywają Start; przy Stop wszystkie trafiają do `SessionTotals.steps` (`SessionSummary.steps`), a otwarte zostają jako następny plan (te same id).
+Nowe id są zawsze wyższe od każdego wydanego. Wyłączenie małych kroków czyści plan (aktor).
+
+**Reguły (`focus-core/src/rewards.rs`, czyste: bez zegara, plików, losowości i sieci).** Dzień nagród (`reward_day`) zaczyna się o 04:00 czasu
+lokalnego; zegar cofnięty o najwyżej 2 dni (`CLOCK_BACK_TOLERANCE_DAYS`) jest przycinany do `lastDay`, a cofnięty dalej to poprawka zegara, który
+się spieszył: dzień jest przyjmowany, a dzień serii policzony „w przyszłości” wraca na ostatni dzień z celem. Iskierki: start 5 (3 pierwsze starty dnia) + pierwszy start dnia 5 + plan 2 (start
+z ≥ 1 krokiem, 3 dziennie); 1 za każdą `sparkUnitSecs` biegu focusu (limit 300 dziennie, „staw pełny”); pełny blok 10 (≥ 80 % długości i ≥
+`rewardMinBlockSecs`); przerwa 5 (≥ 50 %); powrót 5 (po prawdziwym bloku); krok 3 (raz na id w sesji, limit 45 dziennie); wszystkie kroki 5 (≥ 2, raz; płaci odhaczenie, które domyka plan, także ponowne);
+„Zrobione? → Tak” 10 (raz na id sesji; dla sesji demo do podglądu); cel dnia 30 / 60 / 120 z premią 10 (premia nie liczy się do celu); powrót po przerwie ≥ 2 dni roboczych 10.
+Poziom z sumy (`min(60 + 20·(L−1), 500)`). Seria: dzień z celem +1; dni wolne, zakresy wstrzymania i dni oddechu (bank 2, max 3, +1 co 5 dni z celem)
+chronią serię, za długa luka zaczyna nową (bank zostaje). Niespodzianka tylko za pełny blok: `splitmix64(seed ^ fnv1a64(sessionId) ^ cycle) % 1000`
+(złota < 30, perła < 180, bąbelek < 500), perła najpóźniej po 4 blokach bez niej, pierwsza w ogóle co najmniej bąbelkiem. „Skupienie jest święte”:
+moment zwrócony, gdy po fakcie trwa Focus, ma tylko własne linie (start, plan, powrót, krok, wszystkie kroki); osiągnięcia i linie, które by je zdradziły
+(premia celu dnia, powrót po przerwie), czekają w `SessionTally` na najbliższy `BreakStart` albo `SessionEnd`, a `view` pokazuje do tego czasu
+księgę sprzed nich plus linie pokazane w focusie (`SessionTally::shown`; poziom osiągnięty w focusie czeka z pełnym paskiem). Naklejki (P1)
+odblokowują się deterministycznie i też czekają. Fakt sesji, której Startu księga nie widziała (nagrody włączone w trakcie, „Zacznij od nowa”,
+usunięcie w panelu prywatności), zaczyna rachunek „od teraz” (`SessionTally::joined`): trwająca faza płaci tylko czas od dołączenia, bez pełnego
+bloku, niespodzianki i premii za powrót. Wstrzymanie (seria wstrzymana albo nagrody wyłączone) zapisuje `pausedSince` tylko przy istniejącej serii; ponowne
+włączenie zamienia wstrzymane dni w zakres neutralny. Widok w czasie wstrzymania pokazuje serię z chwili wstrzymania (seria, która już
+czekała, czeka dalej).
+
+**Usługa nagród (`src-tauri/src/rewards.rs`, `RewardsHandle`).** Fakt liczony synchronicznie pod mutexem (mikrosekundy), zapis pliku w kolejce wątku
+`focus-rewards` (zapisuje tylko najnowszą księgę; plik tymczasowy + rename; poprzedni plik do `rewards.json.bak` najwyżej raz na minutę; przy wyjściu
+`flush_blocking`). Dzień nagród z `focus_platform::clock::local_date_time` (`GetLocalTime`; poza Windows data UTC). Sesja demo trafia do podglądu
+(kopia księgi z demo-Startu, `preview: true`, nigdy nie zapisywana; znika przy następnym prawdziwym Starcie, resecie i wyjściu). Momenty dostają id
+z licznika usługi i czekają w `pending` (najwyżej 8). `Effects` kopiuje linię ostatniego faktu (`popup_rewards`) do okienka `BreakStarted` /
+`BreakHeld` / `FocusStarted` tej samej zmiany fazy; okienko `FocusStarted` po przerwie dostaje też `nextStep` (pierwszy otwarty krok, od aktora).
+Toasty nigdy nie mają linii nagród ani kroku. `SessionSummary.sparks` = iskierki sesji, gdy nagrody są włączone (nigdy dla sesji demo: jej
+karta czyta podgląd ze stanu). `store_config` woła `config_changed` (wstrzymanie, niższy cel dnia, naprawa pliku odłożona przy wyłączonych
+nagrodach), `mark_goal_done` woła `goal_done` tylko dla ostatniego podsumowania tego uruchomienia (sesja demo: do podglądu); zapłacone iskierki
+dochodzą do `sparks` tego podsumowania w pamięci i w `history.jsonl`.
+Aktor co 60 s (także w Idle) sprawdza zmianę dnia nagród. `play_reward_sound`: syntetyczne `Chime::Pop` / `Sparkle` / `Fanfare` w pakiecie dzwonków
+(`custom` → Midnight) z głośnością `chimeVolume × 0,6`; czeka do końca dzwonka fazy + 150 ms (w komendzie, nigdy w aktorze), a przy czekaniu
+dłuższym niż 3 s rezygnuje.
+
+`rewards.json` (w folderze danych, obok `history.jsonl`; tylko liczby, numery dni i id sesji):
+
+```json
+{ "version": 1, "seed": 1311768467294899695, "totalSparks": 1834, "lastDay": 20739,
+  "days": [ { "day": 20739, "sparks": 62, "goalBonus": 10, "minuteSparks": 45, "stepSparks": 9, "starts": 2, "plans": 1,
+              "goalMet": true, "rest": false, "pondFull": false } ],
+  "streak": { "current": 6, "best": 14, "lastCountedDay": 20739, "restBank": 1, "restProgress": 3, "activeDays": 41 },
+  "neutral": [ { "from": 20700, "to": 20705 } ], "pausedSince": null,
+  "collection": { "bubbles": 12, "pearls": 3, "golden": 0 }, "surprises": { "sincePearl": 2, "firstDone": true },
+  "counters": { "fullBlocks": 40, "breaksTaken": 12, "stepsDone": 51, "backs": 30 },
+  "stickers": [ "firstStep" ], "goalRewarded": [ "1760342400000-4242-3" ] }
+```
+
+Brak pliku → nowa księga (ziarno z `RandomState` + czas + pid); plik uszkodzony (zły JSON albo nie tekst) → kopia z `.bak` (zapisana jako
+`rewards.json` przez wątek zapisu, przed każdym innym zapisem), a gdy i ona nie działa → plik odkładany jako `rewards.unreadable-<ms>.json`, nowa
+księga i `rewards.load`. Przy wyłączonych nagrodach ta naprawa i komunikat czekają na ich włączenie (nic nie jest zapisywane ani przemianowywane).
+Plik zablokowany albo bez dostępu: dwie ponowne próby (200 ms), potem widać `.bak` (albo nową księgę), `rewards.load` i w tym uruchomieniu nic
+się nie zapisuje (plik może być dobry, więc nigdy nie jest nadpisany ani odłożony). Sesja działa dalej (zasada 8). `Ledger::normalize`
+po wczytaniu (dni ≤ 42, zakresy ≤ 20, id celów ≤ 50, bank ≤ 3). Bez bety plik nie powstaje i nie zmienia się.
 
 ## 7. Model wątków i współbieżności
 
