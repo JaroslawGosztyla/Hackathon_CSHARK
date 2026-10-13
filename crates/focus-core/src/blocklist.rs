@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use regex::{Regex, RegexBuilder};
 
-use crate::api::BlocklistIssue;
+use crate::api::{BlocklistIssue, BlocklistIssueCode};
 
 /// File name of the user-editable blocklist in the app config directory.
 pub const BLACKLIST_FILE_NAME: &str = "websiteblacklist.txt";
@@ -28,7 +28,7 @@ pub const MAX_ISSUES: usize = 100;
 const MAX_ISSUE_TEXT_CHARS: usize = 200;
 /// Compiled program and lazy DFA cache limit of one regex.
 const REGEX_SIZE_LIMIT: usize = 256 * 1024;
-/// Regex error reasons are shortened to this many characters.
+/// Regex error details are shortened to this many characters.
 const MAX_REASON_CHARS: usize = 120;
 /// A line containing any of these characters is a regex (unless it is wrapped in `/…/`).
 const REGEX_METACHARS: &[char] = &[
@@ -38,11 +38,6 @@ const REGEX_METACHARS: &[char] = &[
 const STRUCTURAL_REGEX_CHARS: &[char] = &['\\', '^', '(', ')', '[', ']', '{', '}', '|'];
 /// Two unrelated addresses: a regex matching both of them matches practically every address.
 const MATCH_ALL_PROBES: [&str; 2] = ["https://example.com/", "http://10.0.0.1:8080/a?b=c#d"];
-
-const MSG_INVALID_DOMAIN: &str = "Nieprawidłowa domena";
-const MSG_INVALID_REGEX: &str = "Nieprawidłowe wyrażenie regularne";
-const MSG_TOO_COMPLEX: &str = "Wyrażenie regularne jest zbyt złożone";
-const MSG_MATCHES_ALL: &str = "Wyrażenie pasuje do każdego adresu";
 
 /// Browser executable names without the `.exe` suffix (lowercase).
 const BROWSER_EXECUTABLES: &[&str] = &[
@@ -134,8 +129,9 @@ impl Blocklist {
     /// domain or URL reduced by [`normalize_domain`]. A pasted address with `?` that would be a regex
     /// not even matching itself is reported instead. Entries keep file order without duplicates
     /// (domains compared after normalization, regexes by source). Invalid lines are skipped and
-    /// reported as issues with a 1-based line number and a Polish message (at most
-    /// [`MAX_ISSUES`]).
+    /// reported as issues (at most [`MAX_ISSUES`]) with a 1-based line number, a
+    /// [`BlocklistIssueCode`] the UI translates, and a short English detail in `message`: the
+    /// regex parser error for `InvalidRegex`, the suggested domain for `PastedUrl`, else empty.
     pub fn parse(text: &str) -> (Blocklist, Vec<BlocklistIssue>) {
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let mut list = Blocklist::default();
@@ -151,27 +147,25 @@ impl Blocklist {
             if written.is_empty() || written.starts_with('#') {
                 continue;
             }
-            let mut report = |message: String| push_issue(&mut issues, line_no, written, message);
+            let mut report = |code: BlocklistIssueCode, message: String| {
+                push_issue(&mut issues, line_no, written, code, message);
+            };
 
             if written.chars().count() > MAX_LINE_CHARS {
-                report(format!(
-                    "Linia jest za długa (limit {MAX_LINE_CHARS} znaków)"
-                ));
+                report(BlocklistIssueCode::LineTooLong, String::new());
                 continue;
             }
 
             let entry = strip_inline_comment(written);
             if let Some(domain) = pasted_url_domain(entry) {
-                report(format!(
-                    "Adres ze znakiem ? to wyrażenie regularne, które nie pasuje do tego adresu — żeby zablokować całą stronę, wpisz {domain}; żeby tylko ten adres, zamień ? na \\?"
-                ));
+                report(BlocklistIssueCode::PastedUrl, domain);
                 continue;
             }
 
             match classify(entry) {
                 Entry::Domain(input) => {
                     let Some(domain) = normalize_domain(input) else {
-                        report(MSG_INVALID_DOMAIN.to_owned());
+                        report(BlocklistIssueCode::InvalidDomain, String::new());
                         continue;
                     };
                     if seen_domains.contains(&domain) {
@@ -180,7 +174,7 @@ impl Blocklist {
                     if list.domains.len() >= MAX_DOMAINS {
                         if !domain_limit_reported {
                             domain_limit_reported = true;
-                            report(format!("Za dużo domen (limit {MAX_DOMAINS})"));
+                            report(BlocklistIssueCode::TooManyDomains, String::new());
                         }
                         continue;
                     }
@@ -194,9 +188,7 @@ impl Blocklist {
                     if list.patterns.len() >= MAX_PATTERNS {
                         if !pattern_limit_reported {
                             pattern_limit_reported = true;
-                            report(format!(
-                                "Za dużo wyrażeń regularnych (limit {MAX_PATTERNS})"
-                            ));
+                            report(BlocklistIssueCode::TooManyPatterns, String::new());
                         }
                         continue;
                     }
@@ -205,7 +197,7 @@ impl Blocklist {
                             seen_patterns.insert(source.to_owned());
                             list.patterns.push((source.to_owned(), regex));
                         }
-                        Err(message) => report(message),
+                        Err((code, message)) => report(code, message),
                     }
                 }
             }
@@ -383,41 +375,42 @@ fn strip_inline_comment(line: &str) -> &str {
     line
 }
 
-/// Compiles one regex source or returns the Polish issue message.
-fn compile_pattern(source: &str) -> Result<Regex, String> {
+/// Compiles one regex source, or returns the issue code with its English detail.
+fn compile_pattern(source: &str) -> Result<Regex, (BlocklistIssueCode, String)> {
     let regex = RegexBuilder::new(source)
         .case_insensitive(true)
         .size_limit(REGEX_SIZE_LIMIT)
         .dfa_size_limit(REGEX_SIZE_LIMIT)
         .build()
         .map_err(|err| match err {
-            regex::Error::CompiledTooBig(_) => MSG_TOO_COMPLEX.to_owned(),
+            regex::Error::CompiledTooBig(_) => (BlocklistIssueCode::RegexTooComplex, String::new()),
             regex::Error::Syntax(detail) => {
-                let mut message = format!("{MSG_INVALID_REGEX}: {}", syntax_reason(&detail));
+                let mut message = syntax_reason(&detail);
+                // `*.facebook.com` is a glob, not a regex: point at the plain domain line.
                 if let Some(domain) = source
                     .strip_prefix('*')
                     .and_then(|rest| normalize_domain(rest.trim_end_matches('*')))
                 {
                     message.push_str(&format!(
-                        " — żeby zablokować domenę z subdomenami, wpisz po prostu {domain}"
+                        "; to block a domain with its subdomains, write just {domain}"
                     ));
                 }
-                message
+                (BlocklistIssueCode::InvalidRegex, message)
             }
-            other => format!(
-                "{MSG_INVALID_REGEX}: {}",
-                shorten(&other.to_string(), MAX_REASON_CHARS)
+            other => (
+                BlocklistIssueCode::InvalidRegex,
+                shorten(&other.to_string(), MAX_REASON_CHARS),
             ),
         })?;
     let matches_all =
         regex.is_match("") || MATCH_ALL_PROBES.iter().all(|probe| regex.is_match(probe));
     if matches_all {
-        return Err(MSG_MATCHES_ALL.to_owned());
+        return Err((BlocklistIssueCode::MatchesEverything, String::new()));
     }
     Ok(regex)
 }
 
-/// Short reason from a `regex-syntax` error (the `error: …` line), in Polish when known.
+/// Short English reason from a `regex-syntax` error (its `error: …` line, e.g. `unclosed group`).
 fn syntax_reason(detail: &str) -> String {
     let reason = detail
         .lines()
@@ -425,38 +418,21 @@ fn syntax_reason(detail: &str) -> String {
         .or_else(|| detail.lines().rev().find(|line| !line.trim().is_empty()))
         .unwrap_or(detail)
         .trim();
-    let known: &[(&str, &str)] = &[
-        ("unclosed group", "brak zamykającego nawiasu )"),
-        ("unopened group", "nadmiarowy nawias )"),
-        (
-            "repetition operator missing expression",
-            "*, + albo ? bez wyrażenia przed nim",
-        ),
-        ("unclosed character class", "brak zamykającego nawiasu ]"),
-        ("incomplete escape sequence", "niedokończona sekwencja \\"),
-        ("unrecognized escape sequence", "nieznana sekwencja \\"),
-        ("look-around", "lookahead i lookbehind nie są obsługiwane"),
-        ("backreferences", "odwołania wsteczne nie są obsługiwane"),
-        (
-            "invalid character class range",
-            "nieprawidłowy zakres w [ ]",
-        ),
-        ("unclosed counted repetition", "brak zamykającego nawiasu }"),
-    ];
-    known
-        .iter()
-        .find(|(english, _)| reason.contains(english))
-        .map_or_else(
-            || shorten(reason, MAX_REASON_CHARS),
-            |(_, polish)| (*polish).to_owned(),
-        )
+    shorten(reason, MAX_REASON_CHARS)
 }
 
-fn push_issue(issues: &mut Vec<BlocklistIssue>, line: u32, text: &str, message: String) {
+fn push_issue(
+    issues: &mut Vec<BlocklistIssue>,
+    line: u32,
+    text: &str,
+    code: BlocklistIssueCode,
+    message: String,
+) {
     if issues.len() < MAX_ISSUES {
         issues.push(BlocklistIssue {
             line,
             text: shorten(text, MAX_ISSUE_TEXT_CHARS),
+            code,
             message,
         });
     }
@@ -605,11 +581,11 @@ mod tests {
         list
     }
 
-    fn messages(text: &str) -> Vec<(u32, String)> {
+    fn codes(text: &str) -> Vec<(u32, BlocklistIssueCode)> {
         Blocklist::parse(text)
             .1
             .into_iter()
-            .map(|issue| (issue.line, issue.message))
+            .map(|issue| (issue.line, issue.code))
             .collect()
     }
 
@@ -740,12 +716,12 @@ youtube.com/shorts
 
     #[test]
     fn short_slash_lines_are_not_regexes() {
-        let issues = messages("//\n/\n");
+        let issues = codes("//\n/\n");
         assert_eq!(
             issues,
             [
-                (1, MSG_INVALID_DOMAIN.to_owned()),
-                (2, MSG_INVALID_DOMAIN.to_owned()),
+                (1, BlocklistIssueCode::InvalidDomain),
+                (2, BlocklistIssueCode::InvalidDomain),
             ]
         );
     }
@@ -791,14 +767,15 @@ linkedin\\.com/feed
         let issues = Blocklist::parse("kwejk.pl\nreddit\n\n  bad domain.com  \nżółw.pl\n").1;
         let summary: Vec<_> = issues
             .iter()
-            .map(|i| (i.line, i.text.as_str(), i.message.as_str()))
+            .map(|i| (i.line, i.text.as_str(), i.code, i.message.as_str()))
             .collect();
+        let invalid = BlocklistIssueCode::InvalidDomain;
         assert_eq!(
             summary,
             [
-                (2, "reddit", MSG_INVALID_DOMAIN),
-                (4, "bad domain.com", MSG_INVALID_DOMAIN),
-                (5, "żółw.pl", MSG_INVALID_DOMAIN),
+                (2, "reddit", invalid, ""),
+                (4, "bad domain.com", invalid, ""),
+                (5, "żółw.pl", invalid, ""),
             ]
         );
     }
@@ -811,23 +788,28 @@ linkedin\\.com/feed
         let lines: Vec<u32> = issues.iter().map(|i| i.line).collect();
         assert_eq!(lines, [1, 2, 3, 4]);
         for issue in &issues {
+            assert_eq!(issue.code, BlocklistIssueCode::InvalidRegex, "{issue:?}");
+            assert!(!issue.message.is_empty(), "{issue:?}");
             assert!(
-                issue
-                    .message
-                    .starts_with("Nieprawidłowe wyrażenie regularne: "),
+                issue.message.chars().count() <= MAX_REASON_CHARS + 80,
                 "{issue:?}"
             );
+            assert!(!issue.message.contains('\n'), "{issue:?}");
         }
-        assert!(issues[0].message.contains("nawiasu )"), "{:?}", issues[0]);
-        assert!(issues[2].message.contains("lookahead"), "{:?}", issues[2]);
+        assert_eq!(issues[0].message, "unclosed group");
+        assert_eq!(issues[1].message, "unclosed character class");
+        assert!(issues[2].message.contains("look-around"), "{:?}", issues[2]);
         assert!(
-            issues[3].message.contains("facebook.com"),
+            issues[3].message.contains("write just facebook.com"),
             "{:?}",
             issues[3]
         );
 
-        let complex = messages(r"\w{200}\w{200}\w{200}");
-        assert_eq!(complex, [(1, MSG_TOO_COMPLEX.to_owned())]);
+        let (_, complex) = Blocklist::parse(r"\w{200}\w{200}\w{200}");
+        assert_eq!(complex.len(), 1);
+        assert_eq!(complex[0].line, 1);
+        assert_eq!(complex[0].code, BlocklistIssueCode::RegexTooComplex);
+        assert_eq!(complex[0].message, "");
     }
 
     #[test]
@@ -846,14 +828,14 @@ linkedin\\.com/feed
             "/:/",
         ] {
             assert_eq!(
-                messages(source),
-                [(1, MSG_MATCHES_ALL.to_owned())],
+                codes(source),
+                [(1, BlocklistIssueCode::MatchesEverything)],
                 "{source}"
             );
         }
         // Broad but not universal regexes are allowed.
         for source in [r"\.ru/", "^http://", r"reddit\.com/r/"] {
-            assert!(messages(source).is_empty(), "{source}");
+            assert!(codes(source).is_empty(), "{source}");
         }
     }
 
@@ -867,10 +849,11 @@ linkedin\\.com/feed
         assert_eq!(parsed.domains().len(), MAX_DOMAINS);
         let expected_line = u32::try_from(MAX_DOMAINS + 1).expect("small");
         assert_eq!(
-            messages(&domains),
-            [(expected_line, "Za dużo domen (limit 2000)".to_owned())]
+            codes(&domains),
+            [(expected_line, BlocklistIssueCode::TooManyDomains)]
         );
         assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].message, "");
 
         let patterns: String = (0..MAX_PATTERNS + 3)
             .map(|i| format!("site{i}\\.com/feed\n"))
@@ -881,9 +864,9 @@ linkedin\\.com/feed
         assert_eq!(
             issues
                 .iter()
-                .map(|i| (i.line, i.message.as_str()))
+                .map(|i| (i.line, i.code, i.message.as_str()))
                 .collect::<Vec<_>>(),
-            [(expected_line, "Za dużo wyrażeń regularnych (limit 500)")]
+            [(expected_line, BlocklistIssueCode::TooManyPatterns, "")]
         );
     }
 
@@ -896,7 +879,8 @@ linkedin\\.com/feed
         let long = format!("{exact}a");
         let issues = Blocklist::parse(&long).1;
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].message, "Linia jest za długa (limit 500 znaków)");
+        assert_eq!(issues[0].code, BlocklistIssueCode::LineTooLong);
+        assert_eq!(issues[0].message, "");
         assert_eq!(issues[0].text.chars().count(), MAX_ISSUE_TEXT_CHARS);
         assert!(issues[0].text.ends_with('…'));
 
@@ -1091,13 +1075,19 @@ linkedin\\.com/feed
         let (parsed, issues) = Blocklist::parse(
             "https://www.youtube.com/watch?v=abc\nyoutube.com/results?search_query=lofi\nreddit.com/r/polska/?\n/https://x.com/a?b/\ncolou?r\nhttps://x.com/search?q=a+b\n",
         );
-        let summary: Vec<_> = issues.iter().map(|i| i.line).collect();
-        assert_eq!(summary, [1, 2, 6]);
-        assert!(
-            issues[0].message.contains("wpisz youtube.com"),
-            "{issues:?}"
+        let summary: Vec<_> = issues
+            .iter()
+            .map(|i| (i.line, i.code, i.message.as_str()))
+            .collect();
+        let pasted = BlocklistIssueCode::PastedUrl;
+        assert_eq!(
+            summary,
+            [
+                (1, pasted, "youtube.com"),
+                (2, pasted, "youtube.com"),
+                (6, pasted, "x.com"),
+            ]
         );
-        assert!(issues[2].message.contains("wpisz x.com"), "{issues:?}");
         // Regexes that match their own text, explicit /…/ regexes and non-addresses stay regexes.
         assert_eq!(
             parsed.pattern_sources(),

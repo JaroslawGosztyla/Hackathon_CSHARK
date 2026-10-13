@@ -3,9 +3,13 @@
 
 use std::ops::RangeInclusive;
 
-use crate::api::{AppError, Config, MusicConfig, MusicSourceKind, NoiseColor, ShieldsConfig};
+use crate::api::{
+    AppError, Config, Language, MusicConfig, MusicSourceKind, NoiseColor, ShieldsConfig, TintConfig,
+};
 use crate::blocklist::normalize_domain;
+use crate::launchers;
 use crate::timing::{DEFAULT_BREAK_MINUTES, DEFAULT_FOCUS_MINUTES};
+use crate::tint::{MAX_STRENGTH, MAX_TRANSITION_MINUTES, MINUTES_PER_DAY};
 
 /// Lofi Girl's current YouTube live stream (default music source). The channel `/live` page always
 /// points at the stream that is on air; individual stream ids end and change over time.
@@ -41,6 +45,10 @@ impl Default for Config {
             chime_volume: DEFAULT_CHIME_VOLUME,
             track_apps: true,
             launch_on_login: false,
+            language: Language::System,
+            close_to_tray: None,
+            phase_popups: false,
+            tint: TintConfig::default(),
         }
     }
 }
@@ -69,6 +77,8 @@ impl Default for ShieldsConfig {
             teams_tenant: DEFAULT_TEAMS_TENANT.to_owned(),
             block_sites: true,
             keep_awake: true,
+            close_launchers: false,
+            launchers: launchers::default_launchers(),
         }
     }
 }
@@ -79,8 +89,10 @@ impl Config {
     /// Trims strings, trims links and drops empty ones (a bare `youtube.com/...` gets `https://`).
     /// The site blocklist is not part of the config: it lives in `websiteblacklist.txt`
     /// ([`crate::blocklist::Blocklist::parse`]).
+    /// Game launchers lose duplicates and follow the canonical order ([`launchers::ALL`]).
     /// Out-of-range values are never clamped silently: they return `Err` with code
-    /// `config.invalid` and `field` set to the camelCase path (`focusMinutes`, `music.volume`).
+    /// `config.invalid` and `field` set to the camelCase path (`focusMinutes`, `music.volume`,
+    /// `tint.startMinutes`).
     pub fn normalized(self) -> Result<Config, AppError> {
         let Config {
             focus_minutes,
@@ -90,6 +102,10 @@ impl Config {
             chime_volume,
             track_apps,
             launch_on_login,
+            language,
+            close_to_tray,
+            phase_popups,
+            tint,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -104,6 +120,10 @@ impl Config {
             chime_volume,
             track_apps,
             launch_on_login,
+            language,
+            close_to_tray,
+            phase_popups,
+            tint: tint.normalized()?,
         })
     }
 }
@@ -171,6 +191,8 @@ impl ShieldsConfig {
             teams_tenant,
             block_sites,
             keep_awake,
+            close_launchers,
+            launchers,
         } = self;
 
         let teams_client_id = normalize_client_id(&teams_client_id)?;
@@ -183,6 +205,47 @@ impl ShieldsConfig {
             teams_tenant,
             block_sites,
             keep_awake,
+            close_launchers,
+            launchers: launchers::normalized(&launchers),
+        })
+    }
+}
+
+impl TintConfig {
+    /// Tint part of [`Config::normalized`] (checked also while disabled); errors use `tint.*`
+    /// field paths. Times are `0..1440` and must differ, strength is `0..=100`, fades `0..=180`
+    /// minutes.
+    pub fn normalized(self) -> Result<TintConfig, AppError> {
+        let TintConfig {
+            enabled,
+            start_minutes,
+            end_minutes,
+            strength,
+            transition_minutes,
+        } = self;
+
+        let last_minute = MINUTES_PER_DAY.saturating_sub(1);
+        check_range("tint.startMinutes", start_minutes, 0..=last_minute)?;
+        check_range("tint.endMinutes", end_minutes, 0..=last_minute)?;
+        if start_minutes == end_minutes {
+            return Err(invalid(
+                "tint.endMinutes",
+                format!("tint.endMinutes must differ from tint.startMinutes, got {end_minutes}"),
+            ));
+        }
+        check_range("tint.strength", strength, 0..=MAX_STRENGTH)?;
+        check_range(
+            "tint.transitionMinutes",
+            transition_minutes,
+            0..=MAX_TRANSITION_MINUTES,
+        )?;
+
+        Ok(TintConfig {
+            enabled,
+            start_minutes,
+            end_minutes,
+            strength,
+            transition_minutes,
         })
     }
 }
@@ -300,6 +363,7 @@ fn is_guid(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::GameLauncher;
 
     fn field_of(result: Result<Config, AppError>) -> Option<String> {
         let err = result.expect_err("config should be rejected");
@@ -351,6 +415,109 @@ mod tests {
         assert_eq!(shields.teams_tenant, "organizations");
         assert!(shields.block_sites);
         assert!(shields.keep_awake);
+        assert!(!shields.close_launchers);
+        assert_eq!(
+            shields.launchers,
+            [
+                GameLauncher::Steam,
+                GameLauncher::Epic,
+                GameLauncher::Gog,
+                GameLauncher::Ubisoft,
+                GameLauncher::Ea,
+                GameLauncher::BattleNet,
+                GameLauncher::Riot,
+            ]
+        );
+
+        assert_eq!(cfg.language, Language::System);
+        assert_eq!(cfg.close_to_tray, None);
+        assert!(!cfg.phase_popups);
+        assert_eq!(
+            cfg.tint,
+            TintConfig {
+                enabled: false,
+                start_minutes: 18 * 60,
+                end_minutes: 9 * 60,
+                strength: 45,
+                transition_minutes: 30,
+            }
+        );
+    }
+
+    #[test]
+    fn config_written_before_language_tint_and_launchers_loads_with_defaults() {
+        // config.json as saved by the previous version (every field it knew, none of the new ones).
+        let old: Config = serde_json::from_str(
+            r#"{
+                "focusMinutes": 50,
+                "breakMinutes": 10,
+                "music": {
+                    "source": "noise", "folder": null, "links": [], "streamUrl": "",
+                    "noise": "pink", "shuffle": false, "volume": 0.4, "pauseDuringBreak": true
+                },
+                "shields": {
+                    "muteNotifications": true, "teamsDnd": false, "teamsClientId": "",
+                    "teamsTenant": "organizations", "blockSites": true, "keepAwake": false
+                },
+                "chimeVolume": 0.5,
+                "trackApps": false,
+                "launchOnLogin": true
+            }"#,
+        )
+        .expect("old config");
+        assert_eq!(old.focus_minutes, 50);
+        assert_eq!(old.music.noise, NoiseColor::Pink);
+        assert!(old.shields.mute_notifications);
+        assert!(!old.shields.keep_awake);
+        assert!(old.launch_on_login);
+
+        let defaults = Config::default();
+        assert_eq!(old.language, defaults.language);
+        assert_eq!(old.close_to_tray, None);
+        assert!(!old.phase_popups);
+        assert_eq!(old.tint, defaults.tint);
+        assert!(!old.shields.close_launchers);
+        assert_eq!(old.shields.launchers, defaults.shields.launchers);
+        assert_eq!(old.clone().normalized(), Ok(old));
+    }
+
+    #[test]
+    fn partial_tint_falls_back_to_defaults() {
+        let cfg: Config =
+            serde_json::from_str(r#"{"tint":{"enabled":true,"strength":70}}"#).expect("partial");
+        assert!(cfg.tint.enabled);
+        assert_eq!(cfg.tint.strength, 70);
+        assert_eq!(cfg.tint.start_minutes, 1080);
+        assert_eq!(cfg.tint.end_minutes, 540);
+        assert_eq!(cfg.tint.transition_minutes, 30);
+    }
+
+    #[test]
+    fn new_fields_round_trip() {
+        for close_to_tray in [None, Some(true), Some(false)] {
+            let cfg = Config {
+                language: Language::Pl,
+                close_to_tray,
+                phase_popups: true,
+                tint: TintConfig {
+                    enabled: true,
+                    start_minutes: 1200,
+                    end_minutes: 420,
+                    strength: 80,
+                    transition_minutes: 0,
+                },
+                shields: ShieldsConfig {
+                    close_launchers: true,
+                    launchers: vec![GameLauncher::Xbox, GameLauncher::Itch],
+                    ..ShieldsConfig::default()
+                },
+                ..Config::default()
+            };
+            let json = serde_json::to_string(&cfg).expect("serialize");
+            let back: Config = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, cfg);
+            assert_eq!(back.clone().normalized(), Ok(back));
+        }
     }
 
     #[test]
@@ -404,6 +571,142 @@ mod tests {
         assert_eq!(json["shields"]["blockSites"], true);
         assert_eq!(json["shields"]["keepAwake"], true);
         assert_eq!(json["shields"]["muteNotifications"], false);
+        assert_eq!(json["shields"]["closeLaunchers"], false);
+        assert_eq!(
+            json["shields"]["launchers"],
+            serde_json::json!(["steam", "epic", "gog", "ubisoft", "ea", "battleNet", "riot"])
+        );
+        assert_eq!(json["language"], "system");
+        assert!(json["closeToTray"].is_null());
+        assert_eq!(json["phasePopups"], false);
+        assert_eq!(json["tint"]["enabled"], false);
+        assert_eq!(json["tint"]["startMinutes"], 1080);
+        assert_eq!(json["tint"]["endMinutes"], 540);
+        assert_eq!(json["tint"]["strength"], 45);
+        assert_eq!(json["tint"]["transitionMinutes"], 30);
+    }
+
+    #[test]
+    fn validates_tint() {
+        let with_tint = |tint: TintConfig| Config {
+            tint,
+            ..Config::default()
+        };
+        let base = TintConfig {
+            enabled: true,
+            ..TintConfig::default()
+        };
+        for (bad, field) in [
+            (
+                TintConfig {
+                    start_minutes: 1440,
+                    ..base.clone()
+                },
+                "tint.startMinutes",
+            ),
+            (
+                TintConfig {
+                    end_minutes: 1440,
+                    ..base.clone()
+                },
+                "tint.endMinutes",
+            ),
+            (
+                TintConfig {
+                    start_minutes: 600,
+                    end_minutes: 600,
+                    ..base.clone()
+                },
+                "tint.endMinutes",
+            ),
+            (
+                TintConfig {
+                    strength: 101,
+                    ..base.clone()
+                },
+                "tint.strength",
+            ),
+            (
+                TintConfig {
+                    transition_minutes: 181,
+                    ..base.clone()
+                },
+                "tint.transitionMinutes",
+            ),
+            (
+                // Checked also while the tint is off.
+                TintConfig {
+                    enabled: false,
+                    strength: 500,
+                    ..base.clone()
+                },
+                "tint.strength",
+            ),
+        ] {
+            assert_eq!(
+                field_of(with_tint(bad.clone()).normalized()).as_deref(),
+                Some(field),
+                "{bad:?}"
+            );
+        }
+        for good in [
+            base.clone(),
+            TintConfig {
+                start_minutes: 0,
+                end_minutes: 1439,
+                strength: 0,
+                transition_minutes: 0,
+                ..base.clone()
+            },
+            TintConfig {
+                start_minutes: 1439,
+                end_minutes: 0,
+                strength: 100,
+                transition_minutes: 180,
+                ..base.clone()
+            },
+            TintConfig {
+                start_minutes: 13 * 60,
+                end_minutes: 15 * 60,
+                ..base.clone()
+            },
+        ] {
+            let cfg = with_tint(good.clone());
+            assert_eq!(cfg.normalized().map(|c| c.tint), Ok(good));
+        }
+    }
+
+    #[test]
+    fn dedupes_launchers_in_canonical_order() {
+        let cfg = with_shields(ShieldsConfig {
+            close_launchers: true,
+            launchers: vec![
+                GameLauncher::Riot,
+                GameLauncher::Steam,
+                GameLauncher::Itch,
+                GameLauncher::Riot,
+                GameLauncher::Steam,
+            ],
+            ..ShieldsConfig::default()
+        });
+        let shields = cfg.normalized().expect("valid").shields;
+        assert!(shields.close_launchers);
+        assert_eq!(
+            shields.launchers,
+            [GameLauncher::Steam, GameLauncher::Riot, GameLauncher::Itch]
+        );
+
+        let none = with_shields(ShieldsConfig {
+            launchers: Vec::new(),
+            ..ShieldsConfig::default()
+        });
+        assert!(
+            none.normalized()
+                .expect("valid")
+                .shields
+                .launchers
+                .is_empty()
+        );
     }
 
     #[test]
