@@ -2,7 +2,7 @@
 import * as api from "$lib/api";
 import { unlockAudio } from "$lib/player/noise";
 import { strings } from "$lib/strings";
-import type { MeetingHoldView, PhaseChange, SessionGoal, SessionSnapshot } from "$lib/types";
+import type { MeetingHoldView, PhaseChange, SessionGoal, SessionSnapshot, SmartBreak } from "$lib/types";
 import { config } from "./config.svelte";
 import { toasts } from "./toasts.svelte";
 
@@ -22,6 +22,7 @@ const IDLE_SNAPSHOT: SessionSnapshot = {
   meetingHold: null,
   goal: null,
   steps: [],
+  smartBreak: null,
 };
 
 class SessionStore {
@@ -45,10 +46,16 @@ class SessionStore {
    */
   sampleGoal = $state.raw<SessionGoal | null>(null);
   sampleHold = $state.raw<MeetingHoldView | null>(null);
+  /** Smart breaks (ADR-023): a sample moved break for the line under the timer, shown in any phase. */
+  sampleSmartBreak = $state.raw<SmartBreak | null>(null);
   /** The goal to show: the sample layer wins over the snapshot. */
   goal = $derived(this.sampleGoal ?? this.snapshot.goal ?? null);
   /** The meeting hold to show (only a running session has one; a sample shows in any phase). */
   meetingHold = $derived(this.sampleHold ?? (this.snapshot.phase === "idle" ? null : this.snapshot.meetingHold));
+  /** The moved break of the running session (ADR-023; none while idle), or a sample. */
+  smartBreak = $derived(
+    this.sampleSmartBreak ?? (this.snapshot.phase === "idle" ? null : (this.snapshot.smartBreak ?? null)),
+  );
 
   /** Takes a snapshot unless it is older than the one shown (it may come from the event or from `reload`). */
   apply(snapshot: SessionSnapshot): void {

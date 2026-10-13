@@ -6,6 +6,7 @@
   import StepsCard from "$lib/components/rewards/StepsCard.svelte";
   import StickerAlbum from "$lib/components/rewards/StickerAlbum.svelte";
   import UsageChart from "$lib/components/UsageChart.svelte";
+  import WeekSection from "$lib/components/week/WeekSection.svelte";
   import { formatDuration, formatSpan } from "$lib/format";
   import Axolotl from "$lib/mascot/Axolotl.svelte";
   import { useMascot } from "$lib/mascot/controller.svelte";
@@ -251,6 +252,9 @@
       <p class="hint privacy">{strings.summary.privacy}</p>
     </section>
   {/if}
+
+  <!-- Weekly stats and heatmaps (ADR-023): the week picked with its own ‹ ›, from the stored history. -->
+  <WeekSection />
 
   {#if summary.loaded && summary.history.length > 0}
     <section class="card" aria-labelledby="history-title">

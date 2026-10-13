@@ -18,6 +18,7 @@ import type {
   PopupKind,
   StickerId,
   TintMode,
+  TintSchedule,
   WorkItemKind,
   WorkReason,
   WorkSource,
@@ -301,6 +302,52 @@ export const pl = {
       done === true ? "cel zrobiony" : done === false ? "cel niezrobiony" : "cel bez odpowiedzi",
   },
 
+  week: {
+    title: "Ten tydzień",
+    weekNumber: (n: number) => `Tydzień ${n}`,
+    pickerLabel: "Wybór tygodnia",
+    previous: "Poprzedni tydzień",
+    next: "Następny tydzień",
+    backToThisWeek: "Wróć do tego tygodnia",
+    loading: "Wczytuję tydzień…",
+    error: "Nie udało się wczytać statystyk tygodnia.",
+    retry: "Spróbuj ponownie",
+    focusTotal: "Czas skupienia",
+    breaksTaken: "Wzięte przerwy",
+    sessions: "Sesje",
+    bestDay: "Najlepszy dzień",
+    daysTitle: "Skupienie według dni",
+    dayLabel: (day: string, time: string) => `${day}: ${time}`,
+    noFocus: "bez skupienia",
+    heatTitle: "Kiedy się skupiasz",
+    heatModeLabel: "Zakres mapy",
+    heatRecent: (n: number) => `Ostatnie ${n} ${plural(n, "tydzień", "tygodnie", "tygodni")}`,
+    heatCaption: (range: string) => `Czas skupienia według dnia i godziny, ${range}`,
+    heatRecentCaption: (n: number, range: string) =>
+      `Czas skupienia według dnia i godziny, suma ${n} ${plural(n, "tygodnia", "tygodni", "tygodni")}: ${range}`,
+    heatDay: "Dzień",
+    heatCell: (day: string, hour: string, time: string) => `${day}, ${hour}: ${time}`,
+    heatLess: "mniej",
+    heatMore: "więcej",
+    estimated:
+      "Starsze sesje nie mają zapisanych godzin, więc ich czas skupienia jest rozłożony równo od startu do końca sesji.",
+    appsTitle: "Aplikacje tygodnia",
+    appsHint: "Kliknij etykietę, aby oznaczyć aplikację, a potem jeszcze raz, aby ją usunąć. Etykiety nadajesz tylko Ty.",
+    appsEmpty: "W tym tygodniu nie zapisano danych o aplikacjach.",
+    labelGroup: (app: string) => `Etykieta aplikacji ${app}`,
+    labels: { productive: "Produktywna", neutral: "Neutralna", distracting: "Rozpraszająca" },
+    clearLabel: "Kliknij jeszcze raz, aby usunąć etykietę",
+    shareTitle: "Czas według etykiet",
+    shares: { productive: "Produktywne", neutral: "Neutralne", distracting: "Rozpraszające", unlabelled: "Bez etykiety" },
+    shareItem: (name: string, time: string, pct: string) => `${name}: ${time}, ${pct}`,
+    emptyCurrent: "W tym tygodniu jeszcze nic tu nie ma. Gdy zakończysz sesję skupienia, jej czas pojawi się tutaj.",
+    emptyPast: "W tym tygodniu nie zapisano sesji skupienia.",
+    historyOff: "Zapisywanie historii jest wyłączone w Ustawieniach, więc nowe sesje nie trafiają do statystyk tygodnia.",
+    historyOffEmpty:
+      "Zapisywanie historii jest wyłączone, więc nie ma tu czego pokazać. Możesz je włączyć w Ustawieniach → Historia.",
+    privacy: "Liczone na tym komputerze z zapisanej historii sesji. Etykiety zostają w ustawieniach na tym komputerze.",
+  },
+
   settings: {
     title: "Ustawienia",
     saving: "Zapisuję…",
@@ -496,6 +543,51 @@ export const pl = {
     tintTimeInvalid: "Podaj godzinę, np. 18:00.",
     tintSameTimes: "Godzina „Do” musi być inna niż „Od”.",
     tintStrengthRange: "Podaj siłę od 0 do 100.",
+    tintWhen: "Kiedy ocieplać",
+    tintSchedules: {
+      fixed: "O stałych godzinach",
+      sun: "Od zachodu do wschodu słońca",
+    } satisfies Record<TintSchedule, string>,
+    tintScheduleSunHint:
+      "Godziny zachodu i wschodu słońca FocusMode liczy na tym komputerze dla miejsca, które wybierzesz — bez usług lokalizacji i bez internetu.",
+    tintFallbackHint:
+      "Zapasowe godziny: działają, dopóki nie wybierzesz miejsca, i w dni, w które słońce nie zachodzi albo nie wschodzi.",
+    tintPlace: "Miejsce",
+    tintPlacePick: "Wybierz miasto…",
+    tintPlaceCustom: "Własne współrzędne",
+    tintPlaceOther: "Inne miasta",
+    tintLatitude: "Szerokość geograficzna",
+    tintLongitude: "Długość geograficzna",
+    tintCoordsHint: "W stopniach, np. 52.23 i 21.01 dla Warszawy. Południe i zachód ze znakiem minus.",
+    tintCoordsShown: (lat: string, lon: string) => `Współrzędne: ${lat}, ${lon}`,
+    tintLatitudeRange: "Podaj szerokość od −90 do 90 stopni.",
+    tintLongitudeRange: "Podaj długość od −180 do 180 stopni.",
+    tintSunToday: (sunset: string, sunrise: string) => `Dziś: zachód słońca ${sunset}, wschód ${sunrise}`,
+    tintScheduleFallback: {
+      polarDay: "Dziś słońce tam nie zachodzi — działają zapasowe godziny.",
+      polarNight: "Dziś słońce tam nie wschodzi — działają zapasowe godziny.",
+      noLocation: "Wybierz miasto albo wpisz współrzędne — do tego czasu działają zapasowe godziny.",
+    },
+    tintExceptions: "Wyjątki",
+    tintPauseApps: "Wstrzymuj przy programach do pracy z kolorem",
+    tintPauseAppsHint:
+      "Gdy któryś z nich jest na pierwszym planie, ocieplenie płynnie znika, a wraca kilka sekund po przejściu do innego okna.",
+    tintPauseAppsList: "Programy (nazwy plików .exe)",
+    tintPauseAppAdd: "Dodaj",
+    tintPauseAppPlaceholder: "np. Photoshop.exe",
+    tintPauseAppRemove: (name: string) => `Usuń ${name} z listy`,
+    tintPauseAppsReset: "Przywróć domyślną listę",
+    tintPauseAppsEmpty: "Lista jest pusta — dodaj program albo przywróć domyślną listę.",
+    tintPauseAppInvalid: (max: number) =>
+      `Wpisz samą nazwę pliku, np. Photoshop.exe — bez ścieżki, do ${max} ${plural(max, "znaku", "znaków", "znaków")}.`,
+    tintPauseAppDuplicate: "Ten program już jest na liście.",
+    tintPauseAppsFull: (max: number) =>
+      `Lista ma już ${max} ${plural(max, "program", "programy", "programów")} — to maksimum.`,
+    tintPauseFullscreen: "Wstrzymuj, gdy na pierwszym planie jest aplikacja albo gra na pełnym ekranie",
+    tintPauseFullscreenHint: "Także podczas prezentacji. Bez tego ocieplenie działa również w grach na pełnym ekranie.",
+    tintStatusPausedApp: (app: string) => `Wstrzymane: ${app} na pierwszym planie`,
+    tintStatusPausedFullscreen: "Wstrzymane: pełny ekran na pierwszym planie",
+    tintStatusPausedFullscreenApp: (app: string) => `Wstrzymane: ${app} na pełnym ekranie`,
     tintTransitionRange: "Płynne przejście może trwać od 0 do 180 minut.",
 
     languageTitle: "Język",
@@ -802,6 +894,24 @@ export const pl = {
     holdPause: (subject: string) => `Przerwa wstrzymana — spotkanie: ${subject}`,
     holdPauseHint: (time: string) =>
       `Minutnik przerwy czeka. Naciśnij „Wznów”, gdy spotkanie się skończy (planowo o ${time}).`,
+
+    // --- Smart breaks (ADR-023): the switch in the "Czas" card, the line under the timer, the meetings card ---
+    smart: {
+      toggle: "Inteligentne przerwy: dopasuj przerwy do spotkań",
+      hint: "Przerwa kończy się tuż przed spotkaniem albo zaczyna razem z nim. Blok skupienia skraca się najwyżej o 40% (do min. 10 min) albo wydłuża najwyżej o 25%. Gdy to nie wystarczy, zapytam.",
+      needsCalendar: "Działa z połączonym kalendarzem.",
+      movedNote: (breakTime: string, meetingTime: string) =>
+        `Przerwa przesunięta na ${breakTime} · spotkanie o ${meetingTime}`,
+      runningNote: (meetingTime: string) => `Przerwa dopasowana do spotkania o ${meetingTime}`,
+      askMe: "Zapytaj mnie",
+      /** Accessible name of the `askMe` button: it contains the visible `askMe` text (label in name). */
+      askMeAria: (meetingTime: string) => `Zapytaj mnie o spotkanie o ${meetingTime}, zamiast przesuwać przerwę`,
+      cardLead: "Inteligentne przerwy przesunęły te przerwy:",
+      focusShorter: (duration: string) => `skupienie krótsze o ${duration}`,
+      focusLonger: (duration: string) => `skupienie dłuższe o ${duration}`,
+      optedOut: "Wybrano „Zapytaj mnie” — ta przerwa nie jest przesuwana automatycznie.",
+      fitAgain: "Dopasuj automatycznie",
+    },
   },
 
   work: {
@@ -1172,6 +1282,9 @@ export const pl = {
     backLines: ["Powrót!", "Z powrotem w rytmie.", "Wracamy razem."],
     recapLines: (n: number) => [`Ten blok: +${n}`, `Dobry blok: +${n}`],
     sessionTotal: (n: number) => `Ta sesja: +${n}`,
+    /** A recap that paid nothing (a very short block): the caption only, never "+0". */
+    recapPlain: "Ten blok",
+    sessionPlain: "Ta sesja",
     dailyGoalLines: ["Cel dnia!", "Dzień zaliczony!"],
     streakUp: (d: number) => `Seria: ${d}`,
     milestone: (d: number) => `${d} dni z rzędu!`,
@@ -1295,6 +1408,63 @@ export const pl = {
     },
   },
 
+  /** First-run wizard (ADR-023): four steps on a fresh install, each one skippable; nothing starts by itself. */
+  onboarding: {
+    docTitle: "Pierwsze kroki",
+    dialogLabel: "Pierwsze kroki",
+    progressLabel: "Kroki",
+    steps: {
+      welcome: "Powitanie",
+      music: "Muzyka",
+      shields: "Osłony",
+      extras: "Dodatki",
+    },
+    stepCount: (n: number, total: number) => `Krok ${n} z ${total}`,
+    skip: "Pomiń",
+    back: "Wstecz",
+    next: "Dalej",
+    finish: "Zacznij pierwsze skupienie",
+    keysNext: "Enter: dalej · Esc: pomiń",
+    keysFinish: "Enter: zakończ · Esc: pomiń",
+    skipTitle: "Pominąć pierwsze kroki?",
+    skipBody:
+      "To, co już tu wybrano, zostaje. Resztę znajdziesz w każdej chwili w Ustawieniach.",
+    skipConfirm: "Pomiń",
+    skipCancel: "Wróć do kroków",
+    welcome: {
+      title: "Witaj w FocusMode",
+      lead:
+        "Ustaw czasy i muzykę, naciśnij Start, a FocusMode poprowadzi cię przez skupienie i przerwy, aż naciśniesz Stop. Zacznijmy od języka.",
+      line: "Cześć! Pokażę ci, co tu jest. To zajmie minutę.",
+      languageLabel: "Język aplikacji",
+    },
+    music: {
+      title: "Co ma grać?",
+      lead:
+        "Domyślnie gra Open Lo-Fi z zestawu, także bez internetu. Możesz też wybrać stream, własne linki, folder z muzyką, szum albo ciszę.",
+      line: "Coś w tle? Muzyka gra dalej także w przerwie.",
+    },
+    shields: {
+      title: "Osłony na czas skupienia",
+      lead:
+        "W skupieniu FocusMode może trzymać rozpraszacze z daleka. W przerwie i po Stop wszystko wraca do normy.",
+      line: "Zaznacz, co ma cię chronić. W przerwie osłony schodzą.",
+      teamsLater: "Konto Microsoft połączysz później w Ustawieniach, w sekcji osłon.",
+    },
+    extras: {
+      title: "Jeszcze kilka drobiazgów",
+      lead: "Wszystko tu jest opcjonalne. Każdą z tych rzeczy zmienisz później w Ustawieniach.",
+      line: "Gotowe! Start czeka, kiedy tylko zechcesz.",
+      tintHint:
+        "Wieczorem cieplejsze barwy ekranu. Domyślnie wyłączone: godziny i siłę ustawisz w Ustawieniach.",
+      connectTitle: "Kalendarz i narzędzia pracy",
+      connectText:
+        "Spotkania z kalendarza i zadania z narzędzi pracy połączysz później w Ustawieniach. Tylko do odczytu.",
+      calendarLink: "Kalendarz w Ustawieniach",
+      workLink: "Narzędzia pracy w Ustawieniach",
+    },
+  },
+
   nudge: {
     title: "Wracaj do pracy",
     body: (domain: string) => `${domain} poczeka do przerwy.`,
@@ -1387,6 +1557,7 @@ export const pl = {
       tooManySteps: "Najwyżej 5 kroków na sesję.",
       "rewards.load": "Nie udało się odczytać postępów. Zaczynamy od nowa; stary plik został obok.",
       "rewards.save": "Nie udało się zapisać postępów. Kolejna próba przy następnej zmianie.",
+      "stats.week": "Nieprawidłowy tydzień — wybierz go jeszcze raz.",
     } as Record<string, string>,
     areas: {
       config: "Problem z ustawieniami.",
@@ -1412,6 +1583,7 @@ export const pl = {
       work: "Problem z narzędziami pracy (Co dalej?) — sesja działa dalej.",
       privacy: "Problem z danymi zapisanymi przez FocusMode.",
       rewards: "Problem z iskierkami (beta) — sesja działa dalej.",
+      stats: "Problem ze statystykami tygodnia.",
     } as Record<string, string>,
   },
 
@@ -1430,6 +1602,10 @@ export const pl = {
     "tint.endMinutes": "koniec ciepłych kolorów",
     "tint.strength": "siła ciepłych kolorów",
     "tint.transitionMinutes": "płynne przejście",
+    "tint.pauseApps": "programy do pracy z kolorem",
+    "tint.location.latitude": "szerokość geograficzna",
+    "tint.location.longitude": "długość geograficzna",
+    "tint.location.city": "miasto",
     "tint.mode": "sposób ocieplania",
     language: "język",
     theme: "motyw",
@@ -1444,6 +1620,7 @@ export const pl = {
     "work.jiraUrl": "adres Jira",
     "work.jiraEmail": "e-mail konta Jira",
     "work.azureOrg": "organizacja Azure DevOps",
+    appCategories: "etykiety aplikacji",
   } as Record<string, string>,
 
   dialog: {

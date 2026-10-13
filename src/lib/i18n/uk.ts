@@ -280,6 +280,53 @@ export const uk: Strings = {
       done === true ? "ціль виконано" : done === false ? "ціль не виконано" : "ціль без відповіді",
   },
 
+  week: {
+    title: "Цей тиждень",
+    weekNumber: (n: number) => `Тиждень ${n}`,
+    pickerLabel: "Вибір тижня",
+    previous: "Попередній тиждень",
+    next: "Наступний тиждень",
+    backToThisWeek: "Повернутися до цього тижня",
+    loading: "Завантаження тижня…",
+    error: "Не вдалося завантажити статистику тижня.",
+    retry: "Спробувати ще раз",
+    focusTotal: "Час фокусу",
+    breaksTaken: "Зроблені перерви",
+    sessions: "Сесії",
+    bestDay: "Найкращий день",
+    daysTitle: "Фокус за днями",
+    dayLabel: (day: string, time: string) => `${day}: ${time}`,
+    noFocus: "без фокусу",
+    heatTitle: "Коли ви зосереджуєтеся",
+    heatModeLabel: "Період мапи",
+    heatRecent: (n: number) => `Останні ${n} ${plural(n, "тиждень", "тижні", "тижнів")}`,
+    heatCaption: (range: string) => `Час фокусу за днями й годинами, ${range}`,
+    heatRecentCaption: (n: number, range: string) =>
+      `Час фокусу за днями й годинами, сума за ${n} ${plural(n, "тиждень", "тижні", "тижнів")}: ${range}`,
+    heatDay: "День",
+    heatCell: (day: string, hour: string, time: string) => `${day}, ${hour}: ${time}`,
+    heatLess: "менше",
+    heatMore: "більше",
+    estimated:
+      "Для старіших сесій години не збережено, тож їхній час фокусу рівномірно розподілено від початку до кінця сесії.",
+    appsTitle: "Застосунки тижня",
+    appsHint: "Натисніть мітку, щоб позначити застосунок, і ще раз — щоб її прибрати. Мітки ставите лише ви.",
+    appsEmpty: "Цього тижня даних про застосунки не збережено.",
+    labelGroup: (app: string) => `Мітка для ${app}`,
+    labels: { productive: "Продуктивний", neutral: "Нейтральний", distracting: "Відволікає" },
+    clearLabel: "Натисніть ще раз, щоб прибрати мітку",
+    shareTitle: "Час за мітками",
+    shares: { productive: "Продуктивні", neutral: "Нейтральні", distracting: "Відволікають", unlabelled: "Без мітки" },
+    shareItem: (name: string, time: string, pct: string) => `${name}: ${time}, ${pct}`,
+    emptyCurrent: "Цього тижня тут поки нічого немає. Коли ви завершите сесію фокусу, її час з’явиться тут.",
+    emptyPast: "Цього тижня сесій фокусу не збережено.",
+    historyOff: "Збереження історії вимкнено в налаштуваннях, тому нові сесії не потрапляють до статистики тижня.",
+    historyOffEmpty:
+      "Збереження історії вимкнено, тому тут нічого показати. Увімкнути його можна в «Налаштування → Історія».",
+    privacy:
+      "Обчислено на цьому комп’ютері зі збереженої історії сесій. Мітки залишаються в налаштуваннях на цьому комп’ютері.",
+  },
+
   settings: {
     title: "Налаштування",
     saving: "Збереження…",
@@ -479,6 +526,51 @@ export const uk: Strings = {
     tintTimeInvalid: "Введіть час, наприклад 18:00.",
     tintSameTimes: "Час «До» має відрізнятися від «З».",
     tintStrengthRange: "Введіть інтенсивність від 0 до 100.",
+    tintWhen: "Коли робити теплішими",
+    tintSchedules: {
+      fixed: "У фіксовані години",
+      sun: "Від заходу до сходу сонця",
+    },
+    tintScheduleSunHint:
+      "FocusMode обчислює захід і схід сонця на цьому комп'ютері для місця, яке ви виберете, — без служб геолокації та без інтернету.",
+    tintFallbackHint:
+      "Резервні години: діють, доки ви не виберете місце, а також у дні, коли сонце не заходить або не сходить.",
+    tintPlace: "Місце",
+    tintPlacePick: "Виберіть місто…",
+    tintPlaceCustom: "Власні координати",
+    tintPlaceOther: "Інші міста",
+    tintLatitude: "Широта",
+    tintLongitude: "Довгота",
+    tintCoordsHint: "У градусах, наприклад 52.23 і 21.01 для Варшави. Південь і захід зі знаком мінус.",
+    tintCoordsShown: (lat: string, lon: string) => `Координати: ${lat}, ${lon}`,
+    tintLatitudeRange: "Введіть широту від −90 до 90 градусів.",
+    tintLongitudeRange: "Введіть довготу від −180 до 180 градусів.",
+    tintSunToday: (sunset: string, sunrise: string) => `Сьогодні: захід сонця ${sunset}, схід ${sunrise}`,
+    tintScheduleFallback: {
+      polarDay: "Сьогодні там сонце не заходить — діють резервні години.",
+      polarNight: "Сьогодні там сонце не сходить — діють резервні години.",
+      noLocation: "Виберіть місто або введіть координати — доти діють резервні години.",
+    },
+    tintExceptions: "Винятки",
+    tintPauseApps: "Призупиняти для програм, де важливий колір",
+    tintPauseAppsHint:
+      "Коли одна з них на передньому плані, тепло плавно зникає і повертається за кілька секунд після переходу до іншого вікна.",
+    tintPauseAppsList: "Програми (назви файлів .exe)",
+    tintPauseAppAdd: "Додати",
+    tintPauseAppPlaceholder: "наприклад Photoshop.exe",
+    tintPauseAppRemove: (name: string) => `Вилучити ${name} зі списку`,
+    tintPauseAppsReset: "Відновити типовий список",
+    tintPauseAppsEmpty: "Список порожній — додайте програму або відновіть типовий список.",
+    tintPauseAppInvalid: (max: number) =>
+      `Введіть лише назву файлу, наприклад Photoshop.exe, — без шляху, до ${max} ${plural(max, "символу", "символів", "символів")}.`,
+    tintPauseAppDuplicate: "Ця програма вже є в списку.",
+    tintPauseAppsFull: (max: number) =>
+      `У списку вже ${max} ${plural(max, "програма", "програми", "програм")} — це максимум.`,
+    tintPauseFullscreen: "Призупиняти, коли на передньому плані програма або гра на весь екран",
+    tintPauseFullscreenHint: "Також під час презентації. Без цього ігри на весь екран теж стають теплішими.",
+    tintStatusPausedApp: (app: string) => `Призупинено: ${app} на передньому плані`,
+    tintStatusPausedFullscreen: "Призупинено: повноекранний режим на передньому плані",
+    tintStatusPausedFullscreenApp: (app: string) => `Призупинено: ${app} у повноекранному режимі`,
     tintTransitionRange: "Плавний перехід може тривати від 0 до 180 хвилин.",
 
     languageTitle: "Мова",
@@ -769,6 +861,22 @@ export const uk: Strings = {
     holdPause: (subject: string) => `Перерву призупинено — зустріч: ${subject}`,
     holdPauseHint: (time: string) =>
       `Таймер перерви чекає. Натисніть «Продовжити», коли зустріч закінчиться (за планом о ${time}).`,
+
+    smart: {
+      toggle: "Розумні перерви: підлаштовувати перерви під зустрічі",
+      hint: "Перерва закінчиться просто перед зустріччю або почнеться разом із нею. Блок фокусу скорочується щонайбільше на 40 % (але не коротше 10 хв) або подовжується до 25 %. Якщо цього замало, я запитаю.",
+      needsCalendar: "Працює з підключеним календарем.",
+      movedNote: (breakTime: string, meetingTime: string) =>
+        `Перерву перенесено на ${breakTime} · зустріч о ${meetingTime}`,
+      runningNote: (meetingTime: string) => `Перерву підлаштовано під зустріч о ${meetingTime}`,
+      askMe: "Краще запитати",
+      askMeAria: (meetingTime: string) => `Краще запитати про зустріч о ${meetingTime}, не переносячи перерву`,
+      cardLead: "Розумні перерви перенесли ці перерви:",
+      focusShorter: (duration: string) => `фокус коротший на ${duration}`,
+      focusLonger: (duration: string) => `фокус довший на ${duration}`,
+      optedOut: "Вибрано «Краще запитати»: ця перерва не переноситься автоматично.",
+      fitAgain: "Підлаштувати автоматично",
+    },
   },
 
   work: {
@@ -1139,6 +1247,9 @@ export const uk: Strings = {
     backLines: ["Знову у фокусі!", "Знову в ритмі.", "Повертаємося разом."],
     recapLines: (n: number) => [`Цей блок: +${n}`, `Гарний блок: +${n}`],
     sessionTotal: (n: number) => `Ця сесія: +${n}`,
+    /** A recap that paid nothing (a very short block): the caption only, never "+0". */
+    recapPlain: "Цей блок",
+    sessionPlain: "Ця сесія",
     dailyGoalLines: ["Мета дня!", "День зараховано!"],
     streakUp: (d: number) => `Серія: ${d}`,
     milestone: (d: number) => `${d} ${plural(d, "день", "дні", "днів")} поспіль!`,
@@ -1258,6 +1369,63 @@ export const uk: Strings = {
     },
   },
 
+  /** First-run wizard (ADR-023). */
+  onboarding: {
+    docTitle: "Перші кроки",
+    dialogLabel: "Перші кроки",
+    progressLabel: "Кроки",
+    steps: {
+      welcome: "Вітання",
+      music: "Музика",
+      shields: "Щити",
+      extras: "Додатково",
+    },
+    stepCount: (n: number, total: number) => `Крок ${n} з ${total}`,
+    skip: "Пропустити",
+    back: "Назад",
+    next: "Далі",
+    finish: "Почати перший фокус",
+    keysNext: "Enter: далі · Esc: пропустити",
+    keysFinish: "Enter: завершити · Esc: пропустити",
+    skipTitle: "Пропустити перші кроки?",
+    skipBody:
+      "Те, що ви вже тут вибрали, залишиться. Усе інше будь-коли знайдете в Налаштуваннях.",
+    skipConfirm: "Пропустити",
+    skipCancel: "Повернутися до кроків",
+    welcome: {
+      title: "Вітаємо у FocusMode",
+      lead:
+        "Налаштуйте час і музику, натисніть Старт, і FocusMode проведе вас через фокус і перерви, доки ви не натиснете Стоп. Почнімо з мови.",
+      line: "Привіт! Я все покажу. Це забере хвилинку.",
+      languageLabel: "Мова застосунку",
+    },
+    music: {
+      title: "Що гратиме?",
+      lead:
+        "Типово грає вбудована Open Lo-Fi, навіть без інтернету. Можна також вибрати трансляцію, власні посилання, папку з музикою, шум або тишу.",
+      line: "Щось на фон? Музика грає й у перервах.",
+    },
+    shields: {
+      title: "Щити на час фокусу",
+      lead:
+        "Під час фокусу FocusMode може тримати відволікання подалі. У перервах і після Стоп усе повертається як було.",
+      line: "Виберіть, що має вас захищати. У перервах щити знімаються.",
+      teamsLater: "Обліковий запис Microsoft підключите пізніше в Налаштуваннях, у розділі щитів.",
+    },
+    extras: {
+      title: "Ще кілька доповнень",
+      lead: "Усе тут необов’язкове, і будь-що можна змінити пізніше в Налаштуваннях.",
+      line: "Готово! Старт чекає, коли захочете.",
+      tintHint:
+        "Тепліші кольори екрана ввечері. Типово вимкнено: години й силу можна задати в Налаштуваннях.",
+      connectTitle: "Календар і робочі інструменти",
+      connectText:
+        "Зустрічі й робочі інструменти підключите пізніше в Налаштуваннях. Лише для читання.",
+      calendarLink: "Календар у Налаштуваннях",
+      workLink: "Робочі інструменти в Налаштуваннях",
+    },
+  },
+
   nudge: {
     title: "Повертаймося до роботи",
     body: (domain: string) => `${domain} зачекає до перерви.`,
@@ -1349,6 +1517,7 @@ export const uk: Strings = {
       tooManySteps: "Не більше 5 кроків на сесію.",
       "rewards.load": "Не вдалося прочитати прогрес. Починаємо заново; старий файл збережено поруч.",
       "rewards.save": "Не вдалося зберегти прогрес. Наступна спроба — під час наступної зміни.",
+      "stats.week": "Неправильний тиждень — виберіть його ще раз.",
     },
     areas: {
       config: "Проблема з налаштуваннями.",
@@ -1374,6 +1543,7 @@ export const uk: Strings = {
       work: "Проблема з робочими інструментами («Що далі?») — сесія триває.",
       privacy: "Проблема з даними, які зберігає FocusMode.",
       rewards: "Проблема з іскорками (бета) — сесія триває.",
+      stats: "Проблема зі статистикою тижня.",
     },
   },
 
@@ -1392,6 +1562,10 @@ export const uk: Strings = {
     "tint.endMinutes": "кінець теплих кольорів",
     "tint.strength": "інтенсивність теплих кольорів",
     "tint.transitionMinutes": "плавний перехід",
+    "tint.pauseApps": "програми, де важливий колір",
+    "tint.location.latitude": "широта",
+    "tint.location.longitude": "довгота",
+    "tint.location.city": "місто",
     "tint.mode": "спосіб зміни кольорів",
     language: "мова",
     theme: "тема",
@@ -1406,6 +1580,7 @@ export const uk: Strings = {
     "work.jiraUrl": "адреса Jira",
     "work.jiraEmail": "електронна пошта облікового запису Jira",
     "work.azureOrg": "організація Azure DevOps",
+    appCategories: "мітки застосунків",
   },
 
   dialog: {

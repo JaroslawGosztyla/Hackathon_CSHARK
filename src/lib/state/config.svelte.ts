@@ -8,8 +8,59 @@ import { toasts } from "./toasts.svelte";
 const SAVE_DEBOUNCE_MS = 600;
 const FOCUS_MINUTES = { min: 1, max: 240 } as const;
 const BREAK_MINUTES = { min: 1, max: 120 } as const;
-/** Mirrors focus-core `tint.rs`: times are minutes after midnight, strength 0..=100, fade 0..=180 min. */
-const TINT = { minutesPerDay: 1440, maxStrength: 100, maxTransitionMinutes: 180 } as const;
+/**
+ * Mirrors focus-core `tint.rs`: times are minutes after midnight, strength 0..=100, fade 0..=180 min; and `config.rs`
+ * for ADR-023 (MAX_PAUSE_APPS, MAX_PROCESS_NAME_CHARS, LATITUDE_RANGE, LONGITUDE_RANGE).
+ */
+const TINT = {
+  minutesPerDay: 1440,
+  maxStrength: 100,
+  maxTransitionMinutes: 180,
+  maxPauseApps: 64,
+  maxProcessNameChars: 128,
+  maxLatitude: 90,
+  maxLongitude: 180,
+} as const;
+/**
+ * Mirrors focus-core `tint::DEFAULT_PAUSE_APPS` (ADR-023): the colour-critical apps of a fresh config, for "Restore
+ * the default list". Matched case-insensitively, so `Lightroom.exe` covers Lightroom Classic too.
+ */
+export const DEFAULT_TINT_PAUSE_APPS: readonly string[] = [
+  "Photoshop.exe",
+  "Illustrator.exe",
+  "Lightroom.exe",
+  "AfterFX.exe",
+  "Adobe Premiere Pro.exe",
+  "InDesign.exe",
+  "Figma.exe",
+  "Affinity Photo 2.exe",
+  "Affinity Designer 2.exe",
+  "Affinity Publisher 2.exe",
+  "gimp-2.10.exe",
+  "gimp-3.0.exe",
+  "krita.exe",
+  "Resolve.exe",
+  "blender.exe",
+  "Substance 3D Painter.exe",
+  "CaptureOne.exe",
+];
+
+/**
+ * Mirrors focus-core `config::is_process_name`: a trimmed exe name as the tracker reports it (`Code.exe`), at most
+ * `maxProcessNameChars` characters, no path separators, drive colons or control characters.
+ */
+export function isProcessName(name: string): boolean {
+  return (
+    name !== "" &&
+    name === name.trim() &&
+    charCount(name) <= TINT.maxProcessNameChars &&
+    !/[\\/:\p{Cc}]/u.test(name)
+  );
+}
+
+function isDegrees(value: number, max: number): boolean {
+  return Number.isFinite(value) && value >= -max && value <= max;
+}
 /** Choices offered for the tint fade (minutes); a different stored value is shown as an extra option. */
 export const TINT_TRANSITION_PRESETS = [0, 15, 30, 60, 90] as const;
 /** Mirrors focus-core `config.rs` (MAX_BREAK_REMINDERS, MAX_REMINDER_CHARS; length counted in characters). */
@@ -168,6 +219,23 @@ export function validateConfig(c: Config): Record<string, string> {
   if (!inRange(t.strength, 0, TINT.maxStrength)) errors["tint.strength"] = strings.settings.tintStrengthRange;
   if (!inRange(t.transitionMinutes, 0, TINT.maxTransitionMinutes)) {
     errors["tint.transitionMinutes"] = strings.settings.tintTransitionRange;
+  }
+  // ADR-023. The fields may be missing only when talking to an older shell build; nothing to check then.
+  const location = t.location as Config["tint"]["location"] | undefined;
+  if (location) {
+    if (!isDegrees(location.latitude, TINT.maxLatitude)) {
+      errors["tint.location.latitude"] = strings.settings.tintLatitudeRange;
+    }
+    if (!isDegrees(location.longitude, TINT.maxLongitude)) {
+      errors["tint.location.longitude"] = strings.settings.tintLongitudeRange;
+    }
+  }
+  const pauseApps = (t.pauseApps as string[] | undefined) ?? [];
+  const names = pauseApps.map((app) => app.trim()).filter((app) => app !== "");
+  if (names.some((app) => !isProcessName(app))) {
+    errors["tint.pauseApps"] = strings.settings.tintPauseAppInvalid(TINT.maxProcessNameChars);
+  } else if (new Set(names.map((app) => app.toLowerCase())).size > TINT.maxPauseApps) {
+    errors["tint.pauseApps"] = strings.settings.tintPauseAppsFull(TINT.maxPauseApps);
   }
   const reminders = c.breakReminders;
   if (reminders.length > REMINDERS.maxCount || reminders.some((r) => charCount(r.trim()) > REMINDERS.maxChars)) {

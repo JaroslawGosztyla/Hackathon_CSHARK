@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Switch from "$lib/components/Switch.svelte";
+  import { calendarEnabled } from "$lib/state/calendar.svelte";
   import { config, LIMITS } from "$lib/state/config.svelte";
   import { strings } from "$lib/strings";
 
@@ -15,6 +17,16 @@
   const breakError = $derived(config.fieldErrors.breakMinutes ?? null);
 
   const shown = (n: number | undefined) => (n !== undefined && Number.isFinite(n) ? n : null);
+
+  /** Smart breaks (ADR-023) need a calendar: without one the switch is off and points to the calendar settings. */
+  const calendarOn = $derived(calendarEnabled(cfg));
+  const smart = $derived(strings.calendar.smart);
+
+  function setSmartBreaks(on: boolean) {
+    config.update((c) => {
+      c.smartBreaks = on;
+    }, true);
+  }
 
   function setFocus(event: Event & { currentTarget: HTMLInputElement }) {
     const n = event.currentTarget.valueAsNumber;
@@ -96,6 +108,21 @@
       </button>
     {/each}
   </div>
+
+  <div class="smart">
+    <Switch
+      id="smart-breaks"
+      label={smart.toggle}
+      hint={calendarOn ? smart.hint : smart.needsCalendar}
+      checked={calendarOn && cfg?.smartBreaks === true}
+      disabled={!cfg || !calendarOn}
+      onchange={setSmartBreaks}
+    >
+      {#if cfg && !calendarOn}
+        <a class="small" href="/settings#calendar-settings">{strings.calendar.connectLink}</a>
+      {/if}
+    </Switch>
+  </div>
 </section>
 
 <style>
@@ -148,5 +175,16 @@
   .preset:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .smart {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: var(--border-w) solid var(--border);
+  }
+
+  .smart a {
+    color: var(--accent-strong);
+    font-weight: 600;
   }
 </style>

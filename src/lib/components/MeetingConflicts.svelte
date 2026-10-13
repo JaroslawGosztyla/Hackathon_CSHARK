@@ -1,11 +1,11 @@
 <script lang="ts">
   // Skupienie page: meetings that fall into a (planned) break, each with a choice, plus the next few meetings.
   // Idle, the breaks are those of a session that would start now, so the user decides before pressing Start.
-  import { formatTimeNear, formatTimeOfDay, formatTimeRange } from "$lib/format";
+  import { formatDuration, formatTimeNear, formatTimeOfDay, formatTimeRange } from "$lib/format";
   import { calendar } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
   import { strings } from "$lib/strings";
-  import type { MeetingChoice, MeetingConflict } from "$lib/types";
+  import type { Meeting, MeetingChoice, MeetingConflict, SmartBreak } from "$lib/types";
 
   /** Order of the buttons. "Przypomnij później" is offered only while a later reminder is still possible. */
   const CHOICES: readonly MeetingChoice[] = ["extend", "pauseAtBreak", "ignore", "remindLater"];
@@ -30,6 +30,11 @@
 
   const status = $derived(calendar.status);
   const conflicts = $derived(status?.conflicts ?? []);
+  /** Smart breaks (ADR-023): breaks moved around a meeting instead of a question, and the "Ask me instead" ones. */
+  const s = $derived(strings.calendar.smart);
+  const moved = $derived(status?.smartBreaks ?? []);
+  const optedOut = $derived(new Set(status?.smartOptOuts ?? []));
+  const smartOn = $derived(config.value?.smartBreaks === true || calendar.sample !== null);
   const planned = $derived(status?.planned ?? true);
   const horizonHours = $derived(config.value?.calendar.horizonHours ?? 0);
 
@@ -87,6 +92,16 @@
     return (
       (choice === "remindLater" && !conflict.remindLaterAllowed) || (holdsSession(choice) && conflict.tooLong === true)
     );
+  }
+
+  /** How much the focus block before a moved break changed: "focus 3 min shorter". */
+  function deltaText(moved: SmartBreak): string {
+    const amount = formatDuration(Math.abs(moved.focusDeltaSecs));
+    return moved.focusDeltaSecs < 0 ? s.focusShorter(amount) : s.focusLonger(amount);
+  }
+
+  function meetingOf(moved: SmartBreak): Meeting | null {
+    return status?.meetings.find((m) => m.id === moved.meetingId) ?? null;
   }
 </script>
 
@@ -177,6 +192,59 @@
             <p class="small choice-text" class:muted={current === null} aria-live="polite">
               {choiceText(conflict, current)}
             </p>
+            {#if smartOn && optedOut.has(conflict.meeting.id)}
+              <!-- "Ask me instead" was chosen for this meeting (ADR-023): smart breaks may take it back. -->
+              <p class="small smart-undo">
+                <span class="muted">{s.optedOut}</span>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  disabled={conflict.meeting.id in calendar.smartPending}
+                  onclick={() => calendar.setSmartOptOut(conflict.meeting.id, false)}
+                >
+                  {s.fitAgain}
+                </button>
+              </p>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if moved.length > 0}
+      <!-- Smart breaks (ADR-023): these meetings got a moved break instead of a question. -->
+      <p class="secondary">{s.cardLead}</p>
+      <ul class="conflicts moved">
+        {#each moved as item (item.meetingId)}
+          {@const meeting = meetingOf(item)}
+          {@const time = formatTimeNear(item.meetingStartMs, now)}
+          <li class="conflict">
+            <div class="head">
+              <span class="time tabular">{formatTimeRange(item.meetingStartMs, item.meetingEndMs, now)}</span>
+              {#if meeting}
+                <span class="subject" title={subjectOf(meeting.subject)}>{subjectOf(meeting.subject)}</span>
+                {#if meeting.online}
+                  <span class="badge" title={c.onlineAria}>{c.online}</span>
+                {/if}
+                <span class="source muted small">{c.sourceShort[meeting.source]}</span>
+              {/if}
+            </div>
+            <p class="hint tabular">
+              {c.breakInfo(item.breakNumber, formatTimeRange(item.breakStartMs, item.breakEndMs, now))} · {deltaText(
+                item,
+              )}
+            </p>
+            <div class="choices">
+              <button
+                type="button"
+                class="btn btn-sm choice"
+                disabled={item.meetingId in calendar.smartPending}
+                aria-label={s.askMeAria(time)}
+                onclick={() => calendar.setSmartOptOut(item.meetingId, true)}
+              >
+                {s.askMe}
+              </button>
+            </div>
           </li>
         {/each}
       </ul>
@@ -328,6 +396,18 @@
   .too-long {
     color: var(--text-2);
     font-weight: 600;
+  }
+
+  /* Smart breaks (ADR-023): a moved break is settled, so it reads calmer than an open question. */
+  .moved .conflict {
+    border-style: dashed;
+  }
+
+  .smart-undo {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
   }
 
   .upcoming {

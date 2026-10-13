@@ -16,6 +16,7 @@
   import TodayStrip from "$lib/components/rewards/TodayStrip.svelte";
   import SessionGoalLine from "$lib/components/SessionGoalLine.svelte";
   import ShieldChips from "$lib/components/ShieldChips.svelte";
+  import SmartBreakNote from "$lib/components/SmartBreakNote.svelte";
   import TimerRing from "$lib/components/TimerRing.svelte";
   import TimingEditor from "$lib/components/TimingEditor.svelte";
   import { formatDuration } from "$lib/format";
@@ -105,6 +106,7 @@
   class="hero"
   class:with-mascot={mascotOn}
   class:steps-focus={stepsInFocus}
+  class:smart-focus={stepsInFocus && session.smartBreak !== null}
   style:--mascot-w="{MASCOT_WIDTH}px"
   bind:this={hero}
 >
@@ -122,7 +124,14 @@
     {/key}
   </div>
 
-  <div class="controls" role="group" aria-label={strings.controls.sessionControls} bind:this={controls}>
+  <!-- `data-session-controls`: the first-run wizard focuses Start here when it closes (ADR-023). -->
+  <div
+    class="controls"
+    role="group"
+    aria-label={strings.controls.sessionControls}
+    data-session-controls
+    bind:this={controls}
+  >
     {#if session.isIdle}
       <button
         type="button"
@@ -192,6 +201,9 @@
   {#if stepsInFocus}
     <NextStep {player} />
   {/if}
+
+  <!-- Smart breaks (ADR-023): the break after this block was moved around a meeting, with "Ask me instead". -->
+  <SmartBreakNote />
 
   <SessionGoalLine />
 
@@ -304,6 +316,11 @@
   /* Focus with small steps (beta): a little tighter, so the "Teraz:" line clears the music dock at 960 × 640. */
   .hero.steps-focus {
     gap: 12px;
+  }
+
+  /* ... and a moved break's line under it (smart breaks, ADR-023): tighter still, so that line clears the dock too. */
+  .hero.steps-focus.smart-focus {
+    gap: 8px;
   }
 
   /*

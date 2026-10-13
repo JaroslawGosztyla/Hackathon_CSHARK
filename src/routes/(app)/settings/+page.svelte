@@ -5,6 +5,7 @@
   import BreakReminders from "$lib/components/BreakReminders.svelte";
   import CalendarSettings from "$lib/components/CalendarSettings.svelte";
   import ChimeSettings from "$lib/components/ChimeSettings.svelte";
+  import CloseButtonSetting from "$lib/components/CloseButtonSetting.svelte";
   import ExtensionGuide from "$lib/components/ExtensionGuide.svelte";
   import HistorySettings from "$lib/components/HistorySettings.svelte";
   import LauncherSettings from "$lib/components/LauncherSettings.svelte";
@@ -31,24 +32,11 @@
   } from "$lib/i18n/index.svelte";
   import type { Config } from "$lib/types";
 
-  /** `closeToTray` as a select value: null = ask at the first X. */
-  type CloseChoice = "ask" | "tray" | "quit";
-  const CLOSE_CHOICES: readonly CloseChoice[] = ["ask", "tray", "quit"];
-  const closeLabels = $derived<Record<CloseChoice, string>>({
-    ask: strings.settings.closeAsk,
-    tray: strings.settings.closeTray,
-    quit: strings.settings.closeQuit,
-  });
-
   const cfg = $derived(config.value);
 
   let autostart = $state<boolean | null>(null);
   let autostartBusy = $state(false);
 
-  const closeChoice = $derived.by((): CloseChoice => {
-    const v = cfg?.closeToTray;
-    return v === true ? "tray" : v === false ? "quit" : "ask";
-  });
   /** OS UI language as resolved by the shell, for the "System (…)" option (native name). */
   const systemLanguageName = $derived.by(() => {
     const lang = knownSystemLanguage();
@@ -70,12 +58,6 @@
     // Only the label of the "system" option depends on it (failures are logged by `$lib/i18n`).
     void loadSystemLanguage();
   });
-
-  function setCloseChoice(value: string) {
-    if (!CLOSE_CHOICES.includes(value as CloseChoice)) return;
-    const choice = value as CloseChoice;
-    set((c) => (c.closeToTray = choice === "ask" ? null : choice === "tray"));
-  }
 
   /** Saves `config.language`; the app layout follows it, so the whole UI switches at once. */
   function setLanguage(value: string) {
@@ -288,21 +270,7 @@
       </div>
       <div class="items">
         <div class="item">
-          <div class="field">
-            <label for="close-button">{strings.settings.closeButton}</label>
-            <select
-              id="close-button"
-              class="input select narrow"
-              value={closeChoice}
-              aria-describedby="close-button-hint"
-              onchange={(e) => setCloseChoice(e.currentTarget.value)}
-            >
-              {#each CLOSE_CHOICES as choice (choice)}
-                <option value={choice}>{closeLabels[choice]}</option>
-              {/each}
-            </select>
-            <p class="hint" id="close-button-hint">{strings.settings.closeHint}</p>
-          </div>
+          <CloseButtonSetting />
         </div>
 
         <div class="item">

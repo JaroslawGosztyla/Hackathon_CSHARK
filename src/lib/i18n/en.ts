@@ -271,6 +271,50 @@ export const en: Strings = {
       done === true ? "goal done" : done === false ? "goal not done" : "goal not answered",
   },
 
+  week: {
+    title: "This week",
+    weekNumber: (n: number) => `Week ${n}`,
+    pickerLabel: "Choose a week",
+    previous: "Previous week",
+    next: "Next week",
+    backToThisWeek: "Back to this week",
+    loading: "Loading the week…",
+    error: "Couldn't load the week's stats.",
+    retry: "Try again",
+    focusTotal: "Focus time",
+    breaksTaken: "Breaks taken",
+    sessions: "Sessions",
+    bestDay: "Best day",
+    daysTitle: "Focus by day",
+    dayLabel: (day: string, time: string) => `${day}: ${time}`,
+    noFocus: "no focus",
+    heatTitle: "When you focus",
+    heatModeLabel: "Map range",
+    heatRecent: (n: number) => `Last ${n} ${plural(n, { one: "week", other: "weeks" })}`,
+    heatCaption: (range: string) => `Focus time by day and hour, ${range}`,
+    heatRecentCaption: (n: number, range: string) =>
+      `Focus time by day and hour, ${n} ${plural(n, { one: "week", other: "weeks" })} added up: ${range}`,
+    heatDay: "Day",
+    heatCell: (day: string, hour: string, time: string) => `${day}, ${hour}: ${time}`,
+    heatLess: "less",
+    heatMore: "more",
+    estimated: "Older sessions have no saved hours, so their focus time is spread evenly from the start to the end of the session.",
+    appsTitle: "Apps this week",
+    appsHint: "Click a label to tag an app, and click it again to remove it. Only you label your apps.",
+    appsEmpty: "No app data was saved this week.",
+    labelGroup: (app: string) => `Label for ${app}`,
+    labels: { productive: "Productive", neutral: "Neutral", distracting: "Distracting" },
+    clearLabel: "Click again to remove the label",
+    shareTitle: "Time by label",
+    shares: { productive: "Productive", neutral: "Neutral", distracting: "Distracting", unlabelled: "Unlabelled" },
+    shareItem: (name: string, time: string, pct: string) => `${name}: ${time}, ${pct}`,
+    emptyCurrent: "Nothing here yet this week. When you finish a focus session, its time shows up here.",
+    emptyPast: "No focus sessions were saved this week.",
+    historyOff: "Saving history is turned off in Settings, so new sessions don't count towards the weekly stats.",
+    historyOffEmpty: "Saving history is turned off, so there's nothing to show here. You can turn it on in Settings → History.",
+    privacy: "Worked out on this computer from your saved session history. The labels stay in your settings on this computer.",
+  },
+
   settings: {
     title: "Settings",
     saving: "Saving…",
@@ -467,6 +511,51 @@ export const en: Strings = {
     tintTimeInvalid: "Enter a time, e.g. 18:00.",
     tintSameTimes: "“To” has to be different from “From”.",
     tintStrengthRange: "Enter a strength from 0 to 100.",
+    tintWhen: "When to warm up",
+    tintSchedules: {
+      fixed: "At fixed hours",
+      sun: "From sunset to sunrise",
+    },
+    tintScheduleSunHint:
+      "FocusMode works out sunset and sunrise on this computer for the place you pick — no location services and no internet.",
+    tintFallbackHint:
+      "Backup hours: used until you pick a place, and on days when the sun doesn't set or doesn't rise.",
+    tintPlace: "Place",
+    tintPlacePick: "Pick a city…",
+    tintPlaceCustom: "Custom coordinates",
+    tintPlaceOther: "Other cities",
+    tintLatitude: "Latitude",
+    tintLongitude: "Longitude",
+    tintCoordsHint: "In degrees, e.g. 52.23 and 21.01 for Warsaw. South and west with a minus sign.",
+    tintCoordsShown: (lat: string, lon: string) => `Coordinates: ${lat}, ${lon}`,
+    tintLatitudeRange: "Enter a latitude from −90 to 90 degrees.",
+    tintLongitudeRange: "Enter a longitude from −180 to 180 degrees.",
+    tintSunToday: (sunset: string, sunrise: string) => `Today: sunset ${sunset}, sunrise ${sunrise}`,
+    tintScheduleFallback: {
+      polarDay: "The sun doesn't set there today — the backup hours apply.",
+      polarNight: "The sun doesn't rise there today — the backup hours apply.",
+      noLocation: "Pick a city or enter coordinates — until then the backup hours apply.",
+    },
+    tintExceptions: "Exceptions",
+    tintPauseApps: "Pause for colour-critical apps",
+    tintPauseAppsHint:
+      "While one of them is in front, the warmth fades away and comes back a few seconds after you switch to another window.",
+    tintPauseAppsList: "Apps (.exe file names)",
+    tintPauseAppAdd: "Add",
+    tintPauseAppPlaceholder: "e.g. Photoshop.exe",
+    tintPauseAppRemove: (name: string) => `Remove ${name} from the list`,
+    tintPauseAppsReset: "Restore the default list",
+    tintPauseAppsEmpty: "The list is empty — add an app or restore the default list.",
+    tintPauseAppInvalid: (max: number) =>
+      `Enter just the file name, e.g. Photoshop.exe — no path, up to ${max} ${plural(max, { one: "character", other: "characters" })}.`,
+    tintPauseAppDuplicate: "This app is already on the list.",
+    tintPauseAppsFull: (max: number) =>
+      `The list already has ${max} ${plural(max, { one: "app", other: "apps" })} — that's the maximum.`,
+    tintPauseFullscreen: "Pause while a full-screen app or game is in front",
+    tintPauseFullscreenHint: "Also while you present. Without this, full-screen games get the warmth too.",
+    tintStatusPausedApp: (app: string) => `Paused: ${app} in front`,
+    tintStatusPausedFullscreen: "Paused: a full-screen app is in front",
+    tintStatusPausedFullscreenApp: (app: string) => `Paused: ${app} in full screen`,
     tintTransitionRange: "The smooth transition can last from 0 to 180 minutes.",
 
     languageTitle: "Language",
@@ -754,6 +843,21 @@ export const en: Strings = {
     holdPause: (subject: string) => `Break on hold — meeting: ${subject}`,
     holdPauseHint: (time: string) =>
       `The break timer is waiting. Press “Resume” when the meeting ends (planned for ${time}).`,
+
+    smart: {
+      toggle: "Smart breaks: fit breaks around meetings",
+      hint: "The break ends right before a meeting or starts with it. The focus block gets at most 40% shorter (never under 10 min) or 25% longer. If that's not enough, I'll ask.",
+      needsCalendar: "Works with a connected calendar.",
+      movedNote: (breakTime: string, meetingTime: string) => `Break moved to ${breakTime} · meeting at ${meetingTime}`,
+      runningNote: (meetingTime: string) => `Break fitted around the meeting at ${meetingTime}`,
+      askMe: "Ask me instead",
+      askMeAria: (meetingTime: string) => `Ask me instead about the meeting at ${meetingTime}`,
+      cardLead: "Smart breaks moved these breaks:",
+      focusShorter: (duration: string) => `focus ${duration} shorter`,
+      focusLonger: (duration: string) => `focus ${duration} longer`,
+      optedOut: "You chose “Ask me instead”: this break is not moved automatically.",
+      fitAgain: "Fit automatically",
+    },
   },
 
   work: {
@@ -1110,6 +1214,9 @@ export const en: Strings = {
     backLines: ["Back!", "Back in the flow.", "Back at it, together."],
     recapLines: (n: number) => [`This block: +${n}`, `Nice block: +${n}`],
     sessionTotal: (n: number) => `This session: +${n}`,
+    /** A recap that paid nothing (a very short block): the caption only, never "+0". */
+    recapPlain: "This block",
+    sessionPlain: "This session",
     dailyGoalLines: ["Daily goal!", "Day counted!"],
     streakUp: (d: number) => `Streak: ${d}`,
     milestone: (d: number) => `${d} days in a row!`,
@@ -1226,6 +1333,63 @@ export const en: Strings = {
     },
   },
 
+  /** First-run wizard (ADR-023). */
+  onboarding: {
+    docTitle: "Getting started",
+    dialogLabel: "Getting started",
+    progressLabel: "Steps",
+    steps: {
+      welcome: "Welcome",
+      music: "Music",
+      shields: "Shields",
+      extras: "Extras",
+    },
+    stepCount: (n: number, total: number) => `Step ${n} of ${total}`,
+    skip: "Skip",
+    back: "Back",
+    next: "Next",
+    finish: "Start my first focus",
+    keysNext: "Enter: next · Esc: skip",
+    keysFinish: "Enter: finish · Esc: skip",
+    skipTitle: "Skip getting started?",
+    skipBody:
+      "What you have chosen here stays. Everything else is in Settings whenever you want it.",
+    skipConfirm: "Skip",
+    skipCancel: "Back to the steps",
+    welcome: {
+      title: "Welcome to FocusMode",
+      lead:
+        "Set your times and music, press Start, and FocusMode takes you through focus and breaks until you press Stop. Let's start with the language.",
+      line: "Hi! Let me show you around. It takes a minute.",
+      languageLabel: "App language",
+    },
+    music: {
+      title: "What should play?",
+      lead:
+        "By default the built-in Open Lo-Fi plays, even offline. You can also pick a stream, your own links, a music folder, noise or silence.",
+      line: "Something in the background? The music keeps playing in breaks too.",
+    },
+    shields: {
+      title: "Shields for focus time",
+      lead:
+        "During focus FocusMode can keep distractions away. In breaks and after Stop everything goes back to normal.",
+      line: "Pick what should protect you. The shields come down in breaks.",
+      teamsLater: "Connect your Microsoft account later in Settings, under the shields.",
+    },
+    extras: {
+      title: "A few extras",
+      lead: "Everything here is optional, and you can change any of it later in Settings.",
+      line: "All set! Start is waiting whenever you are.",
+      tintHint:
+        "Warmer screen colours in the evening. Off by default: set the hours and strength in Settings.",
+      connectTitle: "Calendar and work tools",
+      connectText:
+        "Connect your meetings and your work tools later in Settings. Read-only.",
+      calendarLink: "Calendar in Settings",
+      workLink: "Work tools in Settings",
+    },
+  },
+
   nudge: {
     title: "Back to work",
     body: (domain: string) => `${domain} will wait until the break.`,
@@ -1315,6 +1479,7 @@ export const en: Strings = {
       tooManySteps: "Up to 5 steps per session.",
       "rewards.load": "Couldn't read your progress. Starting fresh; the old file is kept next to it.",
       "rewards.save": "Couldn't save your progress. It will try again with the next change.",
+      "stats.week": "That isn't a valid week — pick it again.",
     },
     areas: {
       config: "A problem with the settings.",
@@ -1340,6 +1505,7 @@ export const en: Strings = {
       work: "A problem with the work tools (What's next?) — the session goes on.",
       privacy: "A problem with the data FocusMode saves.",
       rewards: "A problem with sparks (beta) — the session goes on.",
+      stats: "A problem with the weekly stats.",
     },
   },
 
@@ -1358,6 +1524,10 @@ export const en: Strings = {
     "tint.endMinutes": "warm colours end",
     "tint.strength": "warm colours strength",
     "tint.transitionMinutes": "smooth transition",
+    "tint.pauseApps": "colour-critical apps",
+    "tint.location.latitude": "latitude",
+    "tint.location.longitude": "longitude",
+    "tint.location.city": "city",
     "tint.mode": "warming method",
     language: "language",
     theme: "theme",
@@ -1372,6 +1542,7 @@ export const en: Strings = {
     "work.jiraUrl": "Jira address",
     "work.jiraEmail": "Jira account email",
     "work.azureOrg": "Azure DevOps organization",
+    appCategories: "app labels",
   },
 
   dialog: {

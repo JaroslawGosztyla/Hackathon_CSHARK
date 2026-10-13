@@ -58,7 +58,10 @@
   const BUBBLE_GAP = 10;
   /** Extra room under the bubble when it has to stay above the session buttons. */
   const lift = $derived(Math.max(0, Math.ceil(bubbleFloor - STAND_HEIGHT - BUBBLE_GAP)));
-  /** The squash-and-stretch after a click (CSS `boing`), then a pause before a click counts again (no boing spam). */
+  /**
+   * The squash-and-stretch after a click (CSS `mascot-boing`, `--mascot-boing-ms` in app.css), then a pause before a
+   * click counts again (no boing spam).
+   */
   const BOING_MS = 700;
   const TICKLE_COOLDOWN_MS = 1000;
 
@@ -398,38 +401,9 @@
     transform-origin: 50% 100%;
   }
 
+  /* The squash-and-stretch (`mascot-boing` in app.css, shared with the first-run wizard's axolotl). */
   .hop.boing {
-    animation: boing 700ms both;
-  }
-
-  /*
-   * Squash-and-stretch from the feet, the same shape as the popup's peeking axolotl landing (`peek-enter` from its
-   * stretch on): a quick squash, a stretch lifted a few pixels, a settling squash, a small rebound, rest.
-   */
-  @keyframes boing {
-    0% {
-      transform: none;
-      animation-timing-function: cubic-bezier(0.3, 0, 0.5, 1);
-    }
-    14% {
-      transform: scale(1.08, 0.9);
-      animation-timing-function: cubic-bezier(0.2, 0.75, 0.3, 1);
-    }
-    44% {
-      transform: translateY(-6px) scale(0.9, 1.12);
-      animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
-    }
-    66% {
-      transform: translateY(0) scale(1.06, 0.94);
-      animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
-    }
-    84% {
-      transform: translateY(-1px) scale(0.98, 1.02);
-      animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
-    }
-    100% {
-      transform: none;
-    }
+    animation: mascot-boing var(--mascot-boing-ms) both;
   }
 
   /* Reduced motion: no boing and no lift (the smile and the whole text at once still answer the click). */

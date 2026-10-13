@@ -105,6 +105,41 @@ export function formatPercent(fraction: number): string {
   return pct.format(fraction);
 }
 
+// Weekly stats (ADR-023): weekday names, week ranges and hours of the day in the Intl locale of the language in use.
+
+/** A Monday (2024-01-01), so `WEEKDAY_ANCHOR + i` days is weekday `i` (0 = Monday). */
+const WEEKDAY_ANCHOR = { year: 2024, month: 0, day: 1 } as const;
+const weekdayFormats = new Map<string, Intl.DateTimeFormat>();
+const rangeFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** `pon.` / `poniedziałek` for weekday index `i` (0 = Monday … 6 = Sunday). */
+export function formatWeekday(i: number, style: "short" | "long"): string {
+  const locale = intlLocale();
+  const key = `${locale}|${style}`;
+  let format = weekdayFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, { weekday: style });
+    weekdayFormats.set(key, format);
+  }
+  return format.format(new Date(WEEKDAY_ANCHOR.year, WEEKDAY_ANCHOR.month, WEEKDAY_ANCHOR.day + i));
+}
+
+/** `12–18 paź 2026` (both ends local midnights in Unix ms; the month and year are not repeated when shared). */
+export function formatDayRange(startMs: number, endMs: number): string {
+  const locale = intlLocale();
+  let format = rangeFormats.get(locale);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, DATE_OPTIONS.date);
+    rangeFormats.set(locale, format);
+  }
+  return format.formatRange(new Date(startMs), new Date(endMs));
+}
+
+/** Local hour `h` (0..23) as a time of day in the locale: `09:00`. */
+export function formatHour(h: number): string {
+  return dateFormat("time").format(new Date(WEEKDAY_ANCHOR.year, WEEKDAY_ANCHOR.month, WEEKDAY_ANCHOR.day, h));
+}
+
 /** `Code.exe` → `Code`; keeps other names as they are. */
 export function processLabel(process: string): string {
   return process.replace(/\.exe$/i, "");

@@ -275,6 +275,56 @@ export const it: Strings = {
       done === true ? "obiettivo completato" : done === false ? "obiettivo non completato" : "obiettivo senza risposta",
   },
 
+  week: {
+    title: "Questa settimana",
+    weekNumber: (n: number) => `Settimana ${n}`,
+    pickerLabel: "Scelta della settimana",
+    previous: "Settimana precedente",
+    next: "Settimana successiva",
+    backToThisWeek: "Torna a questa settimana",
+    loading: "Caricamento della settimana…",
+    error: "Impossibile caricare le statistiche della settimana.",
+    retry: "Riprova",
+    focusTotal: "Tempo di concentrazione",
+    breaksTaken: "Pause fatte",
+    sessions: "Sessioni",
+    bestDay: "Giorno migliore",
+    daysTitle: "Concentrazione per giorno",
+    dayLabel: (day: string, time: string) => `${day}: ${time}`,
+    noFocus: "nessuna concentrazione",
+    heatTitle: "Quando ti concentri",
+    heatModeLabel: "Periodo della mappa",
+    heatRecent: (n: number) =>
+      `${plural(n, { one: "Ultima", other: "Ultime" })} ${n} ${plural(n, { one: "settimana", other: "settimane" })}`,
+    heatCaption: (range: string) => `Tempo di concentrazione per giorno e ora, ${range}`,
+    heatRecentCaption: (n: number, range: string) =>
+      `Tempo di concentrazione per giorno e ora, somma di ${n} ${plural(n, { one: "settimana", other: "settimane" })}: ${range}`,
+    heatDay: "Giorno",
+    heatCell: (day: string, hour: string, time: string) => `${day}, ${hour}: ${time}`,
+    heatLess: "meno",
+    heatMore: "più",
+    estimated:
+      "Le sessioni più vecchie non hanno gli orari salvati, quindi il loro tempo di concentrazione è distribuito in modo uniforme dall'inizio alla fine della sessione.",
+    appsTitle: "App della settimana",
+    appsHint: "Fai clic su un'etichetta per classificare un'app e di nuovo per toglierla. Le etichette le scegli solo tu.",
+    appsEmpty: "Questa settimana non sono stati salvati dati sulle app.",
+    labelGroup: (app: string) => `Etichetta per ${app}`,
+    labels: { productive: "Produttiva", neutral: "Neutra", distracting: "Distraente" },
+    clearLabel: "Fai di nuovo clic per togliere l'etichetta",
+    shareTitle: "Tempo per etichetta",
+    shares: { productive: "Produttive", neutral: "Neutre", distracting: "Distraenti", unlabelled: "Senza etichetta" },
+    shareItem: (name: string, time: string, pct: string) => `${name}: ${time}, ${pct}`,
+    emptyCurrent:
+      "Per ora qui non c'è niente questa settimana. Quando termini una sessione di concentrazione, il suo tempo compare qui.",
+    emptyPast: "Questa settimana non sono state salvate sessioni di concentrazione.",
+    historyOff:
+      "Il salvataggio della cronologia è disattivato nelle Impostazioni, quindi le nuove sessioni non entrano nelle statistiche della settimana.",
+    historyOffEmpty:
+      "Il salvataggio della cronologia è disattivato, quindi qui non c'è niente da mostrare. Puoi attivarlo in Impostazioni → Cronologia.",
+    privacy:
+      "Calcolato su questo computer dalla cronologia delle sessioni salvata. Le etichette restano nelle impostazioni di questo computer.",
+  },
+
   settings: {
     title: "Impostazioni",
     saving: "Salvataggio…",
@@ -475,6 +525,51 @@ export const it: Strings = {
     tintTimeInvalid: "Inserisci un orario, ad es. 18:00.",
     tintSameTimes: "“A” deve essere diverso da “Da”.",
     tintStrengthRange: "Inserisci un'intensità da 0 a 100.",
+    tintWhen: "Quando riscaldare",
+    tintSchedules: {
+      fixed: "A orari fissi",
+      sun: "Dal tramonto all'alba",
+    },
+    tintScheduleSunHint:
+      "FocusMode calcola tramonto e alba su questo computer per il luogo che scegli — senza servizi di localizzazione e senza internet.",
+    tintFallbackHint:
+      "Orari di riserva: valgono finché non scegli un luogo e nei giorni in cui il sole non tramonta o non sorge.",
+    tintPlace: "Luogo",
+    tintPlacePick: "Scegli una città…",
+    tintPlaceCustom: "Coordinate personalizzate",
+    tintPlaceOther: "Altre città",
+    tintLatitude: "Latitudine",
+    tintLongitude: "Longitudine",
+    tintCoordsHint: "In gradi, ad es. 52.23 e 21.01 per Varsavia. Sud e ovest con il segno meno.",
+    tintCoordsShown: (lat: string, lon: string) => `Coordinate: ${lat}, ${lon}`,
+    tintLatitudeRange: "Inserisci una latitudine da −90 a 90 gradi.",
+    tintLongitudeRange: "Inserisci una longitudine da −180 a 180 gradi.",
+    tintSunToday: (sunset: string, sunrise: string) => `Oggi: tramonto ${sunset}, alba ${sunrise}`,
+    tintScheduleFallback: {
+      polarDay: "Oggi lì il sole non tramonta — valgono gli orari di riserva.",
+      polarNight: "Oggi lì il sole non sorge — valgono gli orari di riserva.",
+      noLocation: "Scegli una città o inserisci le coordinate — fino ad allora valgono gli orari di riserva.",
+    },
+    tintExceptions: "Eccezioni",
+    tintPauseApps: "Sospendi con le app in cui i colori contano",
+    tintPauseAppsHint:
+      "Quando una di queste è in primo piano, il calore svanisce dolcemente e torna qualche secondo dopo che passi a un'altra finestra.",
+    tintPauseAppsList: "App (nomi dei file .exe)",
+    tintPauseAppAdd: "Aggiungi",
+    tintPauseAppPlaceholder: "ad es. Photoshop.exe",
+    tintPauseAppRemove: (name: string) => `Rimuovi ${name} dall'elenco`,
+    tintPauseAppsReset: "Ripristina l'elenco predefinito",
+    tintPauseAppsEmpty: "L'elenco è vuoto — aggiungi un'app o ripristina l'elenco predefinito.",
+    tintPauseAppInvalid: (max: number) =>
+      `Inserisci solo il nome del file, ad es. Photoshop.exe — senza percorso, fino a ${max} ${plural(max, { one: "carattere", other: "caratteri" })}.`,
+    tintPauseAppDuplicate: "Questa app è già nell'elenco.",
+    tintPauseAppsFull: (max: number) => `L'elenco ha già ${max} app — è il massimo.`,
+    tintPauseFullscreen: "Sospendi quando in primo piano c'è un'app o un gioco a schermo intero",
+    tintPauseFullscreenHint:
+      "Anche durante una presentazione. Senza questa opzione, anche i giochi a schermo intero vengono riscaldati.",
+    tintStatusPausedApp: (app: string) => `Sospeso: ${app} in primo piano`,
+    tintStatusPausedFullscreen: "Sospeso: schermo intero in primo piano",
+    tintStatusPausedFullscreenApp: (app: string) => `Sospeso: ${app} a schermo intero`,
     tintTransitionRange: "La transizione graduale può durare da 0 a 180 minuti.",
 
     languageTitle: "Lingua",
@@ -766,6 +861,23 @@ export const it: Strings = {
     holdPause: (subject: string) => `Pausa in attesa — riunione: ${subject}`,
     holdPauseHint: (time: string) =>
       `Il timer della pausa aspetta. Premi “Riprendi” quando la riunione finisce (fine prevista: ${time}).`,
+
+    smart: {
+      toggle: "Pause intelligenti: adatta le pause alle riunioni",
+      hint: "La pausa finisce subito prima della riunione o inizia insieme a lei. Il blocco di concentrazione si accorcia al massimo del 40% (mai sotto i 10 min) o si allunga fino al 25%. Se non basta, te lo chiedo.",
+      needsCalendar: "Funziona con un calendario collegato.",
+      movedNote: (breakTime: string, meetingTime: string) =>
+        `Pausa spostata alle ${breakTime} · riunione alle ${meetingTime}`,
+      runningNote: (meetingTime: string) => `Pausa adattata alla riunione delle ${meetingTime}`,
+      askMe: "Chiedimelo",
+      askMeAria: (meetingTime: string) =>
+        `Chiedimelo per la riunione delle ${meetingTime}, senza spostare la pausa`,
+      cardLead: "Le pause intelligenti hanno spostato queste pause:",
+      focusShorter: (duration: string) => `concentrazione più corta di ${duration}`,
+      focusLonger: (duration: string) => `concentrazione più lunga di ${duration}`,
+      optedOut: "Hai scelto “Chiedimelo”: questa pausa non viene spostata automaticamente.",
+      fitAgain: "Adatta automaticamente",
+    },
   },
 
   work: {
@@ -1134,6 +1246,9 @@ export const it: Strings = {
     backLines: ["Di nuovo qui!", "Di nuovo nel ritmo.", "Si riparte insieme."],
     recapLines: (n: number) => [`Questo blocco: +${n}`, `Bel blocco: +${n}`],
     sessionTotal: (n: number) => `Questa sessione: +${n}`,
+    /** A recap that paid nothing (a very short block): the caption only, never "+0". */
+    recapPlain: "Questo blocco",
+    sessionPlain: "Questa sessione",
     dailyGoalLines: ["Obiettivo del giorno!", "Giornata contata!"],
     streakUp: (d: number) => `Serie: ${d}`,
     milestone: (d: number) => `${d} giorni di fila!`,
@@ -1254,6 +1369,63 @@ export const it: Strings = {
     },
   },
 
+  /** First-run wizard (ADR-023). */
+  onboarding: {
+    docTitle: "Primi passi",
+    dialogLabel: "Primi passi",
+    progressLabel: "Passaggi",
+    steps: {
+      welcome: "Inizio",
+      music: "Musica",
+      shields: "Protezioni",
+      extras: "Extra",
+    },
+    stepCount: (n: number, total: number) => `Passaggio ${n} di ${total}`,
+    skip: "Salta",
+    back: "Indietro",
+    next: "Avanti",
+    finish: "Avvia la mia prima concentrazione",
+    keysNext: "Invio: avanti · Esc: salta",
+    keysFinish: "Invio: fine · Esc: salta",
+    skipTitle: "Saltare i primi passi?",
+    skipBody:
+      "Quello che hai già scelto qui resta. Tutto il resto è nelle Impostazioni, quando vuoi.",
+    skipConfirm: "Salta",
+    skipCancel: "Torna ai passaggi",
+    welcome: {
+      title: "Ti diamo il benvenuto in FocusMode",
+      lead:
+        "Imposta i tempi e la musica, premi Avvia e FocusMode ti accompagna tra concentrazione e pause finché non premi Stop. Iniziamo dalla lingua.",
+      line: "Ciao! Ti faccio fare un giro. Ci vuole un minuto.",
+      languageLabel: "Lingua dell'app",
+    },
+    music: {
+      title: "Cosa suoniamo?",
+      lead:
+        "Per impostazione predefinita suona Open Lo-Fi, inclusa nell'app, anche senza internet. Puoi anche scegliere uno stream, i tuoi link, una cartella di musica, un rumore di fondo o il silenzio.",
+      line: "Un sottofondo? La musica continua anche nelle pause.",
+    },
+    shields: {
+      title: "Protezioni per la concentrazione",
+      lead:
+        "Durante la concentrazione FocusMode può tenere lontane le distrazioni. Nelle pause e dopo Stop tutto torna come prima.",
+      line: "Scegli cosa deve proteggerti. Nelle pause le protezioni si abbassano.",
+      teamsLater: "Collegherai l'account Microsoft più tardi, nelle Impostazioni, tra le protezioni.",
+    },
+    extras: {
+      title: "Qualche extra",
+      lead: "Qui è tutto facoltativo e puoi cambiarlo più tardi nelle Impostazioni.",
+      line: "Fatto! Avvia ti aspetta quando vuoi.",
+      tintHint:
+        "Colori dello schermo più caldi la sera. Disattivato di default: orari e intensità si regolano nelle Impostazioni.",
+      connectTitle: "Calendario e strumenti di lavoro",
+      connectText:
+        "Collega le riunioni e gli strumenti di lavoro più tardi nelle Impostazioni. Solo in lettura.",
+      calendarLink: "Calendario nelle Impostazioni",
+      workLink: "Strumenti di lavoro nelle Impostazioni",
+    },
+  },
+
   nudge: {
     title: "Torna al lavoro",
     body: (domain: string) => `${domain} può aspettare fino alla pausa.`,
@@ -1347,6 +1519,7 @@ export const it: Strings = {
       tooManySteps: "Al massimo 5 passi per sessione.",
       "rewards.load": "Impossibile leggere i progressi. Si riparte da zero; il vecchio file resta accanto.",
       "rewards.save": "Impossibile salvare i progressi. Nuovo tentativo alla prossima modifica.",
+      "stats.week": "Settimana non valida: sceglila di nuovo.",
     },
     areas: {
       config: "Un problema con le impostazioni.",
@@ -1372,6 +1545,7 @@ export const it: Strings = {
       work: "Un problema con gli strumenti di lavoro (Cosa fare dopo?) — la sessione continua.",
       privacy: "Un problema con i dati salvati da FocusMode.",
       rewards: "Un problema con le scintille (beta): la sessione continua.",
+      stats: "Un problema con le statistiche della settimana.",
     },
   },
 
@@ -1390,6 +1564,10 @@ export const it: Strings = {
     "tint.endMinutes": "fine dei colori caldi",
     "tint.strength": "intensità dei colori caldi",
     "tint.transitionMinutes": "transizione graduale",
+    "tint.pauseApps": "app in cui i colori contano",
+    "tint.location.latitude": "latitudine",
+    "tint.location.longitude": "longitudine",
+    "tint.location.city": "città",
     "tint.mode": "metodo di riscaldamento",
     language: "lingua",
     theme: "tema",
@@ -1404,6 +1582,7 @@ export const it: Strings = {
     "work.jiraUrl": "indirizzo di Jira",
     "work.jiraEmail": "email dell'account Jira",
     "work.azureOrg": "organizzazione Azure DevOps",
+    appCategories: "etichette delle app",
   },
 
   dialog: {

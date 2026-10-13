@@ -147,10 +147,14 @@ export const DEV = {
   goalLine: "“What's next?” goal line",
 
   samplesTitle: "Sample data",
-  samplesHint: "In memory only: never written to history.jsonl or meeting-choices.json, no calendar or tool is contacted.",
+  samplesHint:
+    "In memory only: never written to history.jsonl, config.json (the sample week's app labels) or meeting-choices.json, no calendar or tool is contacted.",
   sampleSummary: "Summary chart + history",
   sampleWork: "“What's next?” · 5 items",
   sampleCalendar: "Calendar conflicts · 2 meetings",
+  sampleSmartBreak: "Smart break · moved break + note",
+  sampleTintPause: "Warm colours paused · Photoshop in front",
+  sampleWeek: "Sample week · 10 weeks of stats",
   clearSamples: "Clear samples",
   activeSamples: "Active:",
   noSamples: "No samples shown.",
@@ -160,6 +164,9 @@ export const DEV = {
     calendar: "calendar",
     goal: "goal",
     hold: "meeting hold",
+    smartBreak: "smart break",
+    tint: "tint pause",
+    week: "week",
     mood: "held mood",
   },
 
@@ -202,6 +209,10 @@ export const DEV = {
   appHint: "Housekeeping for repeated takes.",
   resetClose: "Reset first-close choice",
   resetCloseDone: "The next X on the main window asks again.",
+  showWizard: "Show first-run wizard",
+  showWizardHint:
+    "From its first step. Its steps change real settings, like Settings; skipping keeps onboardingDone as it is, only finishing stores it.",
+  showWizardDone: "First-run wizard shown.",
   reloadUi: "Reload UI",
   factoryReset: "Factory reset…",
   factoryResetHint: "Deletes everything FocusMode keeps on this computer and restarts it like a fresh install.",

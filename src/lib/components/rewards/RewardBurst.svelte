@@ -56,8 +56,12 @@
 
   const variant = $derived(info?.variant ?? 0);
 
-  /** The header line (the recap variant is picked once per play). */
-  function header(m: RewardMoment, n: number): string {
+  /**
+   * The header line (the recap variant is picked once per play). A recap that paid nothing (`total` 0, e.g. a very
+   * short block that still has a beat) shows its caption only, never "+0", like the floats.
+   */
+  function header(m: RewardMoment, n: number, total: number): string {
+    if (total === 0) return m.kind === "sessionEnd" ? s.sessionPlain : m.kind === "update" ? s.todayTitle : s.recapPlain;
     if (m.kind === "sessionEnd") return s.sessionTotal(n);
     if (m.kind === "update") return `${s.todayTitle}: +${n}`;
     return pickAt(s.recapLines(n), variant);
@@ -163,8 +167,8 @@
     <div class="head">
       <h2 class="total" id="{uid}-title">
         <SparkIcon size={20} />
-        <span aria-hidden="true" class="tabular">{header(moment, shownNumber)}</span>
-        <span class="sr-only">{header(moment, info.total)}</span>
+        <span aria-hidden="true" class="tabular">{header(moment, shownNumber, info.total)}</span>
+        <span class="sr-only">{header(moment, info.total, info.total)}</span>
       </h2>
       {#if moment.preview || moment.sample}<span class="badge demo">{s.demo}</span>{/if}
       {#if !embedded}<BetaBadge />{/if}

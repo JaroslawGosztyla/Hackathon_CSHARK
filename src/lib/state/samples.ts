@@ -3,7 +3,10 @@
 // the shell, and no link of a sample is ever opened. Ids start with `dev-sample-` (the shell treats meeting choices for
 // such ids as no-ops); links start with `SAMPLE_URL_PREFIX`.
 import type {
+  AppCategory,
   AppUsage,
+  CategoryTotals,
+  DayStats,
   DayCell,
   DayMark,
   MicroStep,
@@ -20,13 +23,27 @@ import type {
   Nudge,
   SessionGoal,
   SessionSummary,
+  SmartBreak,
   UsageReport,
+  WeekApp,
+  Weekday,
+  WeeklyStats,
   WorkItem,
   WorkSource,
   WorkSourceStatus,
   WorkStatus,
 } from "$lib/types";
 import { sampleTexts } from "$lib/i18n/dev";
+import {
+  dateOfDay,
+  dayOfDate,
+  DAYS_PER_WEEK,
+  HOURS_PER_DAY,
+  isoWeekOfDay,
+  localDayOf,
+  mondayOfDay,
+  weekdayIndex,
+} from "$lib/week";
 
 /** Prefix of every sample id (meetings, sessions, work items); the shell's no-op rule for meetings matches it. */
 export const SAMPLE_ID_PREFIX = "dev-sample-";
@@ -272,6 +289,185 @@ export function sampleSummaries(now: number): { last: SessionSummary | null; his
 }
 
 // ---------------------------------------------------------------------------
+// Weekly stats (ADR-023): "Sample week" on the Developer page. Built per week from the day numbers, so the week
+// picker can browse the sample like real history; nothing comes from or goes to the shell.
+// ---------------------------------------------------------------------------
+
+/** Weeks of sample history that end with the current week (the oldest one is the first the picker reaches). */
+const SAMPLE_WEEKS = 10;
+/** Mirrors focus-core `stats::RECENT_WEEKS` and `stats::TOP_APPS_PER_WEEK`. */
+const SAMPLE_RECENT_WEEKS = 8;
+const SAMPLE_TOP_APPS = 10;
+/** Focus pattern before the daily variation: [local hour, minutes of focus in it]. */
+const SAMPLE_WORKDAY: readonly (readonly [hour: number, minutes: number])[] = [
+  [8, 15],
+  [9, 45],
+  [10, 55],
+  [11, 40],
+  [13, 25],
+  [14, 50],
+  [15, 45],
+  [16, 30],
+  [17, 10],
+  [21, 20],
+];
+const SAMPLE_WEEKEND: readonly (readonly [hour: number, minutes: number])[] = [
+  [10, 30],
+  [11, 40],
+  [16, 25],
+];
+/** Chance that a weekday / a weekend day has no focus at all, and that one hour of the pattern is skipped. */
+const SAMPLE_DAY_OFF = 0.08;
+const SAMPLE_WEEKEND_OFF = 0.45;
+const SAMPLE_HOUR_SKIP = 0.18;
+/** An hour keeps 55 %..115 % of its pattern minutes. */
+const SAMPLE_MIN_SHARE = 0.55;
+const SAMPLE_SHARE_SPREAD = 0.6;
+/** One sample session holds about this much focus; a break after every this much focus, of this length. */
+const SAMPLE_SESSION_MINUTES = 100;
+const SAMPLE_FOCUS_PER_BREAK_MINUTES = 45;
+const SAMPLE_BREAK_MINUTES = 10;
+/** Share of the focus with a foreground app (the rest was idle or unknown). */
+const SAMPLE_APP_SHARE = 0.93;
+/** Apps of a sample week and their share of the app time (more than `SAMPLE_TOP_APPS`, as in real weeks). */
+const SAMPLE_WEEK_APPS: readonly (readonly [process: string, share: number])[] = [
+  ["Code.exe", 0.35],
+  ["chrome.exe", 0.17],
+  ["WindowsTerminal.exe", 0.11],
+  ["Figma.exe", 0.09],
+  ["Slack.exe", 0.06],
+  ["ms-teams.exe", 0.05],
+  ["Notion.exe", 0.05],
+  ["Discord.exe", 0.04],
+  ["OUTLOOK.EXE", 0.04],
+  ["Spotify.exe", 0.02],
+  ["Obsidian.exe", 0.02],
+];
+/** The labels a sample starts with (lowercase exe → label); the chips change only this copy in memory. */
+export const SAMPLE_WEEK_LABELS: Readonly<Record<string, AppCategory>> = {
+  "code.exe": "productive",
+  "windowsterminal.exe": "productive",
+  "figma.exe": "productive",
+  "slack.exe": "neutral",
+  "outlook.exe": "neutral",
+  "discord.exe": "distracting",
+};
+const MINUTES_PER_HOUR = 60;
+const WEEKDAYS: readonly Weekday[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+/** Seeds of the daily variation (any odd numbers; the sample only has to look the same on every click). */
+const SEED_DAY = 7919;
+const SEED_HOUR = 104_729;
+
+/** A stable pseudo-random number in [0, 1) for a seed (mulberry32 step). */
+function unit(seed: number): number {
+  let t = (seed + 0x6d2b79f5) | 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+}
+
+/** Focus seconds per local hour of one sample day (empty before the sample history and after `now`). */
+function sampleDayHours(day: number, firstDay: number, now: number): number[] {
+  const hours = new Array<number>(HOURS_PER_DAY).fill(0);
+  const today = localDayOf(now);
+  if (day < firstDay || day > today) return hours;
+  const weekend = weekdayIndex(day) >= 5;
+  if (unit(day * SEED_DAY) < (weekend ? SAMPLE_WEEKEND_OFF : SAMPLE_DAY_OFF)) return hours;
+  const clock = new Date(now);
+  for (const [hour, minutes] of weekend ? SAMPLE_WEEKEND : SAMPLE_WORKDAY) {
+    const seed = day * HOURS_PER_DAY + hour;
+    if (unit(seed) < SAMPLE_HOUR_SKIP) continue;
+    const share = SAMPLE_MIN_SHARE + SAMPLE_SHARE_SPREAD * unit(seed + SEED_HOUR);
+    let m = Math.min(MINUTES_PER_HOUR, Math.round(minutes * share));
+    if (day === today) {
+      if (hour > clock.getHours()) continue;
+      if (hour === clock.getHours()) m = Math.min(m, clock.getMinutes());
+    }
+    hours[hour] = m * MINUTE_SECS;
+  }
+  return hours;
+}
+
+const sum = (values: readonly number[]) => values.reduce((total, v) => total + v, 0);
+
+/**
+ * A plausible week of stats for the week that contains `date` (`YYYY-MM-DD`), as `get_weekly_stats` would answer:
+ * `SAMPLE_WEEKS` weeks of history ending today, with `labels` as the user's app labels.
+ */
+export function sampleWeeklyStats(
+  date: string,
+  now: number,
+  labels: Readonly<Record<string, AppCategory>>,
+): WeeklyStats {
+  const today = localDayOf(now);
+  const currentMonday = mondayOfDay(today);
+  const monday = mondayOfDay(dayOfDate(date) ?? today);
+  const firstDay = currentMonday - (SAMPLE_WEEKS - 1) * DAYS_PER_WEEK;
+  const weekHours = (start: number) =>
+    Array.from({ length: DAYS_PER_WEEK }, (_, i) => sampleDayHours(start + i, firstDay, now));
+
+  const heatmap = weekHours(monday);
+  const recentHeatmap = heatmap.map((row) => [...row]);
+  for (let w = 1; w < SAMPLE_RECENT_WEEKS; w++) {
+    weekHours(monday - w * DAYS_PER_WEEK).forEach((row, d) => row.forEach((secs, h) => (recentHeatmap[d][h] += secs)));
+  }
+
+  let breaksTaken = 0;
+  const days: DayStats[] = heatmap.map((row, i) => {
+    const focusSecs = sum(row);
+    const focusMinutes = focusSecs / MINUTE_SECS;
+    const breaks = Math.floor(focusMinutes / SAMPLE_FOCUS_PER_BREAK_MINUTES);
+    breaksTaken += breaks;
+    return {
+      date: dateOfDay(monday + i),
+      weekday: WEEKDAYS[i] ?? "mon",
+      focusSecs,
+      breakSecs: breaks * SAMPLE_BREAK_MINUTES * MINUTE_SECS,
+      sessions: focusSecs > 0 ? Math.ceil(focusMinutes / SAMPLE_SESSION_MINUTES) : 0,
+    };
+  });
+  const focusSecs = sum(days.map((d) => d.focusSecs));
+  const best = days.reduce<DayStats | null>((top, d) => (d.focusSecs > (top?.focusSecs ?? 0) ? d : top), null);
+
+  const appSecs = Math.round(focusSecs * SAMPLE_APP_SHARE);
+  const categories: CategoryTotals = { productiveSecs: 0, neutralSecs: 0, distractingSecs: 0, unlabelledSecs: 0 };
+  const apps: WeekApp[] = SAMPLE_WEEK_APPS.map(([process, share]) => {
+    const category = labels[process.toLowerCase()] ?? null;
+    return { process, secs: Math.round(appSecs * share), category };
+  }).filter((app) => app.secs > 0);
+  for (const app of apps) {
+    if (app.category === "productive") categories.productiveSecs += app.secs;
+    else if (app.category === "neutral") categories.neutralSecs += app.secs;
+    else if (app.category === "distracting") categories.distractingSecs += app.secs;
+    else categories.unlabelledSecs += app.secs;
+  }
+  apps.sort((a, b) => b.secs - a.secs || a.process.toLowerCase().localeCompare(b.process.toLowerCase()));
+
+  const iso = isoWeekOfDay(monday);
+  return {
+    revision: 0,
+    weekStart: dateOfDay(monday),
+    isoYear: iso.year,
+    isoWeek: iso.week,
+    currentWeek: monday === currentMonday,
+    firstWeekStart: dateOfDay(firstDay),
+    historyOff: false,
+    days,
+    focusSecs,
+    breakSecs: sum(days.map((d) => d.breakSecs)),
+    breaksTaken,
+    sessions: sum(days.map((d) => d.sessions)),
+    bestDay: best?.weekday ?? null,
+    heatmap,
+    recentHeatmap,
+    recentWeeks: SAMPLE_RECENT_WEEKS,
+    topApps: apps.slice(0, SAMPLE_TOP_APPS),
+    categories,
+    estimated: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // "Co dalej?" (work items)
 // ---------------------------------------------------------------------------
 
@@ -462,6 +658,47 @@ export function sampleCalendar(now: number, plan: BreakPlan): CalendarStatus {
     planned: plan.planned,
     lastSyncMs: now - LAST_SYNC_MINUTES_AGO * MINUTE_MS,
     googlePending: false,
+    smartBreaks: [],
+    smartOptOuts: [],
+  };
+}
+
+/** Smart breaks sample (ADR-023): the first meeting starts this far into the first break (0..1). */
+const SMART_MEETING_INTO_BREAK = 0.8;
+
+/**
+ * Smart breaks (ADR-023): the sample calendar with its first meeting late in the first break, which smart breaks moved
+ * so that it ends right when the meeting starts (the focus block before it a little shorter). The second meeting
+ * stays a question. `moved` is also the line under the timer.
+ */
+export function sampleSmartCalendar(now: number, plan: BreakPlan): { status: CalendarStatus; moved: SmartBreak } {
+  const base = sampleCalendar(now, plan);
+  const [first, ...rest] = base.conflicts;
+  const breakMs = plan.breakSecs * SECOND_MS;
+  const startMs = first.breakStartMs + Math.round(breakMs * SMART_MEETING_INTO_BREAK);
+  const meeting: Meeting = {
+    ...first.meeting,
+    startMs,
+    endMs: startMs + (first.meeting.endMs - first.meeting.startMs),
+  };
+  const moved: SmartBreak = {
+    meetingId: meeting.id,
+    meetingStartMs: meeting.startMs,
+    meetingEndMs: meeting.endMs,
+    breakNumber: first.breakNumber,
+    kind: "endsBeforeMeeting",
+    focusDeltaSecs: Math.round((startMs - breakMs - first.breakStartMs) / SECOND_MS),
+    breakStartMs: startMs - breakMs,
+    breakEndMs: startMs,
+  };
+  return {
+    status: {
+      ...base,
+      meetings: base.meetings.map((m) => (m.id === meeting.id ? meeting : m)),
+      conflicts: rest,
+      smartBreaks: [moved],
+    },
+    moved,
   };
 }
 

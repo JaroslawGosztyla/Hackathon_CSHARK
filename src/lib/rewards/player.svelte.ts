@@ -86,9 +86,10 @@ function caption(m: RewardMoment): string {
     case "goalDone":
       return s.goalDoneLine(m.sparks);
     case "sessionEnd":
-      return s.sessionTotal(burstSparks(m));
+      return burstSparks(m) > 0 ? s.sessionTotal(burstSparks(m)) : s.sessionPlain;
     default:
-      return pick(s.recapLines(burstSparks(m)));
+      // A recap that paid nothing: the caption only, never "+0".
+      return burstSparks(m) > 0 ? pick(s.recapLines(burstSparks(m))) : m.kind === "update" ? s.todayTitle : s.recapPlain;
   }
 }
 

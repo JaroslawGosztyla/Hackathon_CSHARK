@@ -20,12 +20,23 @@ import type { ChimeKind, ChimeSound, DevAction, Language, MeetingChoice, Phase, 
 import { calendar } from "./calendar.svelte";
 import { config } from "./config.svelte";
 import { nudge } from "./nudge.svelte";
+import { onboarding } from "./onboarding.svelte";
 import { rewards } from "./rewards.svelte";
-import { sampleCalendar, sampleGoal, sampleHold, sampleNudge, sampleSummaries, sampleWork, type BreakPlan } from "./samples";
+import {
+  sampleCalendar,
+  sampleGoal,
+  sampleHold,
+  sampleNudge,
+  sampleSmartCalendar,
+  sampleSummaries,
+  sampleWork,
+  type BreakPlan,
+} from "./samples";
 import { session } from "./session.svelte";
 import { summary } from "./summary.svelte";
 import { tint } from "./tint.svelte";
 import { toasts } from "./toasts.svelte";
+import { weekly } from "./weekly.svelte";
 import { work } from "./work.svelte";
 
 /** A main-window effect fires this long after its page mounted: the tab slide (app.css, ~460 ms) has ended. */
@@ -142,6 +153,9 @@ class DevStore {
     if (calendar.sample !== null) out.push(names.calendar);
     if (session.sampleGoal !== null) out.push(names.goal);
     if (session.sampleHold !== null) out.push(names.hold);
+    if (session.sampleSmartBreak !== null) out.push(names.smartBreak);
+    if (tint.sample !== null) out.push(names.tint);
+    if (weekly.sampling) out.push(names.week);
     if (this.mascotMood !== null) out.push(names.mood);
     if (rewards.sampling) out.push(DEV_REWARDS.sampleName);
     return out;
@@ -359,6 +373,13 @@ class DevStore {
     await this.go("/summary");
   }
 
+  /** Weekly stats (ADR-023): ten weeks of sample history in Podsumowanie → "Ten tydzień"; its labels stay in memory. */
+  async showWeekSample(): Promise<void> {
+    weekly.showSample();
+    this.ok(DEV.sent(DEV.sampleWeek));
+    await this.go("/summary");
+  }
+
   async showWorkSample(): Promise<void> {
     work.showSample(sampleWork(Date.now()));
     this.ok(DEV.sent(DEV.sampleWork));
@@ -372,13 +393,33 @@ class DevStore {
     await this.go("/");
   }
 
+  /** Smart breaks (ADR-023): a moved break in the meetings card and the line under the timer (any phase). */
+  async showSmartBreakSample(): Promise<void> {
+    const now = Date.now();
+    const { status, moved } = sampleSmartCalendar(now, breakPlan(now));
+    calendar.showSample(status);
+    session.sampleSmartBreak = moved;
+    this.ok(DEV.sent(DEV.sampleSmartBreak));
+    await this.go("/");
+  }
+
+  /** Tint exceptions (ADR-023): the "Paused: Photoshop in front" status in Settings → warm screen colours. */
+  async showTintPauseSample(): Promise<void> {
+    tint.showSample();
+    this.ok(DEV.sent(DEV.sampleTintPause));
+    await this.go("/settings");
+  }
+
   /** Drops every sample layer, the held mood, a sample banner and the waiting requests: the real data shows again. */
   clearSamples(report = true): void {
+    tint.clearSample();
     summary.clearSample();
+    weekly.clearSample();
     work.clearSample();
     calendar.clearSample();
     session.sampleGoal = null;
     session.sampleHold = null;
+    session.sampleSmartBreak = null;
     this.mascotMood = null;
     rewards.clearSamples();
     this.queue = [];
@@ -445,6 +486,12 @@ class DevStore {
 
   resetCloseChoice(): void {
     if (config.update((c) => (c.closeToTray = null), true)) this.ok(DEV.resetCloseDone);
+  }
+
+  /** The first-run wizard from its first step (ADR-023): `onboardingDone` stays as it is unless it is finished. */
+  showFirstRunWizard(): void {
+    onboarding.showPreview();
+    this.ok(DEV.showWizardDone);
   }
 
   reloadUi(): void {

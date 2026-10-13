@@ -393,7 +393,9 @@ export function announce(m: RewardMoment, s: RewardStrings, showStreak = true): 
     case "goalDone":
       return s.goalDoneLine(m.sparks);
     default: {
-      const parts = [s.announceSparks(burstSparks(m))];
+      // A recap that paid nothing announces only its beats (never "0 sparks").
+      const sparks = burstSparks(m);
+      const parts = sparks > 0 ? [s.announceSparks(sparks)] : [];
       if (m.surprise !== null) parts.push(s.announceSurprise(rarityName(m.surprise, s)));
       if (m.dailyGoal) parts.push(s.announceDailyGoal);
       if (m.streak !== null && showStreak) parts.push(s.announceStreak(m.streak));

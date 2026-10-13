@@ -10,6 +10,7 @@
   import Background from "$lib/components/Background.svelte";
   import ClosePrompt from "$lib/components/ClosePrompt.svelte";
   import NudgeBanner from "$lib/components/NudgeBanner.svelte";
+  import FirstRunWizard from "$lib/components/onboarding/FirstRunWizard.svelte";
   import RewardsPill from "$lib/components/rewards/RewardsPill.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import { formatClock } from "$lib/format";
@@ -19,6 +20,7 @@
   import { config } from "$lib/state/config.svelte";
   import { dev, useDevRequests } from "$lib/state/dev.svelte";
   import { music } from "$lib/state/music.svelte";
+  import { onboarding } from "$lib/state/onboarding.svelte";
   import { rewards } from "$lib/state/rewards.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
@@ -27,6 +29,17 @@
   let { children }: { children: Snippet } = $props();
 
   onMount(() => initAppState());
+
+  // ---------------------------------------------------------------------------
+  // First-run wizard (ADR-023): a fresh install's first config opens it once. While it is open it covers the window:
+  // the page is not rendered (its settings live in the wizard then), the header and the music bar are inert (the
+  // player keeps running: music must never stop because of it), and the shell carries on as usual (tray, popups).
+  // ---------------------------------------------------------------------------
+
+  $effect(() => {
+    const cfg = config.value;
+    untrack(() => onboarding.follow(cfg));
+  });
 
   interface NavLink {
     href: string;
@@ -252,7 +265,7 @@
 
 <Background {theme} pan={panIndex} steps={links.length - 1} />
 
-<div class="app" class:with-video={reserveVideo}>
+<div class="app" class:with-video={reserveVideo} inert={onboarding.open}>
   <header class="top">
     <a class="brand" href="/">
       <span class="logo" aria-hidden="true"><AppLogo /></span>
@@ -299,11 +312,19 @@
 
   <main>
     <NudgeBanner />
-    {@render children()}
+    <!-- Not under the first-run wizard: its steps show the same settings (one copy of each id and radio group). -->
+    {#if !onboarding.open}
+      {@render children()}
+    {/if}
   </main>
 </div>
 
-<MusicPlayer />
+<div class="dock-host" inert={onboarding.open}>
+  <MusicPlayer />
+</div>
+{#if onboarding.open}
+  <FirstRunWizard {theme} />
+{/if}
 <Toasts />
 <ClosePrompt />
 <p class="sr-only" aria-live="polite" aria-atomic="true">{session.announcement}</p>

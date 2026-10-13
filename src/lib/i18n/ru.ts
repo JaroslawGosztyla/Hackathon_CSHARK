@@ -280,6 +280,53 @@ export const ru: Strings = {
       done === true ? "цель выполнена" : done === false ? "цель не выполнена" : "цель без ответа",
   },
 
+  week: {
+    title: "Эта неделя",
+    weekNumber: (n: number) => `Неделя ${n}`,
+    pickerLabel: "Выбор недели",
+    previous: "Предыдущая неделя",
+    next: "Следующая неделя",
+    backToThisWeek: "Вернуться к этой неделе",
+    loading: "Загрузка недели…",
+    error: "Не удалось загрузить статистику недели.",
+    retry: "Повторить",
+    focusTotal: "Время фокуса",
+    breaksTaken: "Сделанные перерывы",
+    sessions: "Сессии",
+    bestDay: "Лучший день",
+    daysTitle: "Фокус по дням",
+    dayLabel: (day: string, time: string) => `${day}: ${time}`,
+    noFocus: "без фокуса",
+    heatTitle: "Когда вы сосредоточены",
+    heatModeLabel: "Период карты",
+    heatRecent: (n: number) => `Последние ${n} ${plural(n, "неделя", "недели", "недель")}`,
+    heatCaption: (range: string) => `Время фокуса по дням и часам, ${range}`,
+    heatRecentCaption: (n: number, range: string) =>
+      `Время фокуса по дням и часам, сумма за ${n} ${plural(n, "неделю", "недели", "недель")}: ${range}`,
+    heatDay: "День",
+    heatCell: (day: string, hour: string, time: string) => `${day}, ${hour}: ${time}`,
+    heatLess: "меньше",
+    heatMore: "больше",
+    estimated:
+      "Для более старых сессий часы не сохранены, поэтому их время фокуса равномерно распределено от начала до конца сессии.",
+    appsTitle: "Приложения недели",
+    appsHint: "Нажмите метку, чтобы отметить приложение, и еще раз — чтобы ее убрать. Метки ставите только вы.",
+    appsEmpty: "На этой неделе данные о приложениях не сохранены.",
+    labelGroup: (app: string) => `Метка для ${app}`,
+    labels: { productive: "Продуктивное", neutral: "Нейтральное", distracting: "Отвлекает" },
+    clearLabel: "Нажмите еще раз, чтобы убрать метку",
+    shareTitle: "Время по меткам",
+    shares: { productive: "Продуктивные", neutral: "Нейтральные", distracting: "Отвлекающие", unlabelled: "Без метки" },
+    shareItem: (name: string, time: string, pct: string) => `${name}: ${time}, ${pct}`,
+    emptyCurrent: "На этой неделе здесь пока ничего нет. Когда вы завершите сессию фокуса, ее время появится здесь.",
+    emptyPast: "На этой неделе сессии фокуса не сохранены.",
+    historyOff: "Сохранение истории выключено в настройках, поэтому новые сессии не попадают в статистику недели.",
+    historyOffEmpty:
+      "Сохранение истории выключено, поэтому здесь нечего показать. Включить его можно в «Настройки → История».",
+    privacy:
+      "Посчитано на этом компьютере по сохраненной истории сессий. Метки остаются в настройках на этом компьютере.",
+  },
+
   settings: {
     title: "Настройки",
     saving: "Сохранение…",
@@ -480,6 +527,51 @@ export const ru: Strings = {
     tintTimeInvalid: "Введите время, например 18:00.",
     tintSameTimes: "Время «До» должно отличаться от «С».",
     tintStrengthRange: "Введите интенсивность от 0 до 100.",
+    tintWhen: "Когда делать теплее",
+    tintSchedules: {
+      fixed: "В заданные часы",
+      sun: "От заката до восхода солнца",
+    },
+    tintScheduleSunHint:
+      "FocusMode вычисляет закат и восход солнца на этом компьютере для выбранного вами места — без служб геолокации и без интернета.",
+    tintFallbackHint:
+      "Резервные часы: действуют, пока вы не выберете место, а также в дни, когда солнце не заходит или не восходит.",
+    tintPlace: "Место",
+    tintPlacePick: "Выберите город…",
+    tintPlaceCustom: "Свои координаты",
+    tintPlaceOther: "Другие города",
+    tintLatitude: "Широта",
+    tintLongitude: "Долгота",
+    tintCoordsHint: "В градусах, например 52.23 и 21.01 для Варшавы. Юг и запад со знаком минус.",
+    tintCoordsShown: (lat: string, lon: string) => `Координаты: ${lat}, ${lon}`,
+    tintLatitudeRange: "Введите широту от −90 до 90 градусов.",
+    tintLongitudeRange: "Введите долготу от −180 до 180 градусов.",
+    tintSunToday: (sunset: string, sunrise: string) => `Сегодня: закат ${sunset}, восход ${sunrise}`,
+    tintScheduleFallback: {
+      polarDay: "Сегодня там солнце не заходит — действуют резервные часы.",
+      polarNight: "Сегодня там солнце не восходит — действуют резервные часы.",
+      noLocation: "Выберите город или введите координаты — до тех пор действуют резервные часы.",
+    },
+    tintExceptions: "Исключения",
+    tintPauseApps: "Приостанавливать для программ, где важен цвет",
+    tintPauseAppsHint:
+      "Когда одна из них на переднем плане, тепло плавно исчезает и возвращается через несколько секунд после перехода в другое окно.",
+    tintPauseAppsList: "Программы (имена файлов .exe)",
+    tintPauseAppAdd: "Добавить",
+    tintPauseAppPlaceholder: "например Photoshop.exe",
+    tintPauseAppRemove: (name: string) => `Убрать ${name} из списка`,
+    tintPauseAppsReset: "Восстановить стандартный список",
+    tintPauseAppsEmpty: "Список пуст — добавьте программу или восстановите стандартный список.",
+    tintPauseAppInvalid: (max: number) =>
+      `Введите только имя файла, например Photoshop.exe, — без пути, до ${max} ${plural(max, "символа", "символов", "символов")}.`,
+    tintPauseAppDuplicate: "Эта программа уже есть в списке.",
+    tintPauseAppsFull: (max: number) =>
+      `В списке уже ${max} ${plural(max, "программа", "программы", "программ")} — это максимум.`,
+    tintPauseFullscreen: "Приостанавливать, когда на переднем плане приложение или игра на весь экран",
+    tintPauseFullscreenHint: "Также во время презентации. Без этого игры на весь экран тоже становятся теплее.",
+    tintStatusPausedApp: (app: string) => `Приостановлено: ${app} на переднем плане`,
+    tintStatusPausedFullscreen: "Приостановлено: полноэкранный режим на переднем плане",
+    tintStatusPausedFullscreenApp: (app: string) => `Приостановлено: ${app} в полноэкранном режиме`,
     tintTransitionRange: "Плавный переход может длиться от 0 до 180 минут.",
 
     languageTitle: "Язык",
@@ -769,6 +861,22 @@ export const ru: Strings = {
     holdPause: (subject: string) => `Перерыв приостановлен — встреча: ${subject}`,
     holdPauseHint: (time: string) =>
       `Таймер перерыва ждет. Нажмите «Продолжить», когда встреча закончится (по плану в ${time}).`,
+
+    smart: {
+      toggle: "Умные перерывы: подстраивать перерывы под встречи",
+      hint: "Перерыв закончится прямо перед встречей или начнется вместе с ней. Блок фокуса сокращается не больше чем на 40 % (но не короче 10 мин) или удлиняется до 25 %. Если этого мало, я спрошу.",
+      needsCalendar: "Работает с подключенным календарем.",
+      movedNote: (breakTime: string, meetingTime: string) =>
+        `Перерыв перенесен на ${breakTime} · встреча в ${meetingTime}`,
+      runningNote: (meetingTime: string) => `Перерыв подстроен под встречу в ${meetingTime}`,
+      askMe: "Лучше спросить",
+      askMeAria: (meetingTime: string) => `Лучше спросить о встрече в ${meetingTime}, не перенося перерыв`,
+      cardLead: "Умные перерывы перенесли эти перерывы:",
+      focusShorter: (duration: string) => `фокус короче на ${duration}`,
+      focusLonger: (duration: string) => `фокус длиннее на ${duration}`,
+      optedOut: "Выбрано «Лучше спросить»: этот перерыв не переносится автоматически.",
+      fitAgain: "Подстроить автоматически",
+    },
   },
 
   work: {
@@ -1140,6 +1248,9 @@ export const ru: Strings = {
     backLines: ["Обратно в фокус!", "Снова в ритме.", "Возвращаемся вместе."],
     recapLines: (n: number) => [`Этот блок: +${n}`, `Хороший блок: +${n}`],
     sessionTotal: (n: number) => `Эта сессия: +${n}`,
+    /** A recap that paid nothing (a very short block): the caption only, never "+0". */
+    recapPlain: "Этот блок",
+    sessionPlain: "Эта сессия",
     dailyGoalLines: ["Цель дня!", "День засчитан!"],
     streakUp: (d: number) => `Серия: ${d}`,
     milestone: (d: number) => `${d} ${plural(d, "день", "дня", "дней")} подряд!`,
@@ -1259,6 +1370,63 @@ export const ru: Strings = {
     },
   },
 
+  /** First-run wizard (ADR-023). */
+  onboarding: {
+    docTitle: "Первые шаги",
+    dialogLabel: "Первые шаги",
+    progressLabel: "Шаги",
+    steps: {
+      welcome: "Приветствие",
+      music: "Музыка",
+      shields: "Щиты",
+      extras: "Дополнительно",
+    },
+    stepCount: (n: number, total: number) => `Шаг ${n} из ${total}`,
+    skip: "Пропустить",
+    back: "Назад",
+    next: "Далее",
+    finish: "Начать первый фокус",
+    keysNext: "Enter: далее · Esc: пропустить",
+    keysFinish: "Enter: завершить · Esc: пропустить",
+    skipTitle: "Пропустить первые шаги?",
+    skipBody:
+      "То, что вы уже выбрали здесь, сохранится. Все остальное всегда есть в Настройках.",
+    skipConfirm: "Пропустить",
+    skipCancel: "Вернуться к шагам",
+    welcome: {
+      title: "Добро пожаловать в FocusMode",
+      lead:
+        "Задайте время и музыку, нажмите Старт, и FocusMode проведет вас через фокус и перерывы, пока вы не нажмете Стоп. Начнем с языка.",
+      line: "Привет! Я все покажу. Это займет минутку.",
+      languageLabel: "Язык приложения",
+    },
+    music: {
+      title: "Что будет играть?",
+      lead:
+        "По умолчанию играет встроенная Open Lo-Fi, даже без интернета. Можно также выбрать трансляцию, свои ссылки, папку с музыкой, шум или тишину.",
+      line: "Что-нибудь на фон? Музыка играет и в перерывах.",
+    },
+    shields: {
+      title: "Щиты на время фокуса",
+      lead:
+        "Во время фокуса FocusMode может держать отвлечения подальше. В перерывах и после Стоп все возвращается как было.",
+      line: "Выберите, что будет вас защищать. В перерывах щиты снимаются.",
+      teamsLater: "Учетную запись Microsoft подключите позже в Настройках, в разделе щитов.",
+    },
+    extras: {
+      title: "Еще немного дополнений",
+      lead: "Здесь все необязательно, и все можно изменить позже в Настройках.",
+      line: "Готово! Старт ждет, когда захотите.",
+      tintHint:
+        "Более теплые цвета экрана вечером. По умолчанию выключено: часы и силу можно задать в Настройках.",
+      connectTitle: "Календарь и рабочие инструменты",
+      connectText:
+        "Встречи и рабочие инструменты подключите позже в Настройках. Только чтение.",
+      calendarLink: "Календарь в Настройках",
+      workLink: "Рабочие инструменты в Настройках",
+    },
+  },
+
   nudge: {
     title: "Вернемся к работе",
     body: (domain: string) => `${domain} подождет до перерыва.`,
@@ -1351,6 +1519,7 @@ export const ru: Strings = {
       tooManySteps: "Не больше 5 шагов на сессию.",
       "rewards.load": "Не удалось прочитать прогресс. Начинаем заново; старый файл сохранен рядом.",
       "rewards.save": "Не удалось сохранить прогресс. Следующая попытка — при следующем изменении.",
+      "stats.week": "Неверная неделя — выберите ее еще раз.",
     },
     areas: {
       config: "Проблема с настройками.",
@@ -1376,6 +1545,7 @@ export const ru: Strings = {
       work: "Проблема с рабочими инструментами («Что дальше?») — сессия продолжается.",
       privacy: "Проблема с данными, которые сохраняет FocusMode.",
       rewards: "Проблема с искорками (бета) — сессия продолжается.",
+      stats: "Проблема со статистикой недели.",
     },
   },
 
@@ -1394,6 +1564,10 @@ export const ru: Strings = {
     "tint.endMinutes": "конец теплых цветов",
     "tint.strength": "интенсивность теплых цветов",
     "tint.transitionMinutes": "плавный переход",
+    "tint.pauseApps": "программы, где важен цвет",
+    "tint.location.latitude": "широта",
+    "tint.location.longitude": "долгота",
+    "tint.location.city": "город",
     "tint.mode": "способ смены цветов",
     language: "язык",
     theme: "тема",
@@ -1408,6 +1582,7 @@ export const ru: Strings = {
     "work.jiraUrl": "адрес Jira",
     "work.jiraEmail": "электронная почта учетной записи Jira",
     "work.azureOrg": "организация Azure DevOps",
+    appCategories: "метки приложений",
   },
 
   dialog: {

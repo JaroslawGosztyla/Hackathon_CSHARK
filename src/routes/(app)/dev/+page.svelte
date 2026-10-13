@@ -305,8 +305,15 @@
           </div>
           <div class="buttons">
             <button type="button" class="btn btn-sm" onclick={() => dev.showSummarySample()}>{DEV.sampleSummary}</button>
+            <button type="button" class="btn btn-sm" onclick={() => dev.showWeekSample()}>{DEV.sampleWeek}</button>
             <button type="button" class="btn btn-sm" onclick={() => dev.showWorkSample()}>{DEV.sampleWork}</button>
             <button type="button" class="btn btn-sm" onclick={() => dev.showCalendarSample()}>{DEV.sampleCalendar}</button>
+            <button type="button" class="btn btn-sm" onclick={() => dev.showSmartBreakSample()}>
+              {DEV.sampleSmartBreak}
+            </button>
+            <button type="button" class="btn btn-sm" onclick={() => dev.showTintPauseSample()}>
+              {DEV.sampleTintPause}
+            </button>
             <button
               type="button"
               class="btn btn-sm btn-danger"
@@ -338,8 +345,18 @@
             <button type="button" class="btn btn-sm" disabled={!config.ready} onclick={() => dev.resetCloseChoice()}>
               {DEV.resetClose}
             </button>
+            <button
+              type="button"
+              class="btn btn-sm"
+              disabled={!config.ready}
+              aria-describedby="dev-wizard-hint"
+              onclick={() => dev.showFirstRunWizard()}
+            >
+              {DEV.showWizard}
+            </button>
             <button type="button" class="btn btn-sm" onclick={() => dev.reloadUi()}>{DEV.reloadUi}</button>
           </div>
+          <p class="hint" id="dev-wizard-hint">{DEV.showWizardHint}</p>
           <div class="danger-row">
             <p class="hint" id="dev-factory-reset-hint">{DEV.factoryResetHint}</p>
             <button

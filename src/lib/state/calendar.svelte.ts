@@ -4,10 +4,22 @@
 // never kept here) and never appear in errors, toasts or logs.
 import * as api from "$lib/api";
 import { errorText } from "$lib/strings";
-import type { AppError, CalendarSource, CalendarSourceStatus, CalendarStatus, Config, MeetingChoice } from "$lib/types";
+import type {
+  AppError,
+  CalendarSource,
+  CalendarSourceStatus,
+  CalendarStatus,
+  Config,
+  MeetingChoice,
+  MeetingConflict,
+  SmartBreak,
+} from "$lib/types";
 import { config } from "./config.svelte";
 import { isSampleId } from "./samples";
+import { session } from "./session.svelte";
 import { toasts } from "./toasts.svelte";
+
+const SECOND_MS = 1000;
 
 /** Anything that looks like a link (`https://…`, `webcal://…`, `www.…`); cut out of every text shown to the user. */
 const LINK = /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)\S+/gi;
@@ -74,6 +86,10 @@ class CalendarStore {
   sample = $state.raw<CalendarStatus | null>(null);
   /** Choice sent for a meeting id and not answered yet; shown right away and blocks a second click. */
   pending = $state<Record<string, MeetingChoice>>({});
+  /** Smart breaks (ADR-023): "Ask me instead" / "Fit automatically" sent for a meeting id and not answered yet. */
+  smartPending = $state<Record<string, boolean>>({});
+  /** Sample moved breaks taken back by "Ask me instead", so "Fit automatically" can bring them back (memory only). */
+  #sampleMoved: Record<string, SmartBreak> = {};
   refreshing = $state(false);
   /** `connect_google` is being called (the shell then reports `googlePending` itself). */
   googleStarting = $state(false);
@@ -100,6 +116,7 @@ class CalendarStore {
 
   clearSample(): void {
     this.sample = null;
+    this.#sampleMoved = {};
   }
 
   /** Reads the current status again (planned breaks move with the clock while idle). Failures stay quiet. */
@@ -149,6 +166,72 @@ class CalendarStore {
     } finally {
       delete this.pending[meetingId];
     }
+  }
+
+  /**
+   * Smart breaks (ADR-023): "Ask me instead" (`optOut`) for a meeting whose break was moved: the session gets its
+   * unmoved end back and the meeting is asked about like any collision. `false` ("Fit automatically") lets smart
+   * breaks move the break again (the shell also forgets an answer given meanwhile). Resolves true when accepted.
+   */
+  async setSmartOptOut(meetingId: string, optOut: boolean): Promise<boolean> {
+    if (meetingId in this.smartPending) return false;
+    if (isSampleId(meetingId)) {
+      this.#sampleOptOut(meetingId, optOut);
+      return true;
+    }
+    this.smartPending[meetingId] = optOut;
+    try {
+      this.apply(await api.setSmartBreakOptOut(meetingId, optOut));
+      return true;
+    } catch (e) {
+      reportCalendarError(e);
+      return false;
+    } finally {
+      delete this.smartPending[meetingId];
+    }
+  }
+
+  /** The developer-mode sample's answer (ADR-019): the moved break becomes a question and back, in memory only. */
+  #sampleOptOut(meetingId: string, optOut: boolean): void {
+    if (session.sampleSmartBreak?.meetingId === meetingId && optOut) session.sampleSmartBreak = null;
+    const sample = this.sample;
+    if (!sample) return;
+    const others = sample.smartOptOuts.filter((id) => id !== meetingId);
+    if (optOut) {
+      const moved = sample.smartBreaks.find((b) => b.meetingId === meetingId);
+      const meeting = sample.meetings.find((m) => m.id === meetingId);
+      if (!moved || !meeting) return;
+      this.#sampleMoved[meetingId] = moved;
+      // The break goes back where it was: the focus block before it has its full length again.
+      const startMs = moved.breakStartMs - moved.focusDeltaSecs * SECOND_MS;
+      const conflict: MeetingConflict = {
+        meeting,
+        breakNumber: moved.breakNumber,
+        breakStartMs: startMs,
+        breakEndMs: startMs + (moved.breakEndMs - moved.breakStartMs),
+        choice: null,
+        nextReminderMs: null,
+        remindLaterAllowed: true,
+        tooLong: false,
+      };
+      this.sample = {
+        ...sample,
+        smartBreaks: sample.smartBreaks.filter((b) => b.meetingId !== meetingId),
+        conflicts: [conflict, ...sample.conflicts].sort((a, b) => a.meeting.startMs - b.meeting.startMs),
+        smartOptOuts: [...others, meetingId],
+      };
+      return;
+    }
+    const moved = this.#sampleMoved[meetingId];
+    delete this.#sampleMoved[meetingId];
+    this.sample = {
+      ...sample,
+      smartBreaks: moved
+        ? [...sample.smartBreaks, moved].sort((a, b) => a.breakNumber - b.breakNumber)
+        : sample.smartBreaks,
+      conflicts: moved ? sample.conflicts.filter((c) => c.meeting.id !== meetingId) : sample.conflicts,
+      smartOptOuts: others,
+    };
   }
 
   /** Opens the Google sign-in in the browser; progress (`googlePending`, connected, error) arrives as a status. */
