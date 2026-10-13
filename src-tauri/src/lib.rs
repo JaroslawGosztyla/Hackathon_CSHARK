@@ -6,17 +6,21 @@
 
 mod blocklist;
 mod bridge;
+mod close;
 mod commands;
 mod effects;
 mod media_window;
 mod music;
 mod persistence;
+mod popup;
 mod session_actor;
 mod shields;
 mod teams;
 mod texts;
+mod tint;
 mod tracker;
 mod tray;
+mod window_util;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -30,7 +34,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 /// Current, validated config shared by the actor and the workers.
 pub(crate) type SharedConfig = Arc<RwLock<Config>>;
 
-const MAIN_WINDOW: &str = "main";
+pub(crate) const MAIN_WINDOW: &str = "main";
 /// Short focus/break profile for presentations.
 const DEMO_ARG: &str = "--demo";
 /// Launched by the OS autostart entry: start in the tray, without showing the window.
@@ -68,6 +72,12 @@ pub struct AppState {
     pub extension_dir: Option<PathBuf>,
     /// Separate YouTube window for links that refuse embedding.
     pub media: media_window::MediaWindow,
+    /// Phase popups (bottom-right corner).
+    pub popup: popup::PopupHandle,
+    /// Warm screen tint overlays.
+    pub tint: tint::TintHandle,
+    /// The open "minimize to tray?" question of the first X.
+    pub close: close::ClosePrompt,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -100,15 +110,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Only the main window survives a close; the YouTube window ("media") closes normally.
+            // Only the main window decides about its close (tray, quit or ask); the other windows
+            // handle their own close.
             if let WindowEvent::CloseRequested { api, .. } = event
                 && window.label() == MAIN_WINDOW
             {
-                // Keep the WebView alive (music keeps playing); quit from the tray.
+                // Never close the WebView itself: hidden, it keeps the music playing.
                 api.prevent_close();
-                if let Err(err) = window.hide() {
-                    log::warn!("cannot hide the main window: {err}");
-                }
+                close::on_main_close_requested(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -137,6 +146,12 @@ pub fn run() {
             commands::get_blocklist,
             commands::open_blocklist_file,
             commands::reload_blocklist,
+            commands::resolve_close,
+            commands::get_system_language,
+            commands::get_popup,
+            commands::popup_action,
+            commands::get_tint_status,
+            commands::preview_tint,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");
@@ -191,6 +206,11 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     // Shields and Teams reference each other: create both channels before spawning.
     let (shields, shields_rx) = shields::ShieldsHandle::channel(Arc::clone(&bridge));
     let (teams, teams_rx) = teams::TeamsHandle::channel();
+    // Popups fall back to toasts through the shields queue; shields report closed launchers as popups.
+    let popup =
+        popup::PopupHandle::spawn(handle.clone(), shields.clone()).context("spawn popup thread")?;
+    let tint = tint::TintHandle::spawn(handle.clone(), Arc::clone(&config))
+        .context("spawn tint thread")?;
     teams::spawn(
         teams::TeamsContext {
             app: handle.clone(),
@@ -209,6 +229,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
             persistence: persistence.clone(),
             bridge: Arc::clone(&bridge),
             teams: teams.clone(),
+            popup: popup.clone(),
         },
         &shields,
         shields_rx,
@@ -244,9 +265,11 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
                 config: Arc::clone(&config),
                 chime: chime.clone(),
                 shields: shields.clone(),
+                popup: popup.clone(),
                 tracker: tracker.clone(),
                 persistence: persistence.clone(),
                 last_summary: Arc::clone(&last_summary),
+                last_cycle: 0,
             },
             tracker: tracker.clone(),
             bridge: Arc::clone(&bridge),
@@ -274,6 +297,9 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         last_summary,
         extension_dir,
         media: media_window::MediaWindow::default(),
+        popup,
+        tint,
+        close: close::ClosePrompt::default(),
     });
 
     // The window is created hidden (tauri.conf.json): an autostart launch stays in the tray, and a
@@ -361,6 +387,12 @@ fn on_second_instance(app: &AppHandle, args: &[String]) {
 /// `true` while this process was started only to restore shields and has not been kept running.
 pub(crate) fn restore_only_pending() -> bool {
     RESTORE_ONLY.load(Ordering::SeqCst) == RESTORE_ONLY_PENDING
+}
+
+/// `true` for a `--restore-shields` launch that was not kept running (pending or already exiting):
+/// nothing visible (screen tint) should appear.
+pub(crate) fn restore_only_launch() -> bool {
+    RESTORE_ONLY.load(Ordering::SeqCst) != RESTORE_ONLY_OFF
 }
 
 /// Called by the shields worker after the crash-restore: a `--restore-shields` launch exits now

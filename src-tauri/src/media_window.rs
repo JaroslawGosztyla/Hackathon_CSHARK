@@ -23,6 +23,7 @@ use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::window_util::{bottom_right, with_main_webview_options};
 use crate::{MAIN_WINDOW, lock, texts};
 
 /// Label of the YouTube window.
@@ -31,8 +32,6 @@ const WIDTH: f64 = 560.0;
 const HEIGHT: f64 = 380.0;
 const MIN_WIDTH: f64 = 320.0;
 const MIN_HEIGHT: f64 = 200.0;
-/// Gap between the window and the work area edge (logical px).
-const SCREEN_MARGIN: f64 = 16.0;
 /// Title bar and borders on top of the inner size (logical px, generous).
 const FRAME_ALLOWANCE: f64 = 40.0;
 /// Volume used until the UI sends one (0..=100).
@@ -435,32 +434,12 @@ impl MediaWindow {
             .visible(needs_consent)
             .focused(needs_consent)
             .initialization_script(init_script(play, volume));
-        builder = match bottom_right_position(app).filter(|_| !needs_consent) {
-            Some((x, y)) => builder.position(x, y),
-            None => builder.center(),
-        };
-
-        // WebView2 shares one browser process per data directory, and all its webviews must use the
-        // same environment options, or the second webview fails to be created.
-        if let Some(main) = app
-            .config()
-            .app
-            .windows
-            .iter()
-            .find(|window| window.label == MAIN_WINDOW)
-        {
-            if let Some(args) = &main.additional_browser_args {
-                builder = builder.additional_browser_args(args);
-            }
-            builder = builder.browser_extensions_enabled(main.browser_extensions_enabled);
-            #[cfg(windows)]
-            if matches!(
-                main.scroll_bar_style,
-                tauri::utils::config::ScrollBarStyle::FluentOverlay
-            ) {
-                builder = builder.scroll_bar_style(tauri::webview::ScrollBarStyle::FluentOverlay);
-            }
-        }
+        builder =
+            match bottom_right(app, WIDTH, HEIGHT + FRAME_ALLOWANCE).filter(|_| !needs_consent) {
+                Some(placement) => builder.position(placement.logical.0, placement.logical.1),
+                None => builder.center(),
+            };
+        let builder = with_main_webview_options(app, builder);
 
         let nav_app = app.clone();
         let nav_shared = Arc::clone(&self.shared);
@@ -677,23 +656,6 @@ fn consent_decided(socs: &str) -> bool {
     let tag = (a << 2) | (b >> 4);
     let choice = ((b & 0x0f) << 4) | (c >> 2);
     tag == 0x08 && choice != 0
-}
-
-/// Near the bottom-right corner of the primary monitor's work area (logical px).
-fn bottom_right_position(app: &AppHandle) -> Option<(f64, f64)> {
-    let monitor = app.primary_monitor().ok().flatten()?;
-    let scale = monitor.scale_factor();
-    if !scale.is_finite() || scale <= 0.0 {
-        return None;
-    }
-    let area = monitor.work_area();
-    let left = f64::from(area.position.x) / scale;
-    let top = f64::from(area.position.y) / scale;
-    let right = left + f64::from(area.size.width) / scale;
-    let bottom = top + f64::from(area.size.height) / scale;
-    let x = (right - WIDTH - SCREEN_MARGIN).max(left);
-    let y = (bottom - HEIGHT - FRAME_ALLOWANCE - SCREEN_MARGIN).max(top);
-    Some((x, y))
 }
 
 /// Fire-and-forget script evaluation; failures are only logged.

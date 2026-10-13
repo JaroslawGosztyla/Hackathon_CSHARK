@@ -16,6 +16,10 @@ pub const TRAY_QUIT: &str = "Zakończ";
 
 /// Title of the separate YouTube window (links that refuse embedding).
 pub const MEDIA_WINDOW_TITLE: &str = "FocusMode — muzyka (YouTube)";
+/// Title of the phase popup window (bottom-right corner; seen only in Alt+Tab).
+pub const POPUP_WINDOW_TITLE: &str = "FocusMode — powiadomienie";
+/// Title of the warm screen tint overlays (one per monitor; seen only in Alt+Tab).
+pub const TINT_WINDOW_TITLE: &str = "FocusMode — ciepłe światło";
 
 /// A toast notification: title and body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +61,17 @@ pub fn interrupted_toast() -> Toast {
     Toast::new(
         "Sesja wstrzymana",
         "Wykryto uśpienie komputera — wznów, kiedy wrócisz.",
+    )
+}
+
+/// Game launchers were closed when focus started (`names` from `focus_core::launchers::display_name`).
+pub fn launchers_closed_toast(names: &[&str]) -> Toast {
+    Toast::new(
+        "Zamknięto launchery gier 🎮",
+        format!(
+            "{}. Uruchomisz je ponownie, kiedy zechcesz.",
+            names.join(", ")
+        ),
     )
 }
 
@@ -163,6 +178,8 @@ mod tests {
         assert!(break_toast(15 * 60).body.contains("15 min"));
         assert!(focus_toast(45 * 60, 2).body.contains("Cykl 2"));
         assert!(nudge_toast("reddit.com", false).body.contains("reddit.com"));
+        let launchers = launchers_closed_toast(&["Steam", "GOG Galaxy"]);
+        assert!(launchers.body.starts_with("Steam, GOG Galaxy."));
         let pattern = nudge_toast(r"youtube\.com/shorts", true);
         assert!(!pattern.body.contains("youtube"));
         assert!(pattern.body.contains("na liście blokowanych"));

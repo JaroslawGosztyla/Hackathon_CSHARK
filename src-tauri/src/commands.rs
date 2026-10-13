@@ -7,15 +7,15 @@ use std::path::PathBuf;
 
 use focus_core::api::{
     AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, ChimeKind, Config, DeviceCodePrompt,
-    MediaAction, MediaWindowStatus, Phase, SessionSnapshot, SessionSummary, ShieldStatus,
-    TeamsStatus, Track, UsageReport,
+    Language, MediaAction, MediaWindowStatus, Phase, PopupAction, PopupInfo, SessionSnapshot,
+    SessionSummary, ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::session_actor::ActorCmd;
-use crate::{AppState, emit_error, lock, music, read_config, write_config};
+use crate::{AppState, close, emit_error, lock, music, read_config, write_config};
 
 /// Upper bound for `list_history(limit)`.
 const MAX_HISTORY: u32 = 500;
@@ -63,6 +63,16 @@ pub async fn update_config(
 ) -> Result<Config, AppError> {
     // Serializes concurrent updates so the file and memory always end with the last call.
     let _serial = state.config_update.lock().await;
+    store_config(&app, &state, config).await
+}
+
+/// Validates, persists and applies a new config (shared by `update_config` and `resolve_close`).
+/// The caller holds `state.config_update`.
+async fn store_config(
+    app: &AppHandle,
+    state: &AppState,
+    config: Config,
+) -> Result<Config, AppError> {
     let normalized = config.normalized()?;
     let previous = read_config(&state.config);
     if normalized == previous {
@@ -76,11 +86,11 @@ pub async fn update_config(
     match saved {
         Ok(Ok(())) => {}
         Ok(Err(err)) => emit_error(
-            &app,
+            app,
             AppError::new("config.save", format!("cannot save config: {err:#}")),
         ),
         Err(err) => emit_error(
-            &app,
+            app,
             AppError::new("config.save", format!("cannot save config: {err}")),
         ),
     }
@@ -96,12 +106,89 @@ pub async fn update_config(
         state.teams.config_changed();
     }
     if normalized.music.folder != previous.music.folder {
-        music::allow_configured_folder(&app, normalized.music.folder.as_deref());
+        music::allow_configured_folder(app, normalized.music.folder.as_deref());
     }
     if normalized.launch_on_login != previous.launch_on_login {
-        crate::sync_autostart(&app, normalized.launch_on_login);
+        crate::sync_autostart(app, normalized.launch_on_login);
+    }
+    if normalized.tint != previous.tint {
+        state.tint.config_changed();
     }
     Ok(normalized)
+}
+
+#[tauri::command]
+pub async fn resolve_close(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    to_tray: bool,
+) -> Result<Config, AppError> {
+    let saved = {
+        let _serial = state.config_update.lock().await;
+        let mut config = read_config(&state.config);
+        config.close_to_tray = Some(to_tray);
+        if to_tray {
+            // Hidden in the tray, the app tells about phase changes with its own popups.
+            config.phase_popups = true;
+        }
+        store_config(&app, &state, config).await?
+    };
+    state.close.resolved();
+    if to_tray {
+        close::hide_main_window(&app);
+    } else {
+        log::info!("quitting at the user's request (closeToTray = false)");
+        // The normal exit path stops the session and lowers every shield (`RunEvent::ExitRequested`).
+        app.exit(0);
+    }
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn get_system_language() -> Result<Language, AppError> {
+    Ok(focus_platform::locale::system_language_tag()
+        .and_then(|tag| Language::from_tag(&tag))
+        .unwrap_or(Language::En))
+}
+
+#[tauri::command]
+pub async fn get_popup(state: State<'_, AppState>) -> Result<PopupInfo, AppError> {
+    Ok(state.popup.info())
+}
+
+#[tauri::command]
+pub async fn popup_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    action: PopupAction,
+) -> Result<(), AppError> {
+    match action {
+        PopupAction::Dismiss => state.popup.dismiss(),
+        PopupAction::ShowMain => {
+            state.popup.close();
+            crate::show_main_window(&app);
+        }
+        PopupAction::SkipPhase => {
+            // Closed first: the skip makes the session send the next phase's popup.
+            state.popup.close();
+            state.actor.send(ActorCmd::Skip)?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_tint_status(state: State<'_, AppState>) -> Result<TintStatus, AppError> {
+    Ok(state.tint.status())
+}
+
+#[tauri::command]
+pub async fn preview_tint(
+    state: State<'_, AppState>,
+    strength: Option<u32>,
+) -> Result<(), AppError> {
+    state.tint.preview(strength);
+    Ok(())
 }
 
 #[tauri::command]

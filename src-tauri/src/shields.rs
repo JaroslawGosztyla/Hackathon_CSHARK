@@ -1,8 +1,9 @@
 //! Shields worker: everything that is "up" during focus and "down" during breaks and when idle.
 //!
 //! One dedicated thread applies the desired state serially (ADR-012): Windows notifications
-//! (Do not disturb), keep-awake, the sites blocker flag for the bridge, and Teams presence
-//! (delegated to the Teams worker so slow HTTP never delays the local shields).
+//! (Do not disturb), keep-awake, the sites blocker flag for the bridge, Teams presence
+//! (delegated to the Teams worker so slow HTTP never delays the local shields) and, once at every
+//! focus start, closing the selected game launchers (reported as a popup or a toast).
 //! `Apply` carries a generation; an older generation is skipped because a newer one is queued.
 //! Toasts of the session go through the same queue, so "shields down → toast" keeps its order, and
 //! "toast → shields up" waits until the toast had time to appear before muting notifications.
@@ -17,18 +18,23 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use focus_core::api::{AppError, IntegrationState, IntegrationStatus, ShieldStatus, events};
+use focus_core::api::{
+    AppError, GameLauncher, IntegrationState, IntegrationStatus, PopupKind, ShieldStatus, events,
+};
+use focus_core::launchers;
 use focus_platform::PlatformError;
 use focus_platform::logon::LogonTask;
 use focus_platform::notifications::{MuteToken, NotificationMuter};
 use focus_platform::power::KeepAwake;
+use focus_platform::processes::{ClosedProcess, ProcessCloser};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::bridge::SharedBridge;
 use crate::persistence::Persistence;
+use crate::popup::{PopupHandle, PopupRequest};
 use crate::teams::TeamsHandle;
-use crate::texts::Toast;
+use crate::texts::{self, Toast};
 use crate::{
     RESTORE_SHIELDS_ARG, SharedConfig, emit_error, emit_startup_error, finish_restore_only, lock,
     read_config, restore_only_pending,
@@ -87,6 +93,8 @@ impl ShieldsHandle {
                 teams: off(),
                 sites: off(),
                 keep_awake: off(),
+                launchers: off(),
+                closed_launchers: Vec::new(),
                 extension_connected: false,
             })),
             bridge,
@@ -146,6 +154,8 @@ pub struct ShieldsContext {
     pub persistence: Persistence,
     pub bridge: SharedBridge,
     pub teams: TeamsHandle,
+    /// Reports closed launchers when `phase_popups` is on.
+    pub popup: PopupHandle,
 }
 
 pub fn spawn(
@@ -162,6 +172,7 @@ pub fn spawn(
                 muter: focus_platform::notifications::notification_muter(),
                 logon: focus_platform::logon::restore_at_logon(),
                 awake: focus_platform::power::keep_awake(),
+                closer: focus_platform::processes::process_closer(),
                 ctx,
                 generation,
                 applied_generation: 0,
@@ -176,6 +187,9 @@ pub fn spawn(
                 notifications: off(),
                 keep_awake: off(),
                 sites: off(),
+                launchers_handled: false,
+                launchers: off(),
+                closed_launchers: Vec::new(),
                 revision: 0,
                 last_published: None,
             };
@@ -199,6 +213,7 @@ struct Worker {
     /// Logon safety net for muted notifications (`--restore-shields`).
     logon: Box<dyn LogonTask>,
     awake: Box<dyn KeepAwake>,
+    closer: Box<dyn ProcessCloser>,
     /// Desired: shields up.
     up: bool,
     /// Present while notifications are muted by us (or a crash-restore still has to undo them).
@@ -214,6 +229,12 @@ struct Worker {
     notifications: IntegrationStatus,
     keep_awake: IntegrationStatus,
     sites: IntegrationStatus,
+    /// The launchers were already handled in the current "shields up" period (they are closed once,
+    /// when it starts; reset when the shields go down).
+    launchers_handled: bool,
+    launchers: IntegrationStatus,
+    /// Launchers closed at the last focus start.
+    closed_launchers: Vec<GameLauncher>,
     revision: u32,
     last_published: Option<ShieldStatus>,
 }
@@ -331,9 +352,85 @@ impl Worker {
             shields.teams_dnd,
             config.focus_minutes.saturating_add(TEAMS_EXTRA_MINUTES),
         );
+        // Before muting: its "launchers closed" toast must be shown while notifications still work.
+        self.reconcile_launchers(
+            shields.close_launchers,
+            &shields.launchers,
+            config.phase_popups,
+        );
         // Last: muting may first wait for a just-requested toast (`TOAST_BEFORE_MUTE`).
         self.reconcile_notifications(shields.mute_notifications);
         self.publish();
+    }
+
+    /// Closes the selected game launchers once per "shields up" period, when it starts (each focus
+    /// phase start). Enabling the option during a focus phase takes effect at the next one.
+    fn reconcile_launchers(&mut self, enabled: bool, selected: &[GameLauncher], popups: bool) {
+        if !self.up {
+            self.launchers_handled = false;
+            self.launchers = off();
+            if !enabled {
+                self.closed_launchers.clear();
+            }
+            return;
+        }
+        if !enabled || selected.is_empty() {
+            self.launchers_handled = true;
+            self.launchers = off();
+            self.closed_launchers.clear();
+            return;
+        }
+        if self.launchers_handled {
+            return;
+        }
+        if self.generation.load(Ordering::SeqCst) != self.applied_generation {
+            // A newer desired state is queued (e.g. Stop right after Start): let it decide.
+            return;
+        }
+        self.launchers_handled = true;
+        let names: Vec<&str> = selected
+            .iter()
+            .flat_map(|launcher| launchers::process_names(*launcher).iter().copied())
+            .collect();
+        match self.closer.close(&names) {
+            Ok(processes) => {
+                let closed = closed_launchers(&processes);
+                self.launchers = if closed.is_empty() {
+                    on_with("no game launcher was running".into())
+                } else {
+                    log::info!(
+                        "closed {} launcher process(es): {}",
+                        processes.len(),
+                        launcher_names(&closed).join(", ")
+                    );
+                    on_with(format!("closed {}", launcher_names(&closed).join(", ")))
+                };
+                if !closed.is_empty() {
+                    self.report_closed_launchers(&closed, popups);
+                }
+                self.closed_launchers = closed;
+            }
+            Err(err) => {
+                self.closed_launchers.clear();
+                self.launchers = self.failure("shields.launchers", "close game launchers", &err);
+            }
+        }
+    }
+
+    /// The app's popup when `phase_popups` is on, otherwise a toast (shown before notifications are muted).
+    fn report_closed_launchers(&mut self, closed: &[GameLauncher], popups: bool) {
+        let toast = texts::launchers_closed_toast(&launcher_names(closed));
+        if popups {
+            self.ctx.popup.show(PopupRequest {
+                kind: PopupKind::LaunchersClosed,
+                cycle: 0,
+                phase_secs: 0,
+                launchers: closed.to_vec(),
+                fallback: toast,
+            });
+        } else {
+            self.show_toast(&toast);
+        }
     }
 
     fn reconcile_notifications(&mut self, enabled: bool) {
@@ -531,6 +628,8 @@ impl Worker {
             },
             sites,
             keep_awake: self.keep_awake.clone(),
+            launchers: self.launchers.clone(),
+            closed_launchers: self.closed_launchers.clone(),
             extension_connected,
         }
     }
@@ -570,9 +669,60 @@ fn on() -> IntegrationStatus {
     }
 }
 
+fn on_with(detail: String) -> IntegrationStatus {
+    IntegrationStatus {
+        state: IntegrationState::On,
+        detail: Some(detail),
+    }
+}
+
 fn unavailable(detail: &str) -> IntegrationStatus {
     IntegrationStatus {
         state: IntegrationState::Unavailable,
         detail: Some(detail.to_owned()),
+    }
+}
+
+/// Launchers whose processes were closed, in the canonical order, without duplicates.
+fn closed_launchers(processes: &[ClosedProcess]) -> Vec<GameLauncher> {
+    let found: Vec<GameLauncher> = processes
+        .iter()
+        .filter_map(|process| launchers::launcher_for_process(&process.name))
+        .collect();
+    launchers::normalized(&found)
+}
+
+fn launcher_names(closed: &[GameLauncher]) -> Vec<&'static str> {
+    closed
+        .iter()
+        .map(|launcher| launchers::display_name(*launcher))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn process(name: &str, pid: u32) -> ClosedProcess {
+        ClosedProcess {
+            name: name.into(),
+            pid,
+        }
+    }
+
+    #[test]
+    fn closed_processes_map_back_to_launchers() {
+        let closed = closed_launchers(&[
+            process("steamwebhelper.exe", 3),
+            process("EpicGamesLauncher.exe", 4),
+            process("steam.exe", 2),
+            process("unrelated.exe", 5),
+        ]);
+        assert_eq!(closed, vec![GameLauncher::Steam, GameLauncher::Epic]);
+        assert_eq!(
+            launcher_names(&closed),
+            vec!["Steam", "Epic Games Launcher"]
+        );
+        assert!(closed_launchers(&[]).is_empty());
     }
 }

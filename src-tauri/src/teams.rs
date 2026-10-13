@@ -4,6 +4,8 @@
 //!   until the user signs in or the code expires; progress is published as `teams://status`;
 //! - presence: the shields worker sends the desired DND state; this worker reconciles it, refreshes
 //!   the expiration during long focus phases and reports the result back to the shields worker.
+//!   It reads the current presence first: a user who appears offline stays invisible, a DND the user
+//!   set themselves is left alone, and only a DND we set (and that is still there) is cleared.
 //!
 //! The client is recreated when the client id or tenant changes in the config.
 
@@ -16,7 +18,10 @@ use focus_core::api::{
     AppError, DeviceCodePrompt, IntegrationState, IntegrationStatus, TeamsStatus, events,
 };
 use focus_platform::PlatformError;
-use focus_platform::teams::{DeviceLogin, LoginPoll, TeamsClient, TeamsSettings};
+use focus_platform::teams::{
+    DeviceLogin, LoginPoll, Presence, TeamsClient, TeamsSettings, presence_blocks_dnd,
+    presence_is_user_dnd,
+};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
@@ -28,6 +33,9 @@ use crate::{SharedConfig, emit_error, lock, read_config};
 const MAX_SLEEP: Duration = Duration::from_secs(30);
 /// After a failed `set_dnd`, retry after this long.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
+/// Graph may report the old presence for a short while after `setUserPreferredPresence`: a DND set
+/// more recently than this is cleared without reading the presence first.
+const PRESENCE_SETTLE: Duration = Duration::from_secs(60);
 
 pub enum TeamsCmd {
     Connect(oneshot::Sender<Result<DeviceCodePrompt, AppError>>),
@@ -150,6 +158,9 @@ pub fn spawn(
                 applied_on: false,
                 applied_at: None,
                 retry_at: None,
+                force_refresh: false,
+                cleared_at: None,
+                skip: None,
                 reported: None,
             };
             worker.publish();
@@ -181,6 +192,12 @@ struct Worker {
     applied_on: bool,
     applied_at: Option<Instant>,
     retry_at: Option<Instant>,
+    /// Our DND must be sent again now (the focus length changed).
+    force_refresh: bool,
+    /// When we last cleared our DND (the presence may still show it for a short while).
+    cleared_at: Option<Instant>,
+    /// Set when DND is left to the user for the current focus phase (reset when focus ends).
+    skip: Option<Skip>,
     /// Last presence status reported to the shields worker.
     reported: Option<IntegrationStatus>,
 }
@@ -213,7 +230,7 @@ impl Worker {
                             Err(TryRecvError::Empty) => break,
                             Err(TryRecvError::Disconnected) => {
                                 self.desired_on = false;
-                                self.reconcile_dnd();
+                                self.reconcile_dnd(false);
                                 return;
                             }
                         }
@@ -222,12 +239,12 @@ impl Worker {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     self.desired_on = false;
-                    self.reconcile_dnd();
+                    self.reconcile_dnd(false);
                     return;
                 }
             }
             self.poll_login_if_due();
-            self.reconcile_dnd();
+            self.reconcile_dnd(true);
         }
     }
 
@@ -243,17 +260,20 @@ impl Worker {
             }
             TeamsCmd::ConfigChanged => self.refresh_client(),
             TeamsCmd::SetDnd { on, minutes } => {
+                if !on {
+                    // The next focus phase reads the user's status again.
+                    self.skip = None;
+                }
                 self.desired_on = on;
                 if on && minutes != self.desired_minutes && self.applied_on {
-                    // New length: re-apply with the new expiration.
-                    self.applied_at = None;
-                    self.applied_on = false;
+                    // New length: re-apply with the new expiration (still our DND).
+                    self.force_refresh = true;
                 }
                 self.desired_minutes = minutes;
             }
             TeamsCmd::Exit(ack) => {
                 self.desired_on = false;
-                self.reconcile_dnd();
+                self.reconcile_dnd(false);
                 let _ = ack.send(());
                 return Flow::Stop;
             }
@@ -289,8 +309,7 @@ impl Worker {
             if let Err(err) = self.client.clear_dnd() {
                 log::warn!("cannot clear Teams presence before switching app registration: {err}");
             }
-            self.applied_on = false;
-            self.applied_at = None;
+            self.release();
         }
         // TODO(hackathon): the stored refresh token belongs to the previous app registration;
         // a mismatch surfaces as an auth error and the user reconnects.
@@ -408,8 +427,7 @@ impl Worker {
             if let Err(err) = self.client.clear_dnd() {
                 log::warn!("cannot clear Teams presence before disconnecting: {err}");
             }
-            self.applied_on = false;
-            self.applied_at = None;
+            self.release();
         }
         self.login = None;
         let result = self.client.disconnect();
@@ -431,8 +449,14 @@ impl Worker {
         }
     }
 
-    /// Brings the real presence in line with `desired_on`.
-    fn reconcile_dnd(&mut self) {
+    /// Brings the real presence in line with `desired_on`, respecting the user's own Teams status:
+    /// * focus start: "Appear offline" is never turned into a visible DND, and a DND the user already
+    ///   has is left alone (not set, and so never cleared) — decided once per focus phase;
+    /// * refresh during a long focus: if the user changed the status meanwhile, it is theirs now;
+    /// * break / stop: only a DND we set and that is still in place is cleared.
+    ///
+    /// `check_presence: false` (app exit) clears without reading the presence first (bounded shutdown).
+    fn reconcile_dnd(&mut self, check_presence: bool) {
         let now = Instant::now();
         if self.desired_on {
             if !self.client.is_configured() {
@@ -449,43 +473,75 @@ impl Worker {
                 );
                 return;
             }
-            let refresh_due = self
-                .applied_at
-                .is_some_and(|at| now.duration_since(at) >= refresh_after(self.desired_minutes));
+            if let Some(skip) = self.skip {
+                self.report_skip(skip);
+                return;
+            }
+            let refresh_due = self.force_refresh
+                || self.applied_at.is_some_and(|at| {
+                    now.duration_since(at) >= refresh_after(self.desired_minutes)
+                });
             if self.applied_on && !refresh_due {
                 return;
             }
             if self.retry_at.is_some_and(|retry| now < retry) {
                 return;
             }
+            // Right after our own change Graph may still report the old status: no read then.
+            let settled = self
+                .applied_at
+                .is_none_or(|at| now.duration_since(at) >= PRESENCE_SETTLE);
+            if !self.applied_on || settled {
+                match self.client.get_presence() {
+                    Ok(presence) => {
+                        let mut skip = skip_for(&presence, self.applied_on);
+                        if skip == Some(Skip::UserDnd)
+                            && self
+                                .cleared_at
+                                .is_some_and(|at| now.duration_since(at) < PRESENCE_SETTLE)
+                        {
+                            // A short break: Graph still shows the DND we have just cleared.
+                            skip = None;
+                        }
+                        if let Some(skip) = skip {
+                            log::info!("Teams: Do not disturb left to the user ({skip:?})");
+                            // Never cleared later: the status is the user's.
+                            self.release();
+                            self.skip = Some(skip);
+                            self.report_skip(skip);
+                            return;
+                        }
+                    }
+                    Err(err) if !self.applied_on => {
+                        self.presence_failed("read Teams presence", err, now);
+                        return;
+                    }
+                    // Our DND is in place: refresh it even without knowing the current status.
+                    Err(err) => log::warn!("cannot read Teams presence before refreshing: {err}"),
+                }
+            }
             match self.client.set_dnd(self.desired_minutes.max(1)) {
                 Ok(()) => {
                     self.applied_on = true;
                     self.applied_at = Some(now);
                     self.retry_at = None;
+                    self.force_refresh = false;
                     self.report(IntegrationState::On, None);
                 }
-                Err(err) => {
-                    self.retry_at = Some(now + RETRY_AFTER);
-                    if matches!(err, PlatformError::Auth(_)) {
-                        self.connected = self.client.has_token();
-                        self.error = Some(err.to_string());
-                        self.publish();
-                    }
-                    let message = format!("cannot set Teams presence: {err}");
-                    emit_error(
-                        &self.ctx.app,
-                        AppError::new("shields.teams", message.clone()),
-                    );
-                    self.report(IntegrationState::Error, Some(message));
-                }
+                Err(err) => self.presence_failed("set Teams presence", err, now),
             }
         } else if self.applied_on {
-            self.applied_on = false;
-            self.applied_at = None;
-            self.retry_at = None;
+            if check_presence && !self.ours_to_clear(now) {
+                self.release();
+                self.report_skip(Skip::UserChanged);
+                return;
+            }
+            self.release();
             match self.client.clear_dnd() {
-                Ok(()) => self.report(IntegrationState::Off, None),
+                Ok(()) => {
+                    self.cleared_at = Some(now);
+                    self.report(IntegrationState::Off, None);
+                }
                 Err(err) => {
                     // The presence expires on its own (focus length + a few minutes).
                     let message = format!("cannot clear Teams presence: {err}");
@@ -500,6 +556,66 @@ impl Worker {
             self.retry_at = None;
             self.report(IntegrationState::Off, None);
         }
+    }
+
+    /// Our DND may be cleared: set too recently for the presence to show it yet, still `DoNotDisturb`,
+    /// or the presence cannot be read (shields always come down). Not when the user appears offline or
+    /// picked another status meanwhile: clearing the preferred presence would drop their choice.
+    fn ours_to_clear(&mut self, now: Instant) -> bool {
+        if self
+            .applied_at
+            .is_some_and(|at| now.duration_since(at) < PRESENCE_SETTLE)
+        {
+            return true;
+        }
+        match self.client.get_presence() {
+            Ok(presence) => !presence_blocks_dnd(&presence) && presence_is_user_dnd(&presence),
+            Err(err) => {
+                log::warn!("cannot read Teams presence before clearing it: {err}");
+                true
+            }
+        }
+    }
+
+    /// Forgets that we set DND (it is not cleared later).
+    fn release(&mut self) {
+        self.applied_on = false;
+        self.applied_at = None;
+        self.retry_at = None;
+        self.force_refresh = false;
+    }
+
+    fn presence_failed(&mut self, action: &str, err: PlatformError, now: Instant) {
+        self.retry_at = Some(now + RETRY_AFTER);
+        if matches!(err, PlatformError::Auth(_)) {
+            self.connected = self.client.has_token();
+            self.error = Some(err.to_string());
+            self.publish();
+        }
+        let message = format!("cannot {action}: {err}");
+        emit_error(
+            &self.ctx.app,
+            AppError::new("shields.teams", message.clone()),
+        );
+        self.report(IntegrationState::Error, Some(message));
+    }
+
+    fn report_skip(&mut self, skip: Skip) {
+        let (state, detail) = match skip {
+            Skip::AppearOffline => (
+                IntegrationState::Off,
+                "you appear offline in Teams; Do not disturb was not set, so you stay invisible",
+            ),
+            Skip::UserDnd => (
+                IntegrationState::On,
+                "you already set Do not disturb in Teams; FocusMode leaves it as it is",
+            ),
+            Skip::UserChanged => (
+                IntegrationState::Off,
+                "your Teams status changed during focus; FocusMode leaves it as it is",
+            ),
+        };
+        self.report(state, Some(detail.into()));
     }
 
     fn report(&mut self, state: IntegrationState, detail: Option<String>) {
@@ -554,6 +670,30 @@ impl Worker {
     }
 }
 
+/// Why Do not disturb is left to the user for the rest of a focus phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Skip {
+    /// "Appear offline" (or not signed in anywhere): DND would make the user visible.
+    AppearOffline,
+    /// The user was already in Do not disturb when focus started.
+    UserDnd,
+    /// The user picked another status after we set DND.
+    UserChanged,
+}
+
+/// Decision from the presence read before setting (`applied_on: false`) or refreshing (`true`) DND.
+fn skip_for(presence: &Presence, applied_on: bool) -> Option<Skip> {
+    if presence_blocks_dnd(presence) {
+        Some(Skip::AppearOffline)
+    } else if applied_on && !presence_is_user_dnd(presence) {
+        Some(Skip::UserChanged)
+    } else if !applied_on && presence_is_user_dnd(presence) {
+        Some(Skip::UserDnd)
+    } else {
+        None
+    }
+}
+
 fn client_key(config: &SharedConfig) -> (String, String) {
     let config = read_config(config);
     (
@@ -572,5 +712,58 @@ fn error_code(err: &PlatformError) -> &'static str {
         PlatformError::Network(_) => "teams.network",
         PlatformError::Unsupported => "teams.unsupported",
         _ => "teams.auth",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn presence(availability: &str, activity: &str) -> Presence {
+        Presence {
+            availability: availability.into(),
+            activity: activity.into(),
+        }
+    }
+
+    #[test]
+    fn focus_start_respects_the_users_status() {
+        assert_eq!(
+            skip_for(&presence("Offline", "OffWork"), false),
+            Some(Skip::AppearOffline)
+        );
+        assert_eq!(
+            skip_for(&presence("DoNotDisturb", "Presenting"), false),
+            Some(Skip::UserDnd)
+        );
+        for availability in [
+            "Available",
+            "Busy",
+            "Away",
+            "BeRightBack",
+            "PresenceUnknown",
+        ] {
+            assert_eq!(
+                skip_for(&presence(availability, "Available"), false),
+                None,
+                "{availability}"
+            );
+        }
+    }
+
+    #[test]
+    fn refresh_notices_a_status_the_user_picked() {
+        assert_eq!(
+            skip_for(&presence("DoNotDisturb", "DoNotDisturb"), true),
+            None
+        );
+        assert_eq!(
+            skip_for(&presence("Offline", "OffWork"), true),
+            Some(Skip::AppearOffline)
+        );
+        assert_eq!(
+            skip_for(&presence("Available", "Available"), true),
+            Some(Skip::UserChanged)
+        );
     }
 }
