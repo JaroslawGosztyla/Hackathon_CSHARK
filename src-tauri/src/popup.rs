@@ -37,6 +37,15 @@
 //! [`PRESENTING_HOLD_MAX`] after it arrived is dropped, without a fallback toast (Windows holds toasts back in
 //! those modes too, and the main window keeps the state). A popup already on screen is left alone.
 //!
+//! Developer-mode samples (`dev_trigger`, ADR-019; [`PopupRequest::sample`]) are for screenshots: they show at
+//! once, also while the user presents (a held popup stays held), and are never parked, held or waited for (a
+//! sample replaces the sample on screen, parks a real question or digest like any popup does, and any real
+//! popup replaces a sample on screen). A sticky sample ([`PopupRequest::sticky`]) has no shell timeout once its
+//! page runs: it stays until it is closed (its window is looked at every [`STICKY_CHECK`], so one closed without a
+//! button lets the parked popups come back), or until developer mode is switched off
+//! ([`PopupHandle::withdraw_samples`]). "Skip phase" on a sample only closes it: the popup thread decides which
+//! popup the button belonged to ([`PopupHandle::skip_phase`], [`skip_outcome`]).
+//!
 //! The window stays focusable on purpose (no `WS_EX_NOACTIVATE`): its buttons must take clicks reliably.
 //! It still appears without activation; only the user activates it (a click, Alt+Tab). It is listed in
 //! Alt+Tab while visible.
@@ -74,8 +83,12 @@ const LOADED_TIMEOUT: Duration = Duration::from_secs(120);
 /// Upper bound for a meeting reminder whose page runs (it waits for an answer).
 const MEETING_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// A `dismiss` this soon after a new popup belongs to the previous one (the page's own timer raced
-/// the update) and is ignored. Buttons (`showMain`, `skipPhase`) always close the popup.
+/// the update) and is ignored. Buttons (`showMain`, `skipPhase`) always close the popup, except "Skip phase"
+/// from a sample that a newer popup replaced this soon ([`skip_outcome`]).
 const DISMISS_GRACE: Duration = Duration::from_millis(500);
+/// A sticky sample has no timeout: this often the shell looks whether its window is still there (closed with
+/// Alt+F4 or a crashed page, it would otherwise keep the parked popups waiting).
+const STICKY_CHECK: Duration = Duration::from_secs(5);
 /// After `destroy` the label stays taken until the window is really gone: wait at most this long.
 const CLOSE_WAIT: Duration = Duration::from_millis(1500);
 const CLOSE_POLL: Duration = Duration::from_millis(20);
@@ -100,6 +113,10 @@ pub struct PopupRequest {
     pub meeting: Option<MeetingConflict>,
     /// Number of new work items of a `WorkDigest` popup (0 otherwise).
     pub work_count: u32,
+    /// Developer-mode sample (ADR-019): shown at once, also while the user presents; its actions change nothing.
+    pub sample: bool,
+    /// Stays until it is closed (`PopupInfo.sticky`): no shell timeout once the page runs. Samples only.
+    pub sticky: bool,
     /// Shown instead (through the shields worker) when the popup window cannot be created.
     pub fallback: Toast,
 }
@@ -115,8 +132,15 @@ impl PopupRequest {
             reminder: None,
             meeting: None,
             work_count: 0,
+            sample: false,
+            sticky: false,
             fallback,
         }
+    }
+
+    /// A sticky developer-mode sample (real popups never are).
+    fn is_sticky(&self) -> bool {
+        self.sample && self.sticky
     }
 
     /// Id of the meeting a `MeetingReminder` asks about.
@@ -134,10 +158,14 @@ enum PopupCmd {
     Dismiss {
         forced: bool,
     },
+    /// "Skip phase": closes the popup and runs the skip, unless the button was on a developer-mode sample.
+    SkipPhase(Box<dyn FnOnce() + Send>),
     /// The meeting with this id was answered: close or forget its reminder.
     ResolveMeeting(String),
     /// Focus started while new work items are held: a work digest on screen or parked goes away.
     WithdrawWorkDigest,
+    /// Developer mode was switched off: a sample on screen goes away.
+    WithdrawSamples,
 }
 
 /// Cheap to clone; every method is non-blocking.
@@ -165,6 +193,7 @@ impl PopupHandle {
                     shields,
                     info: shared,
                     page_loaded: loaded,
+                    previous_sample: false,
                     shown_at: None,
                     deadline: None,
                     last_focus: None,
@@ -191,9 +220,21 @@ impl PopupHandle {
         self.send(PopupCmd::Dismiss { forced: false });
     }
 
-    /// A popup button that acts (show the main window, skip the phase): always closes the popup.
+    /// A popup button that acts (show the main window): always closes the popup.
     pub fn close(&self) {
         self.send(PopupCmd::Dismiss { forced: true });
+    }
+
+    /// The popup's "Skip phase" button: the popup closes and then `skip` runs, unless the button was on a
+    /// developer-mode sample (ADR-019), which only closes. The popup thread decides it, from the popup the button
+    /// belonged to rather than from whatever is on screen when the call arrives ([`skip_outcome`]).
+    pub fn skip_phase(&self, skip: impl FnOnce() + Send + 'static) {
+        self.send(PopupCmd::SkipPhase(Box::new(skip)));
+    }
+
+    /// Developer mode was switched off (ADR-019): a sample on screen (sticky ones have no timeout) goes away.
+    pub fn withdraw_samples(&self) {
+        self.send(PopupCmd::WithdrawSamples);
     }
 
     /// The meeting `meeting_id` was answered: its reminder closes (or is not shown again).
@@ -227,6 +268,9 @@ struct Worker {
     info: Arc<Mutex<PopupInfo>>,
     /// Set by `get_popup` (the page runs); cleared before a new window is created.
     page_loaded: Arc<AtomicBool>,
+    /// The popup on screen before the current one (or, with nothing on screen, the last one) was a developer-mode
+    /// sample: a "Skip phase" that raced a newer popup belongs to it ([`skip_outcome`]).
+    previous_sample: bool,
     /// When the current popup was shown (`None` = nothing on screen).
     shown_at: Option<Instant>,
     /// Safety timeout of the current popup.
@@ -277,8 +321,14 @@ impl Worker {
                         log::debug!("popup: ignoring a dismiss that raced a new popup");
                     }
                 }
+                Some(PopupCmd::SkipPhase(skip)) => self.skip_phase(skip),
                 Some(PopupCmd::ResolveMeeting(id)) => self.resolve_meeting(&id),
                 Some(PopupCmd::WithdrawWorkDigest) => self.withdraw_work_digest(),
+                Some(PopupCmd::WithdrawSamples) => {
+                    if self.current.as_ref().is_some_and(|current| current.sample) {
+                        self.hide();
+                    }
+                }
                 None => self.on_timer(),
             }
         }
@@ -310,12 +360,21 @@ impl Worker {
     /// The safety timeout of the popup on screen passed.
     fn on_deadline(&mut self, now: Instant) {
         if let Some(shown_at) = self.shown_at {
-            let kind = self.current.as_ref().map(|current| current.kind);
-            let due = hide_at(shown_at, self.page_loaded.load(Ordering::SeqCst), kind);
-            if now < due {
+            let loaded = self.page_loaded.load(Ordering::SeqCst);
+            match hide_at(shown_at, loaded, self.current.as_ref()) {
+                // A sticky sample whose page runs stays until it is closed; looked at again later, so a window
+                // closed without a button (Alt+F4, a crashed page) does not keep the parked popups waiting.
+                None if self.app.get_webview_window(POPUP_WINDOW).is_some() => {
+                    self.deadline = Some(now + STICKY_CHECK);
+                    return;
+                }
+                None => log::debug!("popup: the window of a sticky sample is gone"),
                 // The page runs (maybe held by the pointer): wait for it longer.
-                self.deadline = Some(due);
-                return;
+                Some(due) if now < due => {
+                    self.deadline = Some(due);
+                    return;
+                }
+                Some(_) => {}
             }
         }
         log::debug!("popup: not dismissed by the page, hiding it");
@@ -324,6 +383,12 @@ impl Worker {
 
     /// A popup arrives: held while the user presents, shown otherwise.
     fn show(&mut self, mut request: PopupRequest) {
+        if request.sample {
+            // Developer-mode sample (ADR-019): on screen at once, also while the user presents (the owner
+            // records the screen). A held popup stays held, and the session bookkeeping below is left alone.
+            self.display(request);
+            return;
+        }
         let now = Instant::now();
         match request.kind {
             PopupKind::FocusStarted => {
@@ -424,9 +489,27 @@ impl Worker {
         }
     }
 
+    /// "Skip phase" was pressed (see [`skip_outcome`]).
+    fn skip_phase(&mut self, skip: Box<dyn FnOnce() + Send>) {
+        let fresh = self.shown_at.is_some_and(|at| at.elapsed() < DISMISS_GRACE);
+        let current = self.current.as_ref().map(|current| current.sample);
+        match skip_outcome(current, fresh, self.previous_sample) {
+            SkipOutcome::Ignore => {
+                log::debug!("popup: ignoring a skip from a sample that a newer popup replaced");
+            }
+            SkipOutcome::CloseOnly => self.hide(),
+            SkipOutcome::CloseAndSkip => {
+                // Closed first: the skip makes the session send the next phase's popup.
+                self.hide();
+                skip();
+            }
+        }
+    }
+
     /// Shows the popup on screen now (the user does not present).
     fn display(&mut self, request: PopupRequest) {
         let now = Instant::now();
+        let replaced_sample = self.current.as_ref().map(|current| current.sample);
         match arrival(self.current.as_ref(), &request) {
             Arrival::Wait => {
                 self.parked.push(request);
@@ -438,6 +521,9 @@ impl Worker {
                 }
             }
             Arrival::Replace => {}
+        }
+        if let Some(sample) = replaced_sample {
+            self.previous_sample = sample;
         }
         if let Some(id) = request.reminder_meeting_id() {
             self.parked
@@ -469,9 +555,11 @@ impl Worker {
     }
 
     fn hide(&mut self) {
+        if let Some(current) = self.current.take() {
+            self.previous_sample = current.sample;
+        }
         self.shown_at = None;
         self.deadline = None;
-        self.current = None;
         let showing = lock(&self.info).kind.is_some();
         if showing {
             self.publish(None);
@@ -634,6 +722,7 @@ fn popup_info(revision: u32, request: Option<&PopupRequest>) -> PopupInfo {
             reminder: request.reminder.clone(),
             meeting: request.meeting.clone(),
             work_count: request.work_count,
+            sticky: request.is_sticky(),
         },
         None => PopupInfo {
             revision,
@@ -644,7 +733,33 @@ fn popup_info(revision: u32, request: Option<&PopupRequest>) -> PopupInfo {
             reminder: None,
             meeting: None,
             work_count: 0,
+            sticky: false,
         },
+    }
+}
+
+/// What "Skip phase" does ([`skip_outcome`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipOutcome {
+    /// The button was on a sample that a newer popup already replaced: the newer one stays, nothing is skipped.
+    Ignore,
+    /// The button was on a developer-mode sample: it closes, the session is not touched.
+    CloseOnly,
+    /// The button was on a real popup: it closes and the phase is skipped.
+    CloseAndSkip,
+}
+
+/// Which popup a "Skip phase" belongs to. `current_sample`: whether the popup on screen is a sample (`None` =
+/// nothing on screen); `fresh`: it went up less than [`DISMISS_GRACE`] ago, so the button was pressed on the popup
+/// before it, a sample when `previous_sample` (the same rule a `dismiss` follows). With nothing on screen the
+/// button belonged to the popup that went last (`previous_sample`).
+fn skip_outcome(current_sample: Option<bool>, fresh: bool, previous_sample: bool) -> SkipOutcome {
+    match current_sample {
+        Some(true) if !fresh => SkipOutcome::CloseOnly,
+        Some(false) if !fresh => SkipOutcome::CloseAndSkip,
+        Some(_) if previous_sample => SkipOutcome::Ignore,
+        None if previous_sample => SkipOutcome::CloseOnly,
+        _ => SkipOutcome::CloseAndSkip,
     }
 }
 
@@ -661,11 +776,22 @@ enum Arrival {
 
 /// See [`Arrival`]. A newer digest updates a digest on screen; a newer reminder of the same meeting replaces
 /// its older reminder. A focus start replaces a digest on screen for good (parked, it would come back during
-/// focus).
+/// focus). Developer-mode samples are never parked and never wait: any popup replaces a sample on screen, and a
+/// sample replaces the popup on screen, parking a real question or digest.
 fn arrival(current: Option<&PopupRequest>, request: &PopupRequest) -> Arrival {
     let Some(current) = current else {
         return Arrival::Replace;
     };
+    if current.sample {
+        return Arrival::Replace;
+    }
+    if request.sample {
+        return if current.kind == PopupKind::WorkDigest || current.reminder_meeting_id().is_some() {
+            Arrival::ParkCurrent
+        } else {
+            Arrival::Replace
+        };
+    }
     let digest = request.kind == PopupKind::WorkDigest;
     if current.kind == PopupKind::WorkDigest {
         return if digest || request.kind == PopupKind::FocusStarted {
@@ -707,14 +833,23 @@ fn merge_held(
     }
 }
 
-/// When the shell hides a popup of `kind` shown at `shown_at` that the page did not dismiss.
-fn hide_at(shown_at: Instant, page_loaded: bool, kind: Option<PopupKind>) -> Instant {
-    shown_at
-        + match (page_loaded, kind) {
-            (false, _) => SAFETY_TIMEOUT,
-            (true, Some(PopupKind::MeetingReminder)) => MEETING_TIMEOUT,
-            (true, _) => LOADED_TIMEOUT,
-        }
+/// When the shell hides the popup `current` shown at `shown_at` that the page did not dismiss; `None` = never
+/// (a sticky sample whose page runs stays until it is closed). A page that never loaded goes after
+/// [`SAFETY_TIMEOUT`] whatever it is (an empty transparent window would only catch clicks in the corner).
+fn hide_at(
+    shown_at: Instant,
+    page_loaded: bool,
+    current: Option<&PopupRequest>,
+) -> Option<Instant> {
+    let kind = current.map(|current| current.kind);
+    let sticky = current.is_some_and(PopupRequest::is_sticky);
+    let timeout = match (page_loaded, kind) {
+        (false, _) => SAFETY_TIMEOUT,
+        (true, _) if sticky => return None,
+        (true, Some(PopupKind::MeetingReminder)) => MEETING_TIMEOUT,
+        (true, _) => LOADED_TIMEOUT,
+    };
+    Some(shown_at + timeout)
 }
 
 /// Logical height of the popup window for `kind`.
@@ -759,15 +894,146 @@ mod tests {
     #[test]
     fn a_running_page_keeps_its_popup_longer() {
         let shown = Instant::now();
-        let breaks = Some(PopupKind::BreakStarted);
-        assert_eq!(hide_at(shown, false, breaks), shown + SAFETY_TIMEOUT);
+        let breaks = PopupRequest::new(
+            PopupKind::BreakStarted,
+            1,
+            900,
+            texts::break_toast(900, None),
+        );
+        assert_eq!(
+            hide_at(shown, false, Some(&breaks)),
+            Some(shown + SAFETY_TIMEOUT)
+        );
         // The page counts 8 s and pauses while hovered: the shell must not cut it short.
-        assert_eq!(hide_at(shown, true, breaks), shown + LOADED_TIMEOUT);
+        assert_eq!(
+            hide_at(shown, true, Some(&breaks)),
+            Some(shown + LOADED_TIMEOUT)
+        );
+        assert_eq!(hide_at(shown, true, None), Some(shown + LOADED_TIMEOUT));
         // A meeting question waits for an answer much longer, but not when its page never loaded.
-        let meeting = Some(PopupKind::MeetingReminder);
-        assert_eq!(hide_at(shown, true, meeting), shown + MEETING_TIMEOUT);
-        assert_eq!(hide_at(shown, false, meeting), shown + SAFETY_TIMEOUT);
+        let meeting = meeting_reminder("m1");
+        assert_eq!(
+            hide_at(shown, true, Some(&meeting)),
+            Some(shown + MEETING_TIMEOUT)
+        );
+        assert_eq!(
+            hide_at(shown, false, Some(&meeting)),
+            Some(shown + SAFETY_TIMEOUT)
+        );
         assert!(height_for(PopupKind::MeetingReminder) > height_for(PopupKind::BreakHeld));
+    }
+
+    fn sample(request: PopupRequest, sticky: bool) -> PopupRequest {
+        PopupRequest {
+            sample: true,
+            sticky,
+            ..request
+        }
+    }
+
+    #[test]
+    fn a_sticky_sample_stays_until_it_is_closed() {
+        let shown = Instant::now();
+        let breaks = PopupRequest::new(
+            PopupKind::BreakStarted,
+            1,
+            900,
+            texts::break_toast(900, None),
+        );
+        let sticky = sample(breaks.clone(), true);
+        assert_eq!(hide_at(shown, true, Some(&sticky)), None);
+        assert!(popup_info(3, Some(&sticky)).sticky);
+        // A page that never loaded still goes: the window would be empty.
+        assert_eq!(
+            hide_at(shown, false, Some(&sticky)),
+            Some(shown + SAFETY_TIMEOUT)
+        );
+        // A sample without "keep open" goes like a real popup; a real popup is never sticky.
+        let plain = sample(breaks.clone(), false);
+        assert_eq!(
+            hide_at(shown, true, Some(&plain)),
+            Some(shown + LOADED_TIMEOUT)
+        );
+        assert!(!popup_info(4, Some(&plain)).sticky);
+        let real = PopupRequest {
+            sticky: true,
+            ..breaks
+        };
+        assert_eq!(
+            hide_at(shown, true, Some(&real)),
+            Some(shown + LOADED_TIMEOUT)
+        );
+        assert!(!popup_info(5, Some(&real)).sticky);
+        assert!(!popup_info(6, None).sticky);
+    }
+
+    #[test]
+    fn skip_phase_belongs_to_the_popup_the_button_was_on() {
+        // Settled popups: a sample only closes, a real popup skips the phase.
+        assert_eq!(
+            skip_outcome(Some(true), false, false),
+            SkipOutcome::CloseOnly
+        );
+        assert_eq!(
+            skip_outcome(Some(false), false, true),
+            SkipOutcome::CloseAndSkip
+        );
+        // A real popup went up just after the button on a sample: the real one stays, nothing is skipped.
+        assert_eq!(skip_outcome(Some(false), true, true), SkipOutcome::Ignore);
+        // ...and a newer sample after a sample ("Play all popups"): the newer sample stays.
+        assert_eq!(skip_outcome(Some(true), true, true), SkipOutcome::Ignore);
+        // A sample went up just after the button on a real popup: the skip happens (and the sample closes).
+        assert_eq!(
+            skip_outcome(Some(true), true, false),
+            SkipOutcome::CloseAndSkip
+        );
+        assert_eq!(
+            skip_outcome(Some(false), true, false),
+            SkipOutcome::CloseAndSkip
+        );
+        // Nothing on screen any more: the popup that went last decides.
+        assert_eq!(skip_outcome(None, false, true), SkipOutcome::CloseOnly);
+        assert_eq!(skip_outcome(None, false, false), SkipOutcome::CloseAndSkip);
+    }
+
+    #[test]
+    fn samples_never_wait_and_never_block_real_popups() {
+        let break_popup = PopupRequest::new(
+            PopupKind::BreakStarted,
+            1,
+            900,
+            texts::break_toast(900, None),
+        );
+        let sample_digest = sample(digest(3), true);
+        // A sample digest does not wait behind the popup on screen.
+        assert_eq!(
+            arrival(Some(&break_popup), &sample_digest),
+            Arrival::Replace
+        );
+        assert_eq!(arrival(None, &sample_digest), Arrival::Replace);
+        // It parks a real question or digest, which comes back after it.
+        assert_eq!(
+            arrival(Some(&meeting_reminder("m1")), &sample_digest),
+            Arrival::ParkCurrent
+        );
+        assert_eq!(
+            arrival(Some(&digest(2)), &sample(break_popup.clone(), false)),
+            Arrival::ParkCurrent
+        );
+        // A sample on screen is never parked: a newer sample or any real popup replaces it.
+        let sample_question = sample(meeting_reminder("dev-sample-meeting"), true);
+        assert_eq!(
+            arrival(Some(&sample_question), &sample_digest),
+            Arrival::Replace
+        );
+        assert_eq!(
+            arrival(Some(&sample_question), &digest(4)),
+            Arrival::Replace
+        );
+        assert_eq!(
+            arrival(Some(&sample_digest), &break_popup),
+            Arrival::Replace
+        );
     }
 
     fn meeting_reminder(id: &str) -> PopupRequest {

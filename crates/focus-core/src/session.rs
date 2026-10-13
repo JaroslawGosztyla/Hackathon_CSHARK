@@ -23,9 +23,12 @@
 //! The session goal ([`Input::SetGoal`], picked in "Co dalej?") is shown by every snapshot, survives Start and
 //! ends up in [`SessionTotals::goal`] on Stop (then the session has no goal until the next `SetGoal`). It
 //! never changes phases or effects.
+//!
+//! Developer mode (ADR-019) can shorten the current phase ([`Input::DevSetRemaining`]): only its deadline
+//! moves (monotonic clock, the profile stays), so the phase still ends on a Tick with the usual effects.
 
 use crate::api::{
-    ChimeKind, Meeting, MeetingChoice, MeetingHoldView, Phase, PhaseChange, SessionGoal,
+    AppError, ChimeKind, Meeting, MeetingChoice, MeetingHoldView, Phase, PhaseChange, SessionGoal,
     SessionSnapshot,
 };
 use crate::calendar::meeting_hold_allowed;
@@ -33,6 +36,9 @@ use crate::timing::{MAX_MEETING_HOLD_MS, TimingProfile};
 use crate::work::normalize_goal;
 
 const MS_PER_SEC: u64 = 1000;
+
+/// `AppError.code` of [`Session::check_dev_set_remaining`]: no session runs (ADR-019).
+pub const ERR_NOT_RUNNING: &str = "notRunning";
 
 /// A point in time supplied by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +75,11 @@ pub enum Input {
     /// [`normalize_goal`] (a goal with neither key nor title counts as `None`). Allowed in every phase;
     /// returns no effects, only the snapshot changes.
     SetGoal(Option<SessionGoal>),
+    /// Developer mode (ADR-019): the current phase ends `secs` from now, clamped to 1 s..=its length
+    /// (a meeting extension included). A paused phase keeps that time frozen until Resume. Returns no
+    /// effects: the phase ends on a later Tick exactly as at its own deadline. No-op while idle (the
+    /// shell asks [`Session::check_dev_set_remaining`] first).
+    DevSetRemaining { secs: u32 },
 }
 
 /// A meeting the user chose to handle with `Extend` or `PauseAtBreak` (see the module docs).
@@ -248,13 +259,36 @@ impl Active {
         matches!(self.clock, Clock::Running { .. })
     }
 
-    /// Length of the current phase in seconds, including a meeting extension.
-    fn phase_total_secs(&self) -> u32 {
+    /// Length of the current phase in milliseconds, including a meeting extension.
+    fn phase_total_ms(&self) -> u64 {
         let base_ms = match self.stage {
             Stage::Focus => self.profile.focus_ms(),
             Stage::Break => self.profile.break_ms(),
         };
-        ms_to_secs_ceil(base_ms.saturating_add(self.extra_ms))
+        base_ms.saturating_add(self.extra_ms)
+    }
+
+    /// Length of the current phase in seconds, including a meeting extension.
+    fn phase_total_secs(&self) -> u32 {
+        ms_to_secs_ceil(self.phase_total_ms())
+    }
+
+    /// [`Input::DevSetRemaining`]: `secs` clamped to 1 s..=the phase length becomes the time left.
+    fn set_remaining(&mut self, now: Now, secs: u32) {
+        let remaining_ms = u64::from(secs)
+            .saturating_mul(MS_PER_SEC)
+            .clamp(MS_PER_SEC, self.phase_total_ms().max(MS_PER_SEC));
+        self.clock = match self.clock {
+            Clock::Paused { .. } => Clock::Paused { remaining_ms },
+            Clock::Running { .. } => {
+                // The time so far counts as usual. After an unnoticed gap nothing is counted and `last_seen`
+                // stays: the next Tick still auto-pauses, with `remaining_ms` left.
+                self.advance(now);
+                Clock::Running {
+                    deadline_ms: self.last_seen.mono_ms.saturating_add(remaining_ms),
+                }
+            }
+        };
     }
 
     /// Music must be silent: Focus (running or paused) during an `Extend` meeting, either one of
@@ -497,6 +531,22 @@ impl Session {
                 self.goal = goal.and_then(normalize_goal);
                 Vec::new()
             }
+            Input::DevSetRemaining { secs } => {
+                if let Some(active) = self.active.as_mut() {
+                    active.set_remaining(now, secs);
+                }
+                Vec::new()
+            }
+        }
+    }
+
+    /// Developer mode (ADR-019): `Ok` when [`Input::DevSetRemaining`] applies now (a session runs, paused or
+    /// not), `Err` with [`ERR_NOT_RUNNING`] while idle.
+    pub fn check_dev_set_remaining(&self) -> Result<(), AppError> {
+        if self.active.is_some() {
+            Ok(())
+        } else {
+            Err(AppError::new(ERR_NOT_RUNNING, "no session is running"))
         }
     }
 
@@ -1418,6 +1468,9 @@ mod tests {
         session.handle(far, Input::Resume);
         session.handle(far, Input::Tick);
         session.handle(far, Input::SkipPhase);
+        session.handle(far, Input::DevSetRemaining { secs: u32::MAX });
+        session.handle(at(1), Input::DevSetRemaining { secs: 0 });
+        session.handle(far, Input::Tick);
         let _ = session.snapshot(far);
         let ended = Now {
             mono_ms: 0,
@@ -2218,5 +2271,171 @@ mod tests {
         };
         session.handle(at(1), Input::SetGoal(Some(empty)));
         assert_eq!(session.goal(), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Developer mode: Input::DevSetRemaining (ADR-019)
+    // -----------------------------------------------------------------------
+
+    fn set_remaining(secs: u32) -> Input {
+        Input::DevSetRemaining { secs }
+    }
+
+    #[test]
+    fn dev_set_remaining_ends_a_running_focus_with_the_usual_effects() {
+        let mut session = started(TimingProfile::normal());
+        assert!(tick_through(&mut session, 0, 10).is_empty());
+        assert_eq!(session.check_dev_set_remaining(), Ok(()));
+
+        assert!(session.handle(at(10), set_remaining(5)).is_empty());
+        let snap = session.snapshot(at(10));
+        assert_eq!(
+            (
+                snap.phase,
+                snap.paused,
+                snap.remaining_secs,
+                snap.phase_total_secs
+            ),
+            (Phase::Focus, false, 5, 2700),
+            "only the deadline moves, the phase length stays the profile's"
+        );
+        assert_eq!(session.remaining_ms(at(10)), Some(5_000));
+
+        assert!(tick_through(&mut session, 10, 14).is_empty());
+        assert_eq!(
+            session.handle(at(15), Input::Tick),
+            break_transition(1, 900)
+        );
+        // The break that follows has its full length; the time really spent counts.
+        let snap = session.snapshot(at(15));
+        assert_eq!(
+            (snap.phase, snap.remaining_secs, snap.focused_secs),
+            (Phase::Break, 900, 15)
+        );
+        let totals = only_totals(&session.handle(at(20), Input::Stop));
+        assert_eq!((totals.focused_secs, totals.break_secs), (15, 5));
+        assert_eq!(totals.cycles_completed, 1);
+    }
+
+    #[test]
+    fn dev_set_remaining_ends_a_running_break_into_the_next_focus() {
+        let mut session = started(TimingProfile::normal());
+        session.handle(at(5), Input::SkipPhase);
+        assert!(session.handle(at(6), set_remaining(3)).is_empty());
+        assert_eq!(session.snapshot(at(6)).remaining_secs, 3);
+        assert!(tick_through(&mut session, 6, 8).is_empty());
+        assert_eq!(
+            session.handle(at(9), Input::Tick),
+            focus_transition(2, 2700)
+        );
+        let snap = session.snapshot(at(9));
+        assert_eq!(
+            (snap.phase, snap.cycle, snap.remaining_secs),
+            (Phase::Focus, 2, 2700)
+        );
+    }
+
+    #[test]
+    fn dev_set_remaining_on_a_paused_phase_waits_for_resume() {
+        let mut session = started(TimingProfile::normal());
+        session.handle(at(10), Input::Pause);
+        assert_eq!(session.check_dev_set_remaining(), Ok(()));
+        assert!(session.handle(at(20), set_remaining(7)).is_empty());
+        let snap = session.snapshot(at(20));
+        assert_eq!((snap.paused, snap.remaining_secs), (true, 7));
+        // Frozen: nothing happens while paused, and paused time is not focus time.
+        assert!(tick_through(&mut session, 20, 60).is_empty());
+        assert_eq!(session.snapshot(at(60)).remaining_secs, 7);
+
+        assert_eq!(
+            session.handle(at(100), Input::Resume),
+            vec![Effect::Tracking(true)]
+        );
+        assert!(tick_through(&mut session, 100, 106).is_empty());
+        assert_eq!(
+            session.handle(at(107), Input::Tick),
+            break_transition(1, 900)
+        );
+        assert_eq!(session.snapshot(at(107)).focused_secs, 17);
+    }
+
+    #[test]
+    fn dev_set_remaining_while_idle_is_refused_and_changes_nothing() {
+        let mut session = Session::new();
+        let error = session
+            .check_dev_set_remaining()
+            .expect_err("no session runs");
+        assert_eq!(error.code, ERR_NOT_RUNNING);
+        assert_eq!(error.code, "notRunning");
+        let before = session.snapshot(at(3));
+        assert!(session.handle(at(3), set_remaining(5)).is_empty());
+        assert_eq!(session.snapshot(at(3)), before);
+        assert!(tick_through(&mut session, 3, 10).is_empty());
+
+        // After Stop it is refused again.
+        let mut session = started(TimingProfile::demo());
+        session.handle(at(2), Input::Stop);
+        assert_eq!(
+            session.check_dev_set_remaining().map_err(|e| e.code),
+            Err(ERR_NOT_RUNNING.to_owned())
+        );
+    }
+
+    #[test]
+    fn dev_set_remaining_is_clamped_to_the_phase_length() {
+        let mut session = started(TimingProfile::normal());
+        // Zero would end the phase on the next tick without warning: at least one second.
+        session.handle(at(10), set_remaining(0));
+        assert_eq!(session.remaining_ms(at(10)), Some(1_000));
+        assert!(session.handle(at_ms(10_999), Input::Tick).is_empty());
+        assert_eq!(
+            session.handle(at(11), Input::Tick),
+            break_transition(1, 900)
+        );
+
+        // Never longer than the phase (the break: 900 s), even long after it started.
+        session.handle(at(80), set_remaining(u32::MAX));
+        assert_eq!(session.remaining_ms(at(80)), Some(900_000));
+        let snap = session.snapshot(at(80));
+        assert_eq!((snap.remaining_secs, snap.phase_total_secs), (900, 900));
+
+        // Demo profile: 40 s focus.
+        let mut demo = started(TimingProfile::demo());
+        demo.handle(at(1), set_remaining(3600));
+        assert_eq!(demo.snapshot(at(1)).remaining_secs, 40);
+        demo.handle(at(2), Input::Pause);
+        demo.handle(at(3), set_remaining(0));
+        assert_eq!(demo.remaining_ms(at(3)), Some(1_000));
+    }
+
+    #[test]
+    fn dev_set_remaining_counts_a_meeting_extension_as_phase_length() {
+        let mut session = with_holds(vec![hold("a", Extend, 50, 70)]);
+        tick_through(&mut session, 0, 40);
+        assert_eq!(session.snapshot(at(40)).phase_total_secs, 70);
+        session.handle(at(45), set_remaining(u32::MAX));
+        assert_eq!(session.snapshot(at(45)).remaining_secs, 70);
+        session.handle(at(46), set_remaining(2));
+        assert!(tick_through(&mut session, 46, 47).is_empty());
+        // The extension was used: the focus now ends into a normal break.
+        assert_eq!(session.handle(at(48), Input::Tick), break_transition(1, 20));
+    }
+
+    #[test]
+    fn dev_set_remaining_after_an_unnoticed_gap_still_auto_pauses() {
+        let mut session = started(TimingProfile::demo());
+        tick_through(&mut session, 0, 10);
+        // The computer slept 91 s; the input arrives before the next tick.
+        assert!(session.handle(at(101), set_remaining(5)).is_empty());
+        assert_eq!(
+            session.handle(at(102), Input::Tick),
+            vec![
+                Effect::Tracking(false),
+                Effect::Notify(NotifyKind::Interrupted)
+            ]
+        );
+        let snap = session.snapshot(at(102));
+        assert_eq!((snap.paused, snap.remaining_secs), (true, 5));
+        assert_eq!(snap.focused_secs, 10, "gap time is not focus time");
     }
 }

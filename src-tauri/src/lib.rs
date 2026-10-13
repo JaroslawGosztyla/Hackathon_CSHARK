@@ -10,6 +10,7 @@ mod calendar;
 mod chimes;
 mod close;
 mod commands;
+mod dev;
 mod effects;
 mod media_window;
 mod music;
@@ -181,6 +182,7 @@ pub fn run() {
             commands::set_work_token,
             commands::set_session_goal,
             commands::mark_goal_done,
+            commands::dev_trigger,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");

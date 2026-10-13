@@ -90,4 +90,7 @@ pub(super) static TEXTS: Texts = Texts {
     blocklist_denied: "Нет доступа к файлу.",
     blocklist_io: |detail| format!("Ошибка чтения файла: {detail}"),
     blocklist_too_large: |megabytes| format!("Файл слишком большой (лимит: {megabytes} МБ)."),
+
+    dev_sample_meeting: "Планирование спринта",
+    dev_sample_reminder: "Вода и короткая прогулка",
 };

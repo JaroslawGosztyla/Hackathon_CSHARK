@@ -58,6 +58,12 @@ pub enum ActorCmd {
     SetMeetings(Vec<(Meeting, MeetingChoice)>),
     /// The goal of the coming or running session (`set_session_goal`); `None` clears it.
     SetGoal(Option<SessionGoal>),
+    /// Developer mode (`dev_trigger`, ADR-019): the current phase ends in `secs` (`Input::DevSetRemaining`);
+    /// `notRunning` while idle.
+    DevSetRemaining {
+        secs: u32,
+        reply: oneshot::Sender<Result<(), AppError>>,
+    },
     /// App exit: stop the session (history written synchronously), then ack.
     Shutdown(std_mpsc::Sender<()>),
 }
@@ -85,6 +91,15 @@ impl ActorHandle {
         response
             .await
             .map_err(|_| AppError::new("session.unavailable", "session actor is not running"))
+    }
+
+    /// Developer mode (ADR-019): the current phase ends in `secs` (clamped by the core); `notRunning` while idle.
+    pub async fn dev_set_remaining(&self, secs: u32) -> Result<(), AppError> {
+        let (reply, response) = oneshot::channel();
+        self.send(ActorCmd::DevSetRemaining { secs, reply })?;
+        response
+            .await
+            .map_err(|_| AppError::new("session.unavailable", "session actor is not running"))?
     }
 
     /// Stops the running session and waits (bounded) until its summary is saved.
@@ -225,6 +240,9 @@ impl Actor {
             }
             // Cleaned by the core; shown by every snapshot, copied into the summary on Stop.
             ActorCmd::SetGoal(goal) => self.apply(Input::SetGoal(goal)),
+            ActorCmd::DevSetRemaining { secs, reply } => {
+                let _ = reply.send(self.dev_set_remaining(secs));
+            }
             ActorCmd::Stop => self.apply(Input::Stop),
             ActorCmd::Skip => self.apply(Input::SkipPhase),
             ActorCmd::ConfigChanged => {
@@ -299,6 +317,19 @@ impl Actor {
         let profile = self.profile();
         self.session.set_idle_profile(profile);
         self.publish(true);
+    }
+
+    /// Developer mode (ADR-019): the current phase ends in `secs`. Checked here, where the session lives, so no
+    /// Stop can slip in between the check and the input.
+    fn dev_set_remaining(&mut self, secs: u32) -> Result<(), AppError> {
+        self.session.check_dev_set_remaining()?;
+        log::info!(
+            "developer mode: the current phase ends in {secs} s (clamped to the phase length)"
+        );
+        // A running phase keeps its deadline out of the plan key: make the calendar plan from the new one.
+        self.last_plan = None;
+        self.apply(Input::DevSetRemaining { secs });
+        Ok(())
     }
 
     /// Resume, with the meeting holds rebuilt first (the monotonic clock may have drifted during a sleep).

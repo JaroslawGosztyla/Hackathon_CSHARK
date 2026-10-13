@@ -76,4 +76,7 @@ pub(super) static TEXTS: Texts = Texts {
     blocklist_denied: "没有访问该文件的权限。",
     blocklist_io: |detail| format!("读取文件时出错：{detail}"),
     blocklist_too_large: |megabytes| format!("文件太大（上限 {megabytes} MB）。"),
+
+    dev_sample_meeting: "冲刺规划会",
+    dev_sample_reminder: "喝水，短暂散步",
 };

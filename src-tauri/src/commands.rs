@@ -9,9 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
     AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, CalendarSource, CalendarStatus, ChimeKind,
-    ChimeSound, Config, DeviceCodePrompt, Language, MediaAction, MediaWindowStatus, MeetingChoice,
-    Phase, PopupAction, PopupInfo, SessionGoal, SessionSnapshot, SessionSummary, ShieldStatus,
-    TeamsStatus, TintStatus, Track, UsageReport, WorkSource, WorkStatus,
+    ChimeSound, Config, DevAction, DeviceCodePrompt, Language, MediaAction, MediaWindowStatus,
+    MeetingChoice, Phase, PopupAction, PopupInfo, SessionGoal, SessionSnapshot, SessionSummary,
+    ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport, WorkSource, WorkStatus,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use tauri::{AppHandle, State};
@@ -19,7 +19,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::session_actor::ActorCmd;
 use crate::{
-    AppState, calendar, chimes, close, effects, emit_error, lock, music, read_config, tracker,
+    AppState, calendar, chimes, close, dev, effects, emit_error, lock, music, read_config, tracker,
     work, write_config,
 };
 
@@ -27,6 +27,8 @@ use crate::{
 const MAX_HISTORY: u32 = 500;
 /// Longest session id accepted by `mark_goal_done` (ids are `<ms>-<pid>-<n>`).
 const MAX_SESSION_ID_LEN: usize = 128;
+/// `dev_trigger` while `Config::developer_mode` is off (ADR-019).
+const ERR_DEVELOPER_MODE_OFF: &str = "developerModeOff";
 
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<SessionSnapshot, AppError> {
@@ -132,6 +134,10 @@ async fn store_config(
     if normalized.work != previous.work {
         state.work.config_changed();
     }
+    if previous.developer_mode && !normalized.developer_mode {
+        // A sticky sample has no timeout: it goes with developer mode (ADR-019).
+        state.popup.withdraw_samples();
+    }
     Ok(normalized)
 }
 
@@ -187,9 +193,14 @@ pub async fn popup_action(
             crate::show_main_window(&app);
         }
         PopupAction::SkipPhase => {
-            // Closed first: the skip makes the session send the next phase's popup.
-            state.popup.close();
-            state.actor.send(ActorCmd::Skip)?;
+            // The popup thread closes the popup and decides whether the button was on a developer-mode sample
+            // (ADR-019), which only closes, from the popup the button belonged to (not from a newer one).
+            let actor = state.actor.clone();
+            state.popup.skip_phase(move || {
+                if let Err(err) = actor.send(ActorCmd::Skip) {
+                    log::warn!("cannot skip the phase from the popup: {}", err.message);
+                }
+            });
         }
     }
     Ok(())
@@ -313,6 +324,12 @@ pub async fn set_meeting_choice(
     meeting_id: String,
     choice: MeetingChoice,
 ) -> Result<CalendarStatus, AppError> {
+    if dev::is_sample_meeting(&meeting_id) {
+        // A developer-mode sample (ADR-019): its popup closes like an answered one, nothing is stored
+        // (`meeting-choices.json`), sent to the session or synced.
+        state.popup.resolve_meeting(&meeting_id);
+        return Ok(state.calendar.status());
+    }
     state.calendar.set_choice(meeting_id, choice).await
 }
 
@@ -417,6 +434,49 @@ pub async fn mark_goal_done(
     // With the history off a session that is not in the file only lives in memory (or is gone): no-op.
     if keep_history && !marked.in_memory && !marked.in_file {
         return Err(unknown());
+    }
+    Ok(())
+}
+
+/// A button on the developer page (ADR-019). Only while `developerMode` is on; sample data stays in memory
+/// and nothing leaves the computer.
+#[tauri::command]
+pub async fn dev_trigger(state: State<'_, AppState>, action: DevAction) -> Result<(), AppError> {
+    let config = read_config(&state.config);
+    if !config.developer_mode {
+        return Err(AppError::new(
+            ERR_DEVELOPER_MODE_OFF,
+            "developer mode is off",
+        ));
+    }
+    log::info!("developer mode: {action:?}");
+    match action {
+        DevAction::Popup {
+            kind,
+            lead_minutes,
+            sticky,
+        } => {
+            let snapshot = state.actor.snapshot().await?;
+            let samples = dev::Samples {
+                snapshot: &snapshot,
+                config: &config,
+                now_ms: wall_ms(),
+                local_minutes: focus_platform::clock::local_minutes_of_day(),
+            };
+            // Shown whatever `phasePopups` says, and at once (also while the user presents).
+            state.popup.show(samples.popup(kind, lead_minutes, sticky));
+        }
+        DevAction::Toast { phase } => {
+            let snapshot = state.actor.snapshot().await?;
+            let samples = dev::Samples {
+                snapshot: &snapshot,
+                config: &config,
+                now_ms: wall_ms(),
+                local_minutes: None,
+            };
+            state.shields.toast(samples.toast(phase)?);
+        }
+        DevAction::SetRemaining { secs } => state.actor.dev_set_remaining(secs).await?,
     }
     Ok(())
 }

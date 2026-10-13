@@ -90,4 +90,7 @@ pub(super) static TEXTS: Texts = Texts {
     blocklist_too_large: |megabytes| {
         format!("Le fichier est trop volumineux (limite : {megabytes} Mo).")
     },
+
+    dev_sample_meeting: "Planification du sprint",
+    dev_sample_reminder: "De l'eau et une petite marche",
 };

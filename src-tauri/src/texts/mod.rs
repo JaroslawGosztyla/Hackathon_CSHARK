@@ -129,6 +129,12 @@ pub struct Texts {
     pub blocklist_io: fn(&str) -> String,
     /// (size limit in MB)
     pub blocklist_too_large: fn(u64) -> String,
+
+    // --- Developer mode samples (ADR-019): sample popups and their fallback toasts ---
+    /// Subject of the sample meeting (a meeting reminder or a held break).
+    pub dev_sample_meeting: &'static str,
+    /// The sample break reminder, used when the user has none for that break.
+    pub dev_sample_reminder: &'static str,
 }
 
 /// A toast notification: title and body.
@@ -764,6 +770,8 @@ mod tests {
                 texts.xbox_app,
                 texts.blocklist_missing,
                 texts.blocklist_denied,
+                texts.dev_sample_meeting,
+                texts.dev_sample_reminder,
             ] {
                 assert!(!text.trim().is_empty(), "{language:?}");
             }
