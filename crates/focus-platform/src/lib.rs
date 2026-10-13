@@ -1,23 +1,29 @@
 //! FocusMode platform integrations ("shields" and tracking) behind traits with `Noop` fallbacks.
 //!
-//! * [`foreground`]: which app is in the foreground (process name, window title, idle time).
+//! * [`foreground`]: which app is in the foreground (process name, window title and class, idle time).
 //! * [`notifications`]: Windows "Do not disturb" (Windows 11) / "Focus assist" (Windows 10).
 //! * [`power`]: keep the display and the system awake during focus.
 //! * [`teams`]: Microsoft Teams presence "Do not disturb" through Microsoft Graph, plus the current presence so the
 //!   shell can skip it while the user appears offline or already chose Do not disturb.
-//! * [`logon`]: one-shot command at the next logon (crash-restore of muted notifications).
+//! * [`logon`]: one-shot command at the next logon (crash-restore of muted notifications and Night light).
 //! * [`processes`]: close processes by executable name (game launchers when focus starts).
 //! * [`locale`]: the system UI language tag.
 //! * [`clock`]: local time of day (time-of-day screen tint).
+//! * [`night_light`]: Windows Night light on/off and colour temperature (warm screen, Windows 10 – 11 23H2).
+//! * [`gamma`]: per-display gamma ramps (warm screen, every Windows version; Windows may cap the warmth).
 //!
 //! All per-OS code lives in this crate, gated with `#[cfg(target_os = "...")]`. Every integration has a
 //! `Noop` implementation used on other platforms, so the shell never needs `cfg` of its own.
 //! Nothing here panics; every failure is a [`PlatformError`] and the caller degrades gracefully.
 
+mod base64;
+mod bond;
 pub mod clock;
 pub mod foreground;
+pub mod gamma;
 pub mod locale;
 pub mod logon;
+pub mod night_light;
 pub mod notifications;
 pub mod power;
 pub mod processes;

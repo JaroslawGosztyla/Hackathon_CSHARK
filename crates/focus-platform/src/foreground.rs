@@ -1,12 +1,15 @@
-//! Foreground window sampling: process name of the active window, its title and the user's idle time.
+//! Foreground window sampling: process name of the active window, its title, its window class and the user's
+//! idle time.
 //!
-//! Used by the shell's tracker (productivity chart by process name) and by the blocked-site fallback
-//! (window title of the foreground browser). Nothing leaves the computer.
+//! Used by the shell's tracker (productivity chart by process name, with Windows shell surfaces such as the
+//! taskbar or the desktop recognised by class) and by the blocked-site fallback (window title of the foreground
+//! browser). Nothing leaves the computer.
 //!
 //! Windows implementation:
-//! * `GetForegroundWindow` → `InternalGetWindowText` (title) and `GetWindowThreadProcessId` (pid).
-//!   Unlike `GetWindowTextW`, `InternalGetWindowText` never sends `WM_GETTEXT`, so sampling our own
-//!   window (FocusMode in the foreground) never waits for the UI thread,
+//! * `GetForegroundWindow` → `InternalGetWindowText` (title), `GetClassNameW` (class) and
+//!   `GetWindowThreadProcessId` (pid). Unlike `GetWindowTextW`, `InternalGetWindowText` never sends `WM_GETTEXT`,
+//!   so sampling our own window (FocusMode in the foreground) never waits for the UI thread; `GetClassNameW`
+//!   reads the class atom and sends no message either,
 //! * `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW` → executable file name
 //!   (works for elevated processes too; protected processes and pid 0/4 report `None` = unknown),
 //! * UWP apps are hosted by `ApplicationFrameHost.exe`; best effort we report the process of the first child
@@ -25,8 +28,11 @@ use crate::PlatformError;
 pub struct ForegroundInfo {
     /// Executable file name, e.g. `Code.exe`; `None` when it cannot be determined.
     pub process: Option<String>,
-    /// Title of the foreground window (may be empty).
+    /// Title of the foreground window (may be empty). The shell decides whether it is kept; never log it.
     pub title: String,
+    /// Window class of the foreground window, e.g. `Chrome_WidgetWin_1`, `Shell_TrayWnd` (taskbar),
+    /// `ApplicationFrameWindow` (UWP frame); empty when there is no foreground window or it cannot be read.
+    pub class_name: String,
     /// Seconds since the last keyboard/mouse input anywhere in the session.
     pub idle_secs: u32,
 }
@@ -142,7 +148,8 @@ mod windows_impl {
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumChildWindows, GetForegroundWindow, GetWindowThreadProcessId, InternalGetWindowText,
+        EnumChildWindows, GetClassNameW, GetForegroundWindow, GetWindowThreadProcessId,
+        InternalGetWindowText,
     };
     use windows::core::{BOOL, PWSTR};
 
@@ -154,6 +161,8 @@ mod windows_impl {
 
     /// Longest window title we read (in UTF-16 units); longer titles are truncated.
     const MAX_TITLE_CHARS: usize = 2048;
+    /// Window class names are at most 256 characters (including the terminating NUL).
+    const MAX_CLASS_CHARS: usize = 256;
     /// Image path buffer sizes (UTF-16 units): typical paths first, then the long-path maximum.
     const IMAGE_PATH_BUFFERS: [usize; 2] = [1024, 32_768];
 
@@ -189,11 +198,13 @@ mod windows_impl {
                 return Ok(ForegroundInfo {
                     process: None,
                     title: String::new(),
+                    class_name: String::new(),
                     idle_secs,
                 });
             }
 
             let title = window_title(hwnd);
+            let class_name = window_class(hwnd);
             let pid = window_pid(hwnd);
             let mut process = pid.and_then(|pid| self.process_name(pid, now));
 
@@ -209,6 +220,7 @@ mod windows_impl {
             Ok(ForegroundInfo {
                 process,
                 title,
+                class_name,
                 idle_secs,
             })
         }
@@ -247,6 +259,15 @@ mod windows_impl {
         // from the window structure and never sends a message, so it cannot block on a busy UI thread.
         let copied = unsafe { InternalGetWindowText(hwnd, &mut buffer) };
         let copied = usize::try_from(copied).unwrap_or(0).min(MAX_TITLE_CHARS);
+        String::from_utf16_lossy(&buffer[..copied])
+    }
+
+    fn window_class(hwnd: HWND) -> String {
+        let mut buffer = [0u16; MAX_CLASS_CHARS];
+        // SAFETY: any HWND value is accepted (an invalid window yields 0); the wrapper passes the buffer length and
+        // the API writes at most that many UTF-16 units, including the NUL. No message is sent.
+        let copied = unsafe { GetClassNameW(hwnd, &mut buffer) };
+        let copied = usize::try_from(copied).unwrap_or(0).min(MAX_CLASS_CHARS);
         String::from_utf16_lossy(&buffer[..copied])
     }
 
@@ -334,6 +355,18 @@ mod windows_impl {
             assert!(first.is_ok());
             let second = probe.sample();
             assert!(second.is_ok());
+        }
+
+        #[test]
+        fn window_class_resolves() {
+            use windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
+            // SAFETY: no preconditions; the desktop window always exists.
+            let desktop = unsafe { GetDesktopWindow() };
+            assert_eq!(super::window_class(desktop), "#32769");
+            assert_eq!(
+                super::window_class(windows::Win32::Foundation::HWND::default()),
+                ""
+            );
         }
 
         #[test]

@@ -8,13 +8,20 @@
 //! [`RUN_ONCE_VALUE`]. Windows deletes the value before it runs the command, so it runs at most once. Per user,
 //! **no admin rights**, no scheduled task, no service. The shell writes the value before muting and deletes it
 //! after restoring, so it only exists while a restore is pending.
+//!
+//! The shell shares [`RUN_ONCE_VALUE`] between muted notifications and the warm-screen tint (its `safety_net`
+//! keeps the value while either restore is pending; `--restore-shields` restores both). [`logon_task`] can
+//! register other, independent values; [`RUN_ONCE_TINT_VALUE`] is reserved for a separate tint entry and is not
+//! used by the shell today.
 
 use std::path::Path;
 
 use crate::PlatformError;
 
-/// Name of the `RunOnce` value.
+/// Name of the `RunOnce` value the shell uses (muted notifications and the screen tint).
 pub const RUN_ONCE_VALUE: &str = "FocusModeRestore";
+/// A separate `RunOnce` value for the warm-screen tint (not used by the shell: it shares [`RUN_ONCE_VALUE`]).
+pub const RUN_ONCE_TINT_VALUE: &str = "FocusModeRestoreTint";
 
 /// Runs a command once at the next logon of the current user.
 pub trait LogonTask: Send {
@@ -24,14 +31,21 @@ pub trait LogonTask: Send {
     fn cancel(&mut self) -> Result<(), PlatformError>;
 }
 
-/// Platform implementation: the `RunOnce` value on Windows, or [`NoopLogonTask`] elsewhere.
+/// Platform implementation under [`RUN_ONCE_VALUE`] (the shell's shared logon restore).
 pub fn restore_at_logon() -> Box<dyn LogonTask> {
+    logon_task(RUN_ONCE_VALUE)
+}
+
+/// Platform implementation under the `RunOnce` value `value_name` (e.g. [`RUN_ONCE_TINT_VALUE`]) on Windows, or
+/// [`NoopLogonTask`] elsewhere. Each value name is an independent registration.
+pub fn logon_task(value_name: &'static str) -> Box<dyn LogonTask> {
     #[cfg(target_os = "windows")]
     {
-        Box::new(windows_impl::RunOnceTask)
+        Box::new(windows_impl::RunOnceTask { value_name })
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = value_name;
         Box::new(NoopLogonTask)
     }
 }
@@ -63,15 +77,17 @@ mod windows_impl {
     };
     use windows::core::{PCWSTR, w};
 
-    use super::{LogonTask, RUN_ONCE_VALUE};
+    use super::LogonTask;
     use crate::PlatformError;
 
-    /// `HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce`, value [`RUN_ONCE_VALUE`].
-    pub(super) struct RunOnceTask;
+    /// `HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce`, value `value_name`.
+    pub(super) struct RunOnceTask {
+        pub(super) value_name: &'static str,
+    }
 
     impl LogonTask for RunOnceTask {
         fn schedule(&mut self, exe: &Path, args: &str) -> Result<(), PlatformError> {
-            let name = wide(RUN_ONCE_VALUE);
+            let name = wide(self.value_name);
             let data = command_line(exe, args);
             let bytes = u32::try_from(data.len() * size_of::<u16>())
                 .map_err(|_| PlatformError::Os("logon command line is too long".into()))?;
@@ -93,7 +109,7 @@ mod windows_impl {
         }
 
         fn cancel(&mut self) -> Result<(), PlatformError> {
-            let name = wide(RUN_ONCE_VALUE);
+            let name = wide(self.value_name);
             // SAFETY: `name` is a NUL-terminated UTF-16 buffer that outlives the call.
             let status = unsafe {
                 RegDeleteKeyValueW(
@@ -132,7 +148,7 @@ mod windows_impl {
 
     #[cfg(test)]
     mod tests {
-        use super::super::LogonTask;
+        use super::super::{LogonTask, RUN_ONCE_TINT_VALUE, RUN_ONCE_VALUE};
         use super::{RunOnceTask, command_line};
         use std::path::Path;
 
@@ -155,12 +171,23 @@ mod windows_impl {
         #[test]
         #[ignore = "writes the user's real RunOnce registry key"]
         fn run_once_round_trip() {
-            let mut task = RunOnceTask;
-            task.schedule(Path::new(r"C:\Windows\System32\cmd.exe"), "/c exit")
+            let mut shields = RunOnceTask {
+                value_name: RUN_ONCE_VALUE,
+            };
+            let mut tint = RunOnceTask {
+                value_name: RUN_ONCE_TINT_VALUE,
+            };
+            shields
+                .schedule(Path::new(r"C:\Windows\System32\cmd.exe"), "/c exit")
                 .expect("schedule");
-            task.cancel().expect("cancel");
+            tint.schedule(Path::new(r"C:\Windows\System32\cmd.exe"), "/c exit")
+                .expect("schedule tint");
+            // Independent values: cancelling one leaves the other.
+            shields.cancel().expect("cancel");
+            tint.cancel().expect("cancel tint");
             // Cancelling again (nothing registered) still succeeds.
-            task.cancel().expect("cancel twice");
+            shields.cancel().expect("cancel twice");
+            tint.cancel().expect("cancel tint twice");
         }
     }
 }
@@ -182,5 +209,7 @@ mod tests {
     #[test]
     fn platform_logon_task_is_constructible() {
         let _task = restore_at_logon();
+        let _tint = logon_task(RUN_ONCE_TINT_VALUE);
+        assert_ne!(RUN_ONCE_VALUE, RUN_ONCE_TINT_VALUE);
     }
 }
