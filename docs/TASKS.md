@@ -1,7 +1,7 @@
 # FocusMode — Taski i podział pracy
 
-> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014 i ADR-015); wersja 2 po cross-review (2026-09-27).
-> Decyzje: ADR-008…015 w [DECISIONS.md](DECISIONS.md).
+> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014, ADR-015 i ADR-016); wersja 2 po cross-review (2026-09-27).
+> Decyzje: ADR-008…016 w [DECISIONS.md](DECISIONS.md).
 
 **Legenda statusu:** `[ ]` do zrobienia · `[~]` w toku · `[x]` zrobione · `[-]` porzucone
 Przy braniu taska wpisz obok statusu kto: `[~] (A)`. Edytuj **tylko swoje linie** (mniej konfliktów).
@@ -18,6 +18,8 @@ ADR-014 (2026-10-13) dokłada też zasobnik z okienkami faz, zamykanie launcher�
 Runda 2a ([ADR-015](DECISIONS.md#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia), 2026-10-13) zastępuje overlay
 Oświetleniem nocnym Windows albo gammą (SR-19) i dokłada motywy, animowaną nawigację, dzwonki z własnym plikiem, muzykę w zestawie, przypomnienia,
 porady na przerwę oraz opcje historii (SR-20…SR-29).
+Kalendarze ([ADR-016](DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach), 2026-10-13): Microsoft 365 przez logowanie Teams, Google Calendar i linki ICS;
+spotkanie w czasie przerwy widać na stronie Skupienie przed Start, z wyborem: przedłuż skupienie, wstrzymaj przerwę, ignoruj, przypomnij później (SR-30…SR-33).
 
 - [~] **SR-01** (B) Kontrakt IPC od nowa (`crates/focus-core/src/api.rs`): DTO configu (czasy, muzyka, osłony), snapshot sesji, `ShieldStatus`,
   użycie aplikacji i `SessionSummary`, Teams, most dla rozszerzenia (`BRIDGE_PORT = 47615`), stałe komend i eventów. Bindingi w `src/lib/bindings/`
@@ -38,6 +40,8 @@ porady na przerwę oraz opcje historii (SR-20…SR-29).
   2026-10-13: ADR-014 (+ poprawki ADR-009, 010, 012, 013), ARCHITECTURE §6 (nowe komendy, eventy, DTO, §6.6 pola configu), README, CLAUDE.md (zasada 6, struktura, teksty).
   2026-10-13 (runda 2a): ADR-015 (+ poprawki ADR-009, 012, 013, 014), ARCHITECTURE §6 (nowe komendy, §6.7 pola configu i DTO, §9.1/9.2), README (funkcje, muzyka, prywatność), CREDITS.md.
   Zmiana CLAUDE.md (zasady 6 i 11, struktura) czeka na zatwierdzenie (notatka 2026-10-13).
+  2026-10-13 (kalendarze): ADR-016 (+ poprawki ADR-010, 011, 013, 014), ARCHITECTURE §6 (nowe komendy i event, snapshot, przykłady JSON, §6.8 config, DTO i reguły core),
+  README (funkcja, konfiguracja Microsoft / Google / ICS, prywatność, ograniczenia). Zmiana CLAUDE.md (zasady 2, 6 i 11, struktura) czeka na zatwierdzenie (notatka 2026-10-13, „kalendarze”).
 - [ ] **SR-09** (A+B, po merge'u) Zaktualizować DESIGN.md i ARCHITECTURE.md do ADR-013 (tabela faz, wątki, kontrakt, okna). ARCHITECTURE §6 (kontrakt IPC) zaktualizowany 2026-10-13.
 - [~] **SR-10** (B) Okno YouTube jako fallback (ADR-013 pkt 2): gdy YouTube odmawia osadzania (błędy 101/150/153; m.in. live Lofi Girl i część YouTube Music)
   albo linku nie da się osadzić (`/@kanał/live`, `/channel/<id>/live`, `/@kanał`), link gra w ukrytym oknie Tauri `media` ze stroną YouTube (odtwarzacz w tle, bez uprawnień IPC,
@@ -111,6 +115,30 @@ porady na przerwę oraz opcje historii (SR-20…SR-29).
   DoD: „Usuń historię” → pytanie → „Anuluj” nic nie zmienia; „Usuń” → historia pusta, także po restarcie; trwająca sesja działa dalej.
 - [~] **SR-29** (B) **Opcja „Nie zapisuj historii”** (prośba użytkownika, ADR-015 pkt 8): `Config.keepHistory` (domyślnie wł.); po wyłączeniu podsumowanie po Stop widać,
   ale nie trafia do `history.jsonl`. DoD: wyłączone → sesja → Stop → podsumowanie widoczne, po restarcie tej sesji nie ma w historii; wcześniejsza historia nietknięta.
+- [~] **SR-30** (B) Kalendarze w `focus-core` (ADR-016 pkt 3–5): `calendar.rs` (`plan_breaks`, `conflicts`, `reminder_schedule`), `MEETING_REMINDER_LEAD_MINUTES` (30/20/10) w `timing.rs`,
+  `CalendarConfig` z walidacją (`horizonHours` 1–24, `is_google_client_id`), w `session.rs` `MeetingHold` + `Input::SetMeetingHolds` (`extend` przesuwa termin focusa na koniec spotkania,
+  `pauseAtBreak` zaczyna przerwę w pauzie z `Notify(BreakHeld)` zamiast `BreakStarted`, tylko przy terminie focusa, raz na blokadę), snapshot `musicMuted` / `meetingHold`,
+  `Session::remaining_ms`. Kontrakt: `Config.calendar`, DTO kalendarza, komendy `get_calendar` / `refresh_calendar` / `set_meeting_choice` / `connect_google` / `disconnect_calendar` /
+  `set_ics_urls` / `get_ics_urls` + `calendar://changed`, `PopupKind.meetingReminder` / `breakHeld`, `PopupInfo.meeting`.
+  DoD: `cargo test -p focus-core` zielone (208 testów, w tym 13 planowania i kolizji, 17 blokad w sesji); bindingi zregenerowane bez ręcznych zmian.
+- [~] **SR-31** (B) Kalendarze w `focus-platform` (ADR-016 pkt 1–2): kalendarz Microsoft przez klienta Teams (zakresy z `Calendars.Read`, wystąpienia spotkań cyklicznych z Graph),
+  `calendar/google.rs` (OAuth dla aplikacji instalowanych: przeglądarka systemowa, loopback `127.0.0.1`, PKCE S256, `state`, zakres tylko do odczytu, odświeżanie tokenu),
+  `calendar/ics.rs` (pobieranie `https` / `webcal`, parser `VEVENT` z `RRULE` / `EXDATE` / `RECURRENCE-ID`, strefy czasowe, pomijanie odwołanych, „wolnych” i całodniowych),
+  `secrets.rs` (pliki szyfrowane DPAPI: `google-token.bin`, `ics-links.bin`; poza Windows `Unsupported`). Tokenów, linków i tematów nie logujemy.
+  DoD: testy parsera ICS (spotkanie cykliczne co tydzień z wyjątkiem i przeniesionym wystąpieniem, `TZID`, UTC, czas bez strefy, wydarzenie całodniowe pominięte);
+  logowanie Google na koncie testowym → token zapisany zaszyfrowany, po restarcie aplikacji kalendarz działa bez ponownego logowania.
+- [~] **SR-32** (B) Kalendarze w powłoce (ADR-016): `src-tauri/src/calendar/` (`model.rs`: łączenie źródeł bez duplikatów, wybory, przypomnienia, walidacja linków ICS;
+  synchronizacja okresowa i `refresh_calendar` poza aktorem, kolizje z `plan_breaks` / `conflicts`,
+  wybory w `meeting-choices.json` (bez tematów), okienka `meetingReminder` według `reminder_schedule`, `Input::SetMeetingHolds` po synchronizacji, zmianie wyboru, Start i Wznów,
+  `calendar://changed`), komendy w `commands.rs`, okienko / toast `breakHeld` (`NotifyKind::BreakHeld` w `effects.rs`, `PopupInfo.meeting` w `popup.rs`), teksty w `texts.rs`.
+  DoD: spotkanie w czasie 1. przerwy (`--demo`, spotkanie dodane na najbliższą minutę) → `extend`: focus trwa do końca spotkania, `musicMuted` w jego trakcie, potem zwykła przerwa;
+  `pauseAtBreak`: przerwa startuje w pauzie z okienkiem `breakHeld`, Wznów ją uruchamia; `remindLater`: okienka 30, 20 i 10 min przed spotkaniem, ostatnie bez „przypomnij później”;
+  w logach brak tematów, linków ICS i tokenów; Pomiń fazę i Stop działają w przedłużonym focusie.
+- [~] **SR-33** (B) Kalendarze w UI (ADR-016 pkt 4): Skupienie: karta kolizji przed Start i w trakcie sesji z czterema wyborami (`MeetingConflicts.svelte`), pasek przedłużonego focusa
+  albo wstrzymanej przerwy (`MeetingHoldBanner.svelte`), stan kalendarza (`src/lib/state/calendar.svelte.ts`: listen → `get_calendar` → nowsza rewizja); odtwarzacz milknie przy `musicMuted`
+  (także okno YouTube); Ustawienia → Kalendarze (`CalendarSettings.svelte`: Microsoft przez konto Teams, Google: identyfikator klienta + „Połącz z Google”, linki ICS, zakres godzin, „Odśwież teraz”);
+  okienko `meetingReminder` z wyborami (bez „przypomnij później” w ostatnim) i `breakHeld`; teksty w `strings.ts`.
+  DoD: Idle z połączonym kalendarzem → kolizje widać przed Start; wybór zostaje po restarcie; `npm run check` zielone; brak tematów spotkań w konsoli.
 
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
@@ -129,6 +157,9 @@ porady na przerwę oraz opcje historii (SR-20…SR-29).
 - [ ] historia: bez elementów powłoki Windows (menu Start, pasek zadań, pulpit); tytuły okien w podpowiedzi wykresu i bez nich po wyłączeniu; „Nie zapisuj historii”; „Usuń historię” z potwierdzeniem
 - [ ] launchery: Steam/Epic zamknięte na start focusa (także w drugim cyklu), usługi nietknięte, w przerwie nie wracają
 - [ ] Teams (jeśli tenant pozwala): „Wyświetlaj jako offline” i własne DND zostają nietknięte przez całą sesję
+- [ ] kalendarze (ADR-016): Microsoft (jeśli tenant pozwala na `Calendars.Read`), Google (konto testowe) i link ICS ze spotkaniem cyklicznym → kolizje na stronie Skupienie przed Start;
+  `extend` (focus do końca spotkania, muzyka wyciszona), `pauseAtBreak` (przerwa w pauzie do Wznów), `ignore`, `remindLater` (okienka 30 / 20 / 10 min, ostatnie bez „przypomnij później”);
+  Pomiń fazę i Stop działają w przedłużonym focusie; po restarcie Google i ICS działają bez ponownego logowania; w `config.json` i w logach brak tokenów, linków ICS i tematów
 
 ## Role
 
@@ -295,3 +326,24 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
 - [2026-10-13] (B→A) Kontrakt, runda 2a (ADR-015): komendy import_chime / remove_custom_chime / list_library_tracks / clear_history (bez nowych eventów); Config: theme, chimeSound, customChimes, breakReminders, repeatReminders, trackTitles, keepHistory; TintConfig.mode (TintMode: nightLight | gamma); TintStatus.mode / capped; PopupInfo.reminder; AppUsage.titles (TitleUsage); MusicSourceKind.library (nowe domyślne źródło). Zmiana API w core: `UsageAccumulator::add_sample(process, title, idle, ms)` oraz nowe `is_ignored_process` / `is_shell_surface`, `reminder_for_break`, `kelvin_for_level` / `rgb_gain_for_kelvin`.
 - [2026-10-13] (B→A) Overlay odcienia odrzucony przez właściciela produktu (ADR-015). Ciepło daje Oświetlenie nocne Windows (domyślnie, nieudokumentowany zapis ustawień użytkownika w rejestrze) albo gamma ramp z kopią bazowej rampy każdego monitora, czyli wersja S-02 zgodna z R08. Proszę o review `focus-platform/src/night_light.rs` i `gamma.rs` oraz powrotu kolorów po kill (plik przywracania + RunOnce). S-02 i A-07 to twoje linie: zdecyduj, czy oznaczyć je jako zastąpione przez SR-19.
 - [2026-10-13] (B) Zmiana CLAUDE.md według ADR-015 („Co zmienia”: zasada 6 — odcień tylko przez Oświetlenie nocne albo gammę, nigdy overlay; zasada 11 — tytuły okien tylko przy `trackTitles`, lokalnie, nigdy w logach; Struktura — nowe moduły) czeka na zatwierdzenie przez użytkownika. Do tego czasu CLAUDE.md opisuje stan z ADR-014, a przy różnicy wygrywa ADR-015.
+- [2026-10-13] (B→A) Kontrakt, kalendarze (ADR-016): komendy `get_calendar` / `refresh_calendar` / `set_meeting_choice { meetingId, choice }` / `connect_google` / `disconnect_calendar { source }` /
+  `set_ics_urls { urls }` / `get_ics_urls`, event `calendar://changed` (`CalendarStatus` z rewizją); DTO `CalendarConfig`, `CalendarSource`, `MeetingChoice`, `Meeting`, `MeetingConflict`,
+  `CalendarSourceStatus`, `CalendarStatus`, `MeetingHoldView`; `Config.calendar`; `SessionSnapshot.musicMuted` / `meetingHold` (`#[serde(default)]`); `PopupKind.meetingReminder` / `breakHeld`;
+  `PopupInfo.meeting` (`#[serde(default)]`). Zmiany API w core (twoje pliki, proszę o review `session.rs`): nowy moduł `calendar.rs` (`plan_breaks`, `conflicts`, `reminder_schedule`,
+  `BreakWindow`, `MAX_PLANNED_BREAKS`); `timing::MEETING_REMINDER_LEAD_MINUTES`; `config::CalendarConfig::normalized` / `horizon_ms`, `is_google_client_id`;
+  `session::MeetingHold` + `MeetingHold::from_meeting`, `Input::SetMeetingHolds`, `NotifyKind::BreakHeld { subject }` (**`NotifyKind` nie jest już `Copy`**),
+  `Session::remaining_ms` / `meeting_holds`. Tabela faz z ADR-013 ma nowy wiersz (Tick po terminie w Focus z blokadą spotkania, ADR-016 pkt 5); Pomiń fazę nigdy nie stosuje blokad.
+  Logowanie Teams prosi teraz też o `Calendars.Read`: rejestracja w Entra ID potrzebuje tego uprawnienia, a stare połączenie trzeba odnowić.
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-016 („Co zmienia”) czeka na zatwierdzenie przez użytkownika; do tego czasu przy różnicy wygrywa ADR-016. Proponowany tekst:
+  - zasada 2, dopisek: „Wyjątek: pory przypomnień o spotkaniach (`MEETING_REMINDER_LEAD_MINUTES` w `timing.rs`, 30/20/10 min) i przedłużenie focusa do końca spotkania (ADR-016).”
+  - zasada 6, pierwsze zdanie: „**Bez pełnoekranowych okien przerwy i ręcznego trybu spotkania** („Jestem na spotkaniu”) — odłożone (ADR-013). Spotkania z kalendarza
+    zmieniają sesję tylko według wyboru użytkownika (`extend`, `pauseAtBreak`), tylko gdy focus dochodzi do terminu, i nigdy nie blokują Pomiń fazę ani Stop (ADR-016).”
+  - zasada 11, pierwsze zdanie: „nic nie opuszcza komputera poza ruchem, który wybrał użytkownik (muzyka, opcjonalnie Graph dla Teams i kalendarza Microsoft, Google Calendar, linki ICS).”
+    i nowe zdanie: „Kalendarze tylko do odczytu. Token Google i linki ICS tylko w plikach szyfrowanych DPAPI (`focus-platform/src/secrets.rs`), nigdy w `config.json` ani w logach;
+    tematy spotkań tylko lokalnie, nigdy w logach, historii, moście ani rozszerzeniu (ADR-016).”
+  - Struktura: `focus-core` — „`calendar.rs` (planowane przerwy, kolizje ze spotkaniami, pory przypomnień 30/20/10)”, a przy `session.rs` „blokady spotkań `MeetingHold`”;
+    `focus-platform` — „`calendar/` (`google.rs`: OAuth loopback + PKCE i Calendar API; `ics.rs`: pobieranie i parser iCalendar ze spotkaniami cyklicznymi),
+    `secrets.rs` (pliki szyfrowane DPAPI), `teams` także z kalendarzem Microsoft (`Calendars.Read`)”; powłoka — „`calendar/` (synchronizacja kalendarzy, w `model.rs` czysta logika: łączenie źródeł, wybory, przypomnienia; kolizje,
+    wybory w `meeting-choices.json`, okienka `meetingReminder`, `Input::SetMeetingHolds`, `calendar://changed`)”; `src/` — „`src/lib/state/calendar.svelte.ts`,
+    komponenty `MeetingConflicts.svelte` (Skupienie), `MeetingHoldBanner.svelte` i `CalendarSettings.svelte` (Ustawienia → Kalendarze)”.
+- [2026-10-13] (B→A) Kontrakt, kalendarze — poprawki: `CalendarConfig.googleClientSecret` (string, domyślnie `""`, stary config wczytuje się bez zmian; walidacja w core `is_google_client_secret`: przycięty, najwyżej 100 znaków `[A-Za-z0-9_-]`, pole błędu `calendar.googleClientSecret`; leży w `config.json`, bo Google dokumentuje sekret klienta „Desktop app” jako niepoufny, ale nie trafia do logów) i `MeetingConflict.tooLong` (bool, `#[serde(default)]`). Bez nowych komend i eventów; zmienione zachowanie: `teams_connect` prosi o `Calendars.Read` tylko przy włączonym `calendar.microsoft` (platforma: `TeamsClient::begin_login(calendar: bool)`, `teams::login_scopes`), a `disconnect_calendar(microsoft)` nie usuwa już tokenu Teams, tylko wyłącza `calendar.microsoft` (zapis jak `update_config`) i czyści spotkania Microsoft. Zmiany w core (twoje pliki, proszę o review `session.rs`): `timing::MAX_MEETING_HOLD_MS` (4 h), `calendar::meeting_hold_allowed`, `MeetingHold::is_usable` / `from_meeting` odrzucają spotkania dłuższe niż 4 h (na obu zegarach), więc nie przedłużają focusa, nie wstrzymują przerwy i nie wyciszają muzyki; test `meeting_holds_with_extreme_values_never_panic` przepisany pod ten limit, nowy `meetings_longer_than_4_hours_never_hold_the_session`. Nowy kod błędu powłoki `calendar.meetingTooLong` (`set_meeting_choice` z `extend` / `pauseAtBreak` dla takiego spotkania).

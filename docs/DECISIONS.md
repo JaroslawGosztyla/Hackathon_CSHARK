@@ -19,6 +19,10 @@ muzykę w zestawie (Open Lo-Fi, CC0) jako domyślne źródło, przypomnienia na 
 oraz opcje historii (pomijanie powierzchni powłoki Windows, tytuły okien w podpowiedzi wykresu, „nie zapisuj historii”, „usuń historię”).
 Zmienia ADR-009, 012, 013 i 014.
 
+**Stan na 2026-10-13 (kalendarze):** [ADR-016](#adr-016-kalendarze-i-spotkania-w-przerwach) dokłada kalendarze (Microsoft 365 przez logowanie Teams,
+Google Calendar, linki ICS dla pozostałych) i pytanie, co zrobić ze spotkaniem, które wypada w przerwie: przedłużyć skupienie, wstrzymać przerwę,
+zignorować albo przypomnieć później (30, 20 i 10 minut przed spotkaniem). Zmienia ADR-010, 011, 013 i 014.
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -149,7 +153,7 @@ zaraz po zmianie i przywracany przy wyjściu, przy następnym starcie albo najp�
 ---
 
 ## ADR-010: Ręczny tryb spotkania w MVP; Teams DND jako Could, bez wykrywania rozmów
-**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F06); w części zastąpiona przez ADR-013 (2026-10-12)
+**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F06); w części zastąpiona przez ADR-013 (2026-10-12); spotkania wracają z kalendarza przez ADR-016 (2026-10-13)
 
 **Kontekst:** Graph daje pierwszeństwo preferowanemu statusowi użytkownika, więc po ustawieniu własnego DND zagregowany
 `/me/presence` nie wykrywa wiarygodnie rozmowy. Zmiana ikony w Teams może trwać minuty. `clearUserPreferredPresence`
@@ -174,10 +178,14 @@ Wykrywanie rozmów przez Graph nadal Won't.
 (m.in. „Wyświetlaj jako offline”) albo ma już „Nie przeszkadzać”, FocusMode statusu nie zmienia i w przerwie ani po Stop go nie czyści.
 Część ryzyka R07 znika: nie kasujemy już DND ani niewidoczności ustawionych przez użytkownika przed focusem.
 
+**Poprawka (ADR-016, 2026-10-13):** ręczny tryb spotkania nadal odpada, ale spotkania wracają z kalendarza (Microsoft 365, Google, linki ICS):
+dla spotkania, które wypada w przerwie, użytkownik wybiera przedłużenie skupienia, wstrzymanie przerwy, „ignoruj” albo przypomnienie później.
+Logowanie Teams prosi dodatkowo o delegowane `Calendars.Read` (ten sam token czyta kalendarz Microsoft). Wykrywanie rozmów przez status Teams nadal Won't.
+
 ---
 
 ## ADR-011: Model czasu — profil czasów, ostrzeżenie w focusie, dwa zegary
-**Status:** Proponowana (z review F04/F07); w części zastąpiona przez ADR-013 (2026-10-12)
+**Status:** Proponowana (z review F04/F07); w części zastąpiona przez ADR-013 (2026-10-12); reguła spotkania wraca w innej postaci przez ADR-016 (2026-10-13)
 
 **Decyzja:**
 - Jeden `TimingProfile` (`normal()`/`demo()`) zasila core, UI i testy. Ostrzeżenie zawiera się w czasie focusa.
@@ -197,6 +205,10 @@ Część ryzyka R07 znika: nie kasujemy już DND ani niewidoczności ustawionych
 **Poprawka (ADR-013, 2026-10-12):** zostają `TimingProfile` (`normal()` = 45/15 min, `demo()` = 40/20 s, `from_config`), dwa zegary i heurystyka luki.
 Próg luki to 90 s, a luka w Focus **i** w Break kończy się automatyczną pauzą (nie Idle). Odpadają ostrzeżenie w focusie, Postpone, reguły spotkania,
 plan przerwy i wyniki przerwy. Sesja jest pętlą Focus ⇄ Break aż do Stop; tabela faz jest w ADR-013.
+
+**Poprawka (ADR-016, 2026-10-13):** reguła R01 („spotkanie blokuje przerwę”) wraca w innej postaci: tylko dla spotkań z kalendarza i tylko według wyboru
+użytkownika. Przy `extend` focus trwa do końca spotkania, a przy `pauseAtBreak` przerwa zaczyna się w pauzie. Blokady sprawdzamy tylko wtedy,
+gdy tick osiąga termin focusa, w zegarze monotonicznym (godziny spotkań przelicza powłoka). Ostrzeżenie w focusie i Postpone nie wracają.
 
 ---
 
@@ -232,7 +244,7 @@ Poza oknem głównym zostają okno `popup` i okno YouTube `media`.
 ---
 
 ## ADR-013: Speedrun: pivot produktu
-**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7) i ADR-015 (2026-10-13: pkt 2, 3 i 5)
+**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7), ADR-015 (2026-10-13: pkt 2, 3 i 5) i ADR-016 (2026-10-13: pkt 1, 4 i 7)
 
 **Kontekst:** termin oddania to **jutro** (2026-10-13). Po T0-2/T0-3 nie było jeszcze kontraktu (T0-4), maszyny stanów ani okien przerwy,
 a plan M1–M4 zakładał jeszcze ok. 10 dni pracy. Równocześnie właściciel produktu zmienił wymagania:
@@ -410,10 +422,17 @@ Teams nie rusza statusu „offline” ani własnego DND użytkownika; `Blocklist
   **Tytuły okien zapisujemy** (zdanie „Tytułów okien nie zapisujemy” przestaje obowiązywać), ale tylko przy włączonym `trackTitles`,
   przycięte i tylko lokalnie, jako podpowiedź na wykresie. Zapis do `history.jsonl` można wyłączyć (`keepHistory`), a historię usunąć jednym przyciskiem.
 
+**Poprawka (ADR-016, 2026-10-13):**
+- Pkt 1: tabela faz dostaje wiersz dla Tick po terminie w Focus, gdy przerwa zaczynająca się teraz nachodzi na spotkanie z kalendarza.
+  Wybór `extend` przesuwa termin focusa na koniec spotkania, bez efektów. Wybór `pauseAtBreak` zaczyna przerwę w pauzie, z tymi samymi efektami
+  w tej samej kolejności co zwykła przerwa, tylko `Notify(BreakHeld)` zastępuje `Notify(BreakStarted)`. Pomiń fazę, Pauza, Wznów i Stop działają bez zmian.
+- Pkt 4: logowanie Teams prosi też o `Calendars.Read`, bo ten sam token czyta kalendarz Microsoft.
+- Pkt 7: przycisk „Jestem na spotkaniu” nadal jest odłożony; spotkania z kalendarza obsługuje ADR-016.
+
 ---
 
 ## ADR-014: Zasobnik i okienka faz, odcień ekranu (overlay), zamykanie launcherów gier, języki
-**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); w części zmieniona przez ADR-015 (2026-10-13: pkt 2 i 6, overlay odcienia odrzucony)
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); w części zmieniona przez ADR-015 (2026-10-13: pkt 2 i 6, overlay odcienia odrzucony); pkt 1 uzupełniony przez ADR-016 (2026-10-13: okienka spotkań)
 
 **Kontekst:** po pierwszych testach zakresu z ADR-013 właściciel produktu poprosił 2026-10-13 o:
 1. możliwość schowania aplikacji do zasobnika i **okienka przy starcie skupienia i przerwy** w stylu FocusMode (małe okno w rogu ekranu,
@@ -576,6 +595,10 @@ w `capabilities/overlays.json`) jest usunięty, a ciepło ekranu daje Oświetlen
 Harmonogram (`startMinutes`, `endMinutes`, `strength`, `transitionMinutes`), podgląd, domyślne wyłączenie i niezależność od sesji zostają.
 Pkt 6: grupa tras `(overlay)` obsługuje już tylko okno `popup`. Konsekwencje dotyczące overlayu (pełny ekran, kontrast, zrzuty ekranu, okna per monitor) przestają obowiązywać,
 a w ich miejsce wchodzą konsekwencje z ADR-015.
+
+**Poprawka (ADR-016, 2026-10-13):** pkt 1: dochodzą dwa rodzaje okienek. `meetingReminder` to przypomnienie o spotkaniu, które wypada w przerwie,
+z tymi samymi wyborami co na stronie Skupienie (bez „przypomnij później” w ostatnim, 10 minut przed spotkaniem). `breakHeld` mówi, że przerwa zaczęła się
+wstrzymana z powodu spotkania. Oba niosą spotkanie w `PopupInfo.meeting` (`MeetingConflict`).
 
 ---
 
@@ -750,3 +773,200 @@ Punkt 1 odwraca ADR-014 pkt 2, który odrzucił Oświetlenie nocne (brak publicz
     tylko lokalnie w `history.jsonl` (przy wyłączonym `keepHistory` nic), **nigdy w logach**, moście, rozszerzeniu ani w sieci (ADR-015). Powierzchnie powłoki Windows pomijamy.”;
   - Struktura: `focus-platform` (`night_light`, `gamma`, klasa okna w `foreground`), powłoka (`tint.rs`: Oświetlenie nocne / gamma i plik przywracania),
     `src/lib/themes/`, `src/lib/tips.ts`, `src-tauri/resources/music/`.
+
+---
+
+## ADR-016: Kalendarze i spotkania w przerwach
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu poprosił 2026-10-13 o połączenie z kalendarzem Microsoft. Gdy spotkanie (w Teams albo dowolne inne)
+wypada w czasie przerwy, FocusMode ma o tym powiedzieć na stronie Skupienie, **zanim** użytkownik uruchomi sesję, i zapytać, co zrobić:
+1. przedłużyć skupienie na czas spotkania (z wyciszoną muzyką), a przerwę zacząć po nim;
+2. tylko wstrzymać aplikację, gdy przyjdzie pora przerwy;
+3. zignorować;
+4. przypomnieć później: 30 minut przed spotkaniem okienko z tym samym pytaniem; kolejne „przypomnij później” daje okienko po 10 minutach,
+   a ostatnie (10 minut przed spotkaniem) nie ma już „przypomnij później”.
+
+Do tego „Google Calendar i cokolwiek, czego używają korporacje”, łącznie ze spotkaniami cyklicznymi.
+To dotyka trzech wcześniejszych decyzji: ADR-013 pkt 7 odłożył ręczny tryb „Jestem na spotkaniu”, ADR-010 odrzucił wykrywanie rozmów
+przez Graph, a twarda zasada 6 w CLAUDE.md wyklucza tryb spotkania bez nowego ADR. Zmienia się też tabela faz z ADR-013
+(Tick po terminie w Focus), której pilnuje zasada 2.
+
+**Opcje — źródła kalendarza:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Microsoft Graph (`Calendars.Read`) przez logowanie Teams** | Microsoft 365, Exchange Online i Outlook; ta sama rejestracja aplikacji, device code i token co Teams; Graph sam rozwija spotkania cykliczne w wystąpienia i podaje odpowiedź na zaproszenie, „wolny/zajęty” i link do spotkania online | rejestracja w Entra ID i zgoda tenantu (T0-8 nadal nierozstrzygnięty); po dodaniu uprawnienia istniejące połączenie trzeba raz odnowić |
+| **Google Calendar API, OAuth dla aplikacji komputerowych (loopback + PKCE)** | oficjalne API, zakres tylko do odczytu; Google sam rozwija wystąpienia spotkań cyklicznych | każdy użytkownik zakłada własny projekt Google Cloud i podaje identyfikator klienta; projekt bez weryfikacji Google pokazuje ekran „aplikacja niezweryfikowana”, a w trybie testowym token odświeżania wygasa po 7 dniach |
+| **Linki ICS (subskrypcja iCalendar)** | działa prawie wszędzie: Exchange on-premises (publikowanie kalendarza w Outlook Web App), Outlook.com, Google (tajny adres iCal), iCloud, Proton, Zoho, Zimbra, Nextcloud…; bez logowania i bez rejestracji aplikacji | link jest sekretem (kto go ma, czyta kalendarz); dostawca odświeża opublikowany plik z opóźnieniem; własny parser (strefy czasowe, reguły powtarzania); brak odpowiedzi na zaproszenie |
+| CalDAV | standard, dane na bieżąco | uwierzytelnianie inne na każdym serwerze (hasła aplikacji), cięższy protokół; poza zakresem |
+| Exchange Web Services (EWS) | Exchange on-premises na bieżąco | Microsoft wycofuje EWS, a uwierzytelnianie on-premises to zwykle NTLM albo Basic; odrzucone |
+| Outlook na komputerze (COM, plik OST) | bez logowania | tylko klasyczny Outlook (nowy Outlook nie ma COM), monity zabezpieczeń Outlooka przy dostępie z zewnątrz; odrzucone |
+
+**Opcje — gdzie żyje reguła spotkania:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **`focus-core`: blokady spotkań (`MeetingHold`) sprawdzane, gdy focus dochodzi do terminu** | czysta logika z testami jednostkowymi; kolejność efektów nadal wynika z tabeli faz; fazy liczy jeden zegar (monotoniczny, ADR-011) | powłoka przelicza godziny spotkań na zegar monotoniczny i wysyła blokady po każdej synchronizacji |
+| Powłoka wysyła Pauzę albo Pomiń fazę we właściwych chwilach | bez zmian w core | wyścigi z tickiem, osobne timery; pauza zamiast przerwy zostawia osłony w górze i nie gra dzwonka; trudne do przetestowania |
+
+**Decyzja:**
+
+1. **Trzy rodzaje źródeł** (`Config.calendar`; wszystkie domyślnie wyłączone, każde włącza się osobno w Ustawieniach).
+   - **Microsoft 365 / Outlook** (`calendar.microsoft`): to samo konto i ta sama rejestracja aplikacji co Teams (`shields.teamsClientId`,
+     `shields.teamsTenant`, device code, token odświeżania szyfrowany DPAPI w `teams-token.bin`). O delegowane `Calendars.Read` logowanie prosi
+     **tylko wtedy, gdy przy logowaniu `calendar.microsoft` jest włączone** (`focus_platform::teams::login_scopes`), więc użytkownik samego Teams
+     nie potrzebuje zgody na kalendarz. Rejestracja w Entra ID musi mieć to uprawnienie, a logowanie bez niego (tylko Teams albo sprzed tej zmiany)
+     daje źródłu błąd „reconnect needed”; Ustawienia → Kalendarze pokazują wtedy „Połącz ponownie”, czyli nowe logowanie device code, tym razem
+     z kalendarzem (stare logowanie działa, dopóki nowe się nie uda). `disconnect_calendar(microsoft)` **nie usuwa tokenu Teams**: tylko wyłącza
+     `calendar.microsoft` (zapis jak przez `update_config`) i usuwa spotkania Microsoft, a status w Teams działa dalej.
+     Powłoka czyta spotkania z okna `[teraz, teraz + horyzont]`; wystąpienia spotkań cyklicznych rozwija Graph.
+   - **Google Calendar** (`calendar.google` + `calendar.googleClientId`): OAuth 2.0 dla aplikacji instalowanych. `connect_google` otwiera logowanie
+     w przeglądarce systemowej, a Google przekierowuje z powrotem na loopback (`http://127.0.0.1:<wolny port>`), z PKCE (S256) i parametrem `state`.
+     Identyfikator klienta typu „Aplikacja komputerowa” pochodzi z projektu Google Cloud użytkownika; core sprawdza tylko jego postać
+     (`focus_core::config::is_google_client_id`: `<prefiks>.apps.googleusercontent.com`, pole błędu `calendar.googleClientId`).
+     Punkt tokenów Google wymaga od takich klientów także **sekretu klienta** (`calendar.googleClientSecret`, wysyłany przy wymianie kodu
+     i odświeżaniu, gdy nie jest pusty; core sprawdza: przycięty, najwyżej 100 znaków `[A-Za-z0-9_-]`, pole błędu `calendar.googleClientSecret`).
+     Google opisuje go w aplikacjach instalowanych jako niepoufny, więc leży w `config.json` (nie w pliku DPAPI), ale nigdy w logach.
+     Zakres jest tylko do odczytu (`https://www.googleapis.com/auth/calendar.readonly`), a token odświeżania jest szyfrowany DPAPI (`google-token.bin`).
+     Postęp logowania: `CalendarStatus.googlePending` i `calendar://changed`. Wystąpienia spotkań cyklicznych rozwija Google.
+   - **Linki ICS** (`calendar.ics`): wszystko inne. `set_ics_urls { urls }` zapisuje listę linków (`https://` albo `webcal://`) w pliku szyfrowanym DPAPI
+     w danych aplikacji (`ics-links.bin`), nigdy w `config.json`; `get_ics_urls` oddaje je do edycji w Ustawieniach. Powłoka pobiera każdy link i czyta wydarzenia (`VEVENT`):
+     początek i koniec albo czas trwania, strefę czasową, **reguły powtarzania** (`RRULE`) z wyjątkami (`EXDATE`) i przeniesionymi wystąpieniami (`RECURRENCE-ID`).
+   - Wspólne: spotkania z najbliższych `horizonHours` godzin (1–24, domyślnie 10; pole błędu `calendar.horizonHours`), posortowane po początku.
+     Pomijamy spotkania odrzucone, odwołane, oznaczone jako „wolny” i **całodniowe**. `Meeting.id` = źródło + id wydarzenia + początek, więc każde
+     wystąpienie spotkania cyklicznego ma własny wybór. `Meeting.online` = jest link do Teams, Meet, Zoom albo Webex.
+     Spotkanie widoczne w kilku źródłach (to samo id albo ten sam temat, bez względu na wielkość liter i odstępy, z początkiem w odstępie do minuty)
+     liczy się raz, a wybór dany kopii przechodzi na spotkanie, które zostało. Limity: najwyżej 200 spotkań i 10 linków ICS (po 2048 znaków).
+     Powłoka synchronizuje kalendarze okresowo i na żądanie (`refresh_calendar`), a wynik podaje jako `CalendarStatus` (getter `get_calendar`
+     + event `calendar://changed` z rewizją, ADR-012). Błąd jednego źródła to `CalendarSourceStatus.state = error` ze szczegółem po angielsku;
+     pozostałe źródła działają, a sesja trwa (zasada 8).
+
+2. **Prywatność.**
+   - **Tylko odczyt**: delegowane `Calendars.Read` w Graph, zakres tylko do odczytu w Google, zwykłe pobranie linku ICS. FocusMode niczego
+     w kalendarzach nie zapisuje: nie odpowiada na zaproszenia, nie tworzy wydarzeń i nie zmienia ich.
+   - **Sekrety** (token odświeżania Google i linki ICS, bo link ICS to w praktyce klucz do kalendarza) leżą w osobnych plikach szyfrowanych DPAPI
+     dla bieżącego użytkownika Windows (`focus-platform/src/secrets.rs`), **nigdy w `config.json` i nigdy w logach** (log nie zawiera adresów linków,
+     tokenów ani tematów spotkań). Token Microsoft to dotychczasowy token Teams.
+   - **Tematy i godziny spotkań pokazujemy tylko lokalnie**: na stronie Skupienie, w okienkach i toastach FocusMode i w snapshocie sesji.
+     Nie trafiają do logów, historii (`history.jsonl`), mostu, rozszerzenia ani nigdzie indziej. Wybory dla spotkań powłoka zapisuje
+     w `meeting-choices.json` (tylko `Meeting.id` i wybór, bez tematu), żeby przetrwały restart aplikacji.
+   - Ruch sieciowy jest tylko do źródeł, które włączył użytkownik: Microsoft (logowanie i Graph), Google (logowanie i Calendar API) i serwery linków ICS.
+
+3. **Kolizja = spotkanie nachodzi na planowaną przerwę** (`focus_core::calendar`, czyste funkcje, czasy kalendarzowe w ms).
+   - `plan_breaks(now, focusRemaining, breakRemaining, cycle, profile, horizon)` planuje przerwy: w Idle przerwy sesji, która zaczęłaby się teraz
+     (`CalendarStatus.planned = true`, numeracja od 1); w Focus od terminu bieżącego focusa (przerwa numer `cycle`); w przerwie od następnej
+     (numer `cycle + 1`, trwającej przerwy nie planujemy). Faza w pauzie jest planowana tak, jakby ruszyła teraz z zamrożonym czasem. Najwyżej 512 przerw.
+   - `conflicts(breaks, meetings)`: spotkanie koliduje, gdy `[początek, koniec)` przecina okno przerwy; styk krawędzi się nie liczy. Każde spotkanie
+     jest zgłaszane raz, z pierwszą przerwą, na którą nachodzi (`MeetingConflict.breakNumber`, `breakStartMs`, `breakEndMs`).
+   - Plan zakłada, że sesja biegnie dalej bez pauz i pominięć. Po każdej takiej zmianie, a w Idle także z upływem czasu, przerwy i kolizje liczymy na nowo.
+
+4. **Pytanie przed startem i cztery wybory** (`MeetingChoice`, `set_meeting_choice { meetingId, choice }`).
+   - Strona Skupienie pokazuje kolizje już w Idle, przed Start (i dalej w trakcie sesji): temat, godziny spotkania, numer przerwy i cztery przyciski.
+     Dopóki użytkownik nie wybierze, nic się nie zmienia (jak `ignore`). Wybór można zmienić w każdej chwili; po końcu spotkania jest zapominany.
+   - `extend` („Przedłuż skupienie”): focus trwa do końca spotkania, muzyka milknie na czas spotkania (`SessionSnapshot.musicMuted`),
+     a pełna przerwa zaczyna się po spotkaniu.
+   - `pauseAtBreak` („Wstrzymaj przy przerwie”): gdy pora przerwy wypada w trakcie spotkania, przerwa zaczyna się wstrzymana (pełna długość zamrożona,
+     muzyka stoi, bo sesja jest w pauzie, a osłony schodzą jak w każdej przerwie) i czeka na Wznów. Zamiast zwykłego komunikatu o przerwie
+     pojawia się okienko (albo toast) `breakHeld` z tematem spotkania.
+   - `ignore`: przerwa jak zwykle.
+   - `remindLater` („Przypomnij później”): okienko `meetingReminder` z tym samym pytaniem (`PopupInfo.meeting`) **30 minut przed spotkaniem**;
+     „przypomnij później” w okienku daje kolejne po 10 minutach (20 minut przed), a ostatnie, **10 minut przed spotkaniem, nie ma już „przypomnij później”**
+     (`MeetingConflict.remindLaterAllowed = false`). Porę wylicza `reminder_schedule(start, now, stage)`, gdzie `stage` to liczba wybranych już
+     „przypomnij później”. Etap, którego pora minęła, jest pomijany (wybór 25 minut przed spotkaniem daje okienko 20 minut przed), a gdy do spotkania
+     zostało 10 minut lub mniej, „przypomnij później” nie jest oferowane (a wybrane mimo to daje błąd `calendar.remindLater`).
+     Porę następnego okienka pokazuje `MeetingConflict.nextReminderMs`.
+     Czasy 30/20/10 to stała `MEETING_REMINDER_LEAD_MINUTES` w `timing.rs`, także w trybie demo, bo dotyczą prawdziwych godzin spotkań.
+
+5. **Jak wybór zmienia sesję** (`focus-core/src/session.rs`).
+   - Powłoka zamienia **każde** spotkanie z wyborem `extend` albo `pauseAtBreak` (wszystkie z horyzontu, nie tylko te, które kolidują w tej chwili)
+     na `MeetingHold` (`MeetingHold::from_meeting`: czas kalendarzowy na monotoniczny, `mono = now.mono + (wall − now.wall)`) i wysyła
+     `Input::SetMeetingHolds`: po każdej synchronizacji, zmianie wyboru, Start i Wznów, żeby po uśpieniu czasy monotoniczne znów pasowały do zegara.
+     Wejście zastępuje wszystkie blokady, nie daje efektów, działa w Idle i w trakcie sesji, a blokady przeżywają Start i Stop.
+   - Blokady sprawdzamy **tylko wtedy, gdy tick osiąga termin focusa**. Pomiń fazę, Pauza, Wznów i Stop ich nie uruchamiają: wyraźna akcja użytkownika
+     wygrywa, więc sesja nie więzi (zasada 7). Liczy się spotkanie, które nachodzi na przerwę zaczynającą się teraz, `[teraz, teraz + przerwa)`.
+     Każda blokada działa najwyżej raz na sesję.
+   - **`extend` wygrywa z `pauseAtBreak`.** Spośród pasujących blokad wybieramy tę, która kończy się najpóźniej. Termin focusa przesuwa się na koniec
+     spotkania, bez efektów, a dodany czas wchodzi do `phaseTotalSecs` (pierścień nadal ma `remaining ≤ total`). Przedłużenia mogą się łączyć
+     (spotkanie zaraz po spotkaniu). W przedłużonym focusie plan przerw zaczyna się z końcem spotkania (styk), więc to spotkanie przestaje być kolizją.
+   - **`pauseAtBreak`**: przerwa zaczyna się w pauzie z pełną długością, a cykl liczy się jako ukończony. Efekty są te same i w tej samej kolejności
+     co przy zwykłym Focus → Przerwa, tylko `Notify(BreakHeld { subject })` **zastępuje** `Notify(BreakStarted)` (jedno okienko, nie dwa; dzwonek zostaje).
+     Pusty temat daje `subject: None`.
+   - Bez pasującej blokady: zwykła przerwa.
+   - Snapshot: `musicMuted` jest prawdą w Focus (także w pauzie) w trakcie spotkania z wyborem `extend`, a w Idle i w przerwie zawsze fałszem.
+     `meetingHold` (`MeetingHoldView { subject, untilMs, choice }`) jest ustawione w przedłużonym focusie i we wstrzymanej przerwie do Wznów.
+     Wznów czyści widok wstrzymanej przerwy, przedłużenie trwa do końca fazy, a Pomiń, Stop i zmiana fazy czyszczą widok.
+   - Usunięcie blokady, zanim zadziałała, ją odwołuje. Usunięcie (albo zmiana godzin) **w trakcie przedłużenia go nie skraca**: synchronizacja, która
+     zgubi spotkanie, nie może nagle zacząć przerwy w środku rozmowy. Wyjściem są Pomiń fazę i Stop.
+   - **Spotkania dłuższe niż 4 h nie blokują sesji** (`timing::MAX_MEETING_HOLD_MS`, `calendar::meeting_hold_allowed`; dokładnie 4 h jeszcze tak):
+     `SetMeetingHolds` odrzuca takie `extend` / `pauseAtBreak`, więc nie przedłużają focusa, nie wstrzymują przerwy i nie wyciszają muzyki.
+     Całodniowa konferencja albo zablokowane popołudnie nie zatrzyma przerw na wiele godzin. `MeetingConflict.tooLong` mówi to UI: Skupienie pokazuje
+     „Spotkanie dłuższe niż 4 h — nie przedłużam skupienia” i wyłącza te dwa przyciski, okienko przypomnienia ich nie pokazuje, a `set_meeting_choice`
+     z takim wyborem daje błąd `calendar.meetingTooLong`.
+   - Tabela faz z ADR-013 dostaje jeden wiersz:
+
+     | Faza | Tick po terminie |
+     |---|---|
+     | Focus, przerwa zaczynająca się teraz nachodzi na spotkanie (najwyżej 4 h) z wyborem `extend` | termin = koniec spotkania; bez efektów, muzyka milknie na czas spotkania |
+     | Focus, przerwa zaczynająca się teraz nachodzi na spotkanie (najwyżej 4 h) z wyborem `pauseAtBreak` | → Przerwa w pauzie (pełna długość): śledzenie ↓, osłony ↓, dzwonek BreakStart, okienko lub toast `breakHeld` |
+
+6. **Ograniczenia** (świadome).
+   - **ICS odświeża dostawca**: opublikowany kalendarz bywa aktualizowany z opóźnieniem (zależnie od dostawcy nawet kilka godzin), więc świeżo dodane
+     albo przesunięte spotkanie może pojawić się późno. W ICS nie ma odpowiedzi użytkownika na zaproszenie, więc odrzucone spotkanie może nadal się pokazywać,
+     a publikacja „tylko wolny/zajęty” daje spotkania bez tematu.
+   - **Strefy czasowe**: wszystkie czasy porównujemy jako czas kalendarzowy w UTC (ms). W ICS czas ze strefą (`TZID`) albo w UTC jest przeliczany na UTC,
+     a czas bez strefy traktujemy jako czas lokalny komputera. Nietypowa definicja strefy w pliku może przesunąć spotkanie, dlatego Skupienie zawsze
+     pokazuje jego godziny.
+   - **Spotkania całodniowe pomijamy** (zwykle to urlopy, święta i przypomnienia, nie rozmowy).
+   - Horyzont to najwyżej 24 godziny. Plan przerw w Idle zakłada start teraz, a w trakcie sesji brak pauz i pominięć (liczony na nowo po każdej zmianie).
+   - Microsoft: tenant może blokować zgodę na `Calendars.Read` (wtedy zgoda administratora). Google: w trybie testowym ekranu zgody token odświeżania
+     wygasa po 7 dniach i logować się mogą tylko dodani użytkownicy testowi; po publikacji projektu bez weryfikacji Google pokazuje ostrzeżenie
+     o niezweryfikowanej aplikacji (projekt Workspace typu „Wewnętrzny” go nie ma).
+   - Przedłużony focus trzyma osłony przez całe spotkanie (wyciszone powiadomienia Windows, blokada stron). Teams DND z wygaśnięciem focus + 5 min
+     może wygasnąć w długim przedłużeniu (jak w długiej pauzie, `TODO(hackathon)` z ADR-013). Tracker liczy przedłużony focus jak każdy inny
+     (np. `Teams.exe` na wykresie).
+   - Przypomnienia działają, dopóki działa aplikacja (także schowana w zasobniku).
+
+7. **Kontrakt** (`api.rs`; jak w ADR-013–015, w tej samej gałęzi co implementacja): komendy `get_calendar`, `refresh_calendar`, `set_meeting_choice`,
+   `connect_google`, `disconnect_calendar`, `set_ics_urls` i `get_ics_urls`; event `calendar://changed`; DTO `CalendarConfig`, `CalendarSource`,
+   `MeetingChoice`, `Meeting`, `MeetingConflict`, `CalendarSourceStatus`, `CalendarStatus` i `MeetingHoldView`; pole `Config.calendar`;
+   `SessionSnapshot.musicMuted` i `meetingHold`; `PopupKind.meetingReminder` i `breakHeld`; `PopupInfo.meeting`; później
+   `CalendarConfig.googleClientSecret` i `MeetingConflict.tooLong`. Szczegóły: ARCHITECTURE §6.8.
+
+**Konsekwencje:**
+- Aplikacja łączy się z nowymi serwerami, ale tylko dla źródeł włączonych przez użytkownika. Pliki szyfrowane DPAPI da się odczytać tylko na koncie
+  Windows, które je zapisało: po przeniesieniu danych na inny komputer albo konto trzeba połączyć Google i wpisać linki ICS ponownie.
+  Poza Windows (brak DPAPI) Google i ICS są niedostępne, tak jak Teams.
+- Microsoft: kalendarz i Teams DND dzielą jedno logowanie, więc zgoda na `Calendars.Read` dotyczy konta połączonego dla Teams.
+  FocusMode czyta kalendarz tylko przy włączonym `calendar.microsoft`.
+- Google wymaga od użytkownika założenia projektu Google Cloud. Prostszą drogą dla konta Google jest tajny adres iCal (źródło ICS),
+  kosztem opóźnienia odświeżania.
+- Sekret klienta Google (SR-31): punkt tokenów Google wymaga go od klientów typu „Aplikacja komputerowa” mimo PKCE, więc doszło pole
+  `calendar.googleClientSecret` (przez `/sync-contract`). Wbrew pierwotnemu planowi (DPAPI) leży w `config.json`: Google dokumentuje go
+  w aplikacjach instalowanych jako niepoufny, a to tylko identyfikacja klienta, nie dostęp do kalendarza (ten daje token odświeżania, nadal w DPAPI).
+  Do logów nie trafia (`Debug` zadania pobierania pokazuje tylko, czy jest ustawiony).
+- W `focus-core`: `NotifyKind` traci `Copy` (wariant `BreakHeld` niesie `String`); `Session` trzyma listę blokad niezależną od trwającej sesji;
+  nowe `Session::remaining_ms(now)` (wejście dla `plan_breaks`) i `Session::meeting_holds()`. Testy: planowanie, kolizje, przypomnienia 30/20/10,
+  walidacja configu i 17 testów blokad w `session.rs`.
+- Zasada 2 („czasy z `TimingProfile`”): pory przypomnień nie są częścią profilu, tylko nazwaną stałą w `timing.rs`, i tryb demo ich nie skraca.
+  Długość przedłużenia wynika z kalendarza, nie z profilu.
+- Stary `config.json` bez `calendar` wczytuje się z kalendarzami wyłączonymi; częściowy obiekt `calendar` jest uzupełniany wartościami domyślnymi.
+- Okienka faz dostają dwa nowe rodzaje (`meetingReminder`, `breakHeld`). Przy `breakHeld` nie ma przypomnienia użytkownika na przerwę
+  (`reminder_for_break`), chyba że powłoka doda je do okienka.
+
+**Co zmienia:**
+- ADR-010: ręczny tryb spotkania nadal odpada, ale spotkania wracają z kalendarza, z wyborem użytkownika dla każdego spotkania. Logowanie Teams prosi też
+  o `Calendars.Read`, gdy kalendarz Microsoft jest włączony. Wykrywanie rozmów przez status Teams nadal Won't.
+- ADR-011: reguła R01 („spotkanie blokuje przerwę”) wraca w innej postaci: tylko dla spotkań z kalendarza i tylko według wyboru (`extend`, `pauseAtBreak`).
+- ADR-013: pkt 1 (tabela faz: Tick po terminie w Focus z blokadą spotkania do 4 h; `BreakHeld` zamiast `BreakStarted`), pkt 4 (logowanie Teams z `Calendars.Read`
+  przy włączonym kalendarzu Microsoft),
+  pkt 7 (przycisk „Jestem na spotkaniu” nadal odłożony; spotkania z kalendarza obsługuje ten ADR).
+- ADR-014: pkt 1 (nowe `PopupKind`: `meetingReminder` i `breakHeld`; `PopupInfo.meeting`).
+- CLAUDE.md (zmiana czeka na zatwierdzenie przez użytkownika, notatka w TASKS z 2026-10-13, „kalendarze”):
+  - twarda zasada 2, dopisek: „Wyjątek: pory przypomnień o spotkaniach (`MEETING_REMINDER_LEAD_MINUTES`, 30/20/10 min) i przedłużenie focusa do końca spotkania (ADR-016)”;
+  - twarda zasada 6: „Bez pełnoekranowych okien przerwy i ręcznego trybu spotkania („Jestem na spotkaniu”) — odłożone (ADR-013). Spotkania z kalendarza
+    zmieniają sesję tylko według wyboru użytkownika (`extend`, `pauseAtBreak`), tylko gdy focus dochodzi do terminu, i nigdy nie blokują Pomiń fazę ani Stop (ADR-016)”;
+  - twarda zasada 11: ruch sieciowy także do kalendarzy włączonych przez użytkownika (Graph, Google, linki ICS), tylko do odczytu; token Google i linki ICS
+    tylko w plikach szyfrowanych DPAPI, nigdy w `config.json` ani w logach; tematy spotkań tylko lokalnie, nigdy w logach, historii, moście ani rozszerzeniu;
+  - Struktura: `focus-core/src/calendar.rs`, `focus-platform/src/calendar/` (`google.rs`, `ics.rs`) i `secrets.rs`, `src-tauri/src/calendar/`
+    (z czystą logiką w `model.rs`), `src/lib/state/calendar.svelte.ts` i komponenty `MeetingConflicts.svelte`, `MeetingHoldBanner.svelte`, `CalendarSettings.svelte`.

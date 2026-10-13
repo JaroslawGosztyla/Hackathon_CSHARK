@@ -260,11 +260,12 @@ config spoza zakresów → błąd walidacji.
 
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
-> Stan na 2026-10-13 (z ADR-015, runda 2a), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> Stan na 2026-10-13 (z ADR-016, kalendarze), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
-`#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu `startedAtMs` / `endedAtMs`
-(`i64` eksportowane jako `number`).
+`#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu w ms od epoki Unix
+(`i64` eksportowane jako `number` przez `#[ts(type = "number")]`): `startedAtMs` / `endedAtMs` w `SessionSummary` oraz czasy spotkań i przerw z ADR-016
+(`Meeting.startMs` / `endMs`, `MeetingConflict.breakStartMs` / `breakEndMs` / `nextReminderMs`, `CalendarStatus.lastSyncMs`, `MeetingHoldView.untilMs`).
 Eksport: `cargo test -p focus-core` zapisuje do `TS_RS_EXPORT_DIR` (ustawione w `.cargo/config.toml` względem workspace).
 **CI sprawdza, czy po regeneracji `src/lib/bindings/` nie ma zmian** (`git diff --exit-code`).
 Nazwy komend i eventów są stałymi w `api.rs` (`commands::*`, `events::*`), które test `export_names` zapisuje do `src/lib/bindings/names.ts`
@@ -293,7 +294,7 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `get_last_summary` | – | `SessionSummary \| null` | |
 | `list_history` | `limit: number` | `SessionSummary[]` | od najnowszej |
 | `get_teams_status` | – | `TeamsStatus` | |
-| `teams_connect` | – | `DeviceCodePrompt` | start logowania device code; postęp przychodzi jako `teams://status` |
+| `teams_connect` | – | `DeviceCodePrompt` | start logowania device code; postęp przychodzi jako `teams://status`. O `Calendars.Read` prosi tylko przy włączonym `calendar.microsoft` (w zapisanym configu); przy już połączonym koncie to „Połącz ponownie” (stare logowanie działa, dopóki nowe się nie uda) |
 | `teams_disconnect` | – | `()` | zapomina zapisany token |
 | `get_bridge_info` | – | `BridgeInfo` | port mostu, folder rozszerzenia, kiedy rozszerzenie ostatnio pytało |
 | `open_extension_dir` | – | `()` | otwiera folder dołączonego rozszerzenia w menedżerze plików |
@@ -314,6 +315,13 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `remove_custom_chime` | `chime: ChimeKind` | `Config` | usuwa własny dźwięk tego dzwonka; potem gra plik drugiego dzwonka, a gdy nie ma żadnego, dźwięk domyślny |
 | `list_library_tracks` | – | `Track[]` | muzyka dołączona do aplikacji (Open Lo-Fi, CC0); te pliki trafiają do scope asset protocol, odtwarzane przez `convertFileSrc(path)` |
 | `clear_history` | – | `()` | usuwa całą historię sesji (`history.jsonl` i ostatnie podsumowanie); UI najpierw prosi o potwierdzenie |
+| `get_calendar` | – | `CalendarStatus` | spotkania z najbliższych `calendar.horizonHours` godzin ze wszystkich włączonych kalendarzy i ich kolizje z planowanymi przerwami: trwającej sesji albo sesji, która zaczęłaby się teraz (`planned`) (ADR-016) |
+| `refresh_calendar` | – | `CalendarStatus` | pobiera wszystkie włączone kalendarze od razu |
+| `set_meeting_choice` | `meetingId: string, choice: MeetingChoice` | `CalendarStatus` | jak potraktować spotkanie kolidujące z przerwą: `extend` / `pauseAtBreak` trafiają do sesji jako blokady (`Input::SetMeetingHolds`; dla spotkania dłuższego niż 4 h błąd `calendar.meetingTooLong`), `remindLater` planuje okienko `meetingReminder` (30 / 20 / 10 min przed spotkaniem; gdy nie ma już etapu, błąd `calendar.remindLater`), `ignore` nic nie zmienia |
+| `connect_google` | – | `()` | logowanie Google w przeglądarce systemowej (OAuth dla aplikacji instalowanych: loopback + PKCE, zakres tylko do odczytu; `calendar.googleClientSecret` wysyłany do punktu tokenów, gdy nie jest pusty); postęp w `calendar://changed` (`googlePending`, stan źródła `google`) |
+| `disconnect_calendar` | `source: CalendarSource` | `CalendarStatus` | `google` / `ics`: zapomina zapisany token albo linki. `microsoft`: **nie usuwa tokenu Teams** (status w Teams działa dalej), tylko wyłącza `calendar.microsoft` (zapis jak przez `update_config`; UI ustawia to pole u siebie bez ponownego zapisu) i usuwa spotkania Microsoft |
+| `set_ics_urls` | `urls: string[]` | `CalendarStatus` | zastępuje linki ICS; zapis w pliku szyfrowanym DPAPI, nigdy w `config.json` ani w logach |
+| `get_ics_urls` | – | `string[]` | zapisane linki ICS (do edycji w Ustawieniach) |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -338,6 +346,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `app://close-requested` | `null` | do okna głównego, gdy użytkownik kliknął X, a `closeToTray` jest jeszcze `null`: UI pyta i odpowiada `resolve_close` |
 | `popup://show` | `PopupInfo` | okienko faz ma pokazać komunikat (albo się schować: `kind: null`) |
 | `tint://changed` | `TintStatus` | zmienił się poziom ciepła, podgląd, użyty mechanizm (`mode`), ograniczenie siły (`capped`) albo błąd |
+| `calendar://changed` | `CalendarStatus` | po każdej synchronizacji kalendarzy, zmianie wyboru dla spotkania, zmianie połączenia (także postęp logowania Google) i zmianie kolizji |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -350,6 +359,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `BlocklistInfo` | `get_blocklist` (także wynik `reload_blocklist`) | `blocklist://changed` |
 | `PopupInfo` | `get_popup` | `popup://show` |
 | `TintStatus` | `get_tint_status` | `tint://changed` |
+| `CalendarStatus` | `get_calendar` (także wynik `refresh_calendar`, `set_meeting_choice`, `disconnect_calendar` i `set_ics_urls`) | `calendar://changed` |
 
 Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
 1. **najpierw** rejestruje `listen(...)`,
@@ -369,19 +379,26 @@ pub struct SessionSnapshot {
     pub paused: bool,               // pauza użytkownika albo automatyczna po luce zegara; ma sens tylko w Focus/Break
     pub cycle: u32,                 // numer bieżącego cyklu skupienia od 1 (0 w Idle)
     pub remaining_secs: u32,        // pozostało w bieżącej fazie (zamrożone w pauzie)
-    pub phase_total_secs: u32,      // długość bieżącej fazy (0 w Idle)
+    pub phase_total_secs: u32,      // długość bieżącej fazy (0 w Idle); z przedłużeniem przez spotkanie (ADR-016)
     pub focus_secs: u32,            // profil w użyciu (z configu albo demo)
     pub break_secs: u32,
     pub focused_secs: u32,          // czas skupienia faktycznie spędzony w tej sesji (bez pauz i luk)
     pub demo: bool,                 // profil demo (`--demo` / `FOCUSMODE_DEMO=1`)
+    #[serde(default)]
+    pub music_muted: bool,          // muzyka ma milczeć: Focus (także w pauzie) w trakcie spotkania z wyborem `extend` (ADR-016)
+    #[serde(default)]
+    pub meeting_hold: Option<MeetingHoldView>, // spotkanie przedłuża focus albo wstrzymuje przerwę (do Wznów)
 }
 ```
+
+Odtwarzacz (osadzony i okno YouTube) milknie, gdy `musicMuted`, i wraca do zwykłego zachowania, gdy flaga zgaśnie. Wstrzymana przerwa
+(`pauseAtBreak`) ma już `paused: true`, więc muzyka stoi jak w każdej pauzie.
 
 | Okno | Zawartość | Uprawnienia IPC |
 |---|---|---|
 | `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
 | `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
-| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu) i `popup://show` |
+| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014); także przypomnienie o spotkaniu `meetingReminder` i wstrzymana przerwa `breakHeld` (ADR-016) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu) i `popup://show`, a przy `meetingReminder` także `set_meeting_choice` |
 
 Okien przerwy i ostrzeżenia nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
 Okien overlay odcienia (`tint-*`) też już nie ma: ciepło ekranu daje Oświetlenie nocne Windows albo gamma ramp (ADR-015), a `TintStatus` czyta tylko okno główne.
@@ -396,7 +413,17 @@ więc kolumna „Uprawnienia IPC” dla `popup` opisuje, czego to okno używa, a
 
 ```json
 { "revision": 42, "sessionId": "1760350000000-12345-1", "phase": "break", "paused": false, "cycle": 1,
-  "remainingSecs": 12, "phaseTotalSecs": 20, "focusSecs": 40, "breakSecs": 20, "focusedSecs": 40, "demo": true }
+  "remainingSecs": 12, "phaseTotalSecs": 20, "focusSecs": 40, "breakSecs": 20, "focusedSecs": 40, "demo": true,
+  "musicMuted": false, "meetingHold": null }
+```
+
+`SessionSnapshot` (profil 45/15, focus przedłużony o 20 min przez spotkanie z wyborem `extend`, spotkanie trwa):
+
+```json
+{ "revision": 1804, "sessionId": "1760350000000-12345-1", "phase": "focus", "paused": false, "cycle": 2,
+  "remainingSecs": 900, "phaseTotalSecs": 3900, "focusSecs": 2700, "breakSecs": 900, "focusedSecs": 5700, "demo": false,
+  "musicMuted": true,
+  "meetingHold": { "subject": "Daily zespołu", "untilMs": 1760362200000, "choice": "extend" } }
 ```
 
 `ShieldStatus` (Focus, Teams wyłączone w ustawieniach, na starcie focusa zamknięto Steam i Epic):
@@ -431,7 +458,7 @@ więc kolumna „Uprawnienia IPC” dla `popup` opisuje, czego to okno używa, a
 `PopupInfo` (okienko na start drugiej przerwy, profil 45/15, z przypomnieniem użytkownika):
 
 ```json
-{ "revision": 5, "kind": "breakStarted", "cycle": 2, "phaseSecs": 900, "launchers": [], "reminder": "woda i spacer z psem" }
+{ "revision": 5, "kind": "breakStarted", "cycle": 2, "phaseSecs": 900, "launchers": [], "reminder": "woda i spacer z psem", "meeting": null }
 ```
 
 `TintStatus` (18:15, domyślny harmonogram: połowa przejścia, więc połowa siły 45; Oświetlenie nocne):
@@ -450,7 +477,42 @@ więc kolumna „Uprawnienia IPC” dla `popup` opisuje, czego to okno używa, a
 
 Argumenty nowych komend: `resolve_close` → `{ "toTray": true }`, `popup_action` → `{ "action": "skipPhase" }`,
 `preview_tint` → `{ "strength": 60 }` albo `{ "strength": null }`, `import_chime` → `{ "path": "C:\\Users\\ola\\Music\\gong.mp3", "chime": "breakStart" }`,
-`remove_custom_chime` → `{ "chime": "focusStart" }`.
+`remove_custom_chime` → `{ "chime": "focusStart" }`, `set_meeting_choice` → `{ "meetingId": "…", "choice": "remindLater" }`,
+`disconnect_calendar` → `{ "source": "google" }`, `set_ics_urls` → `{ "urls": ["https://…/calendar.ics"] }`.
+
+`CalendarStatus` (Idle, czyli przerwy sesji, która zaczęłaby się teraz; Microsoft połączony, ICS z dwoma linkami, Google wyłączony;
+jedno spotkanie nachodzi na 2. przerwę i ma wybrane „przypomnij później”):
+
+```json
+{ "revision": 9,
+  "sources": [ { "source": "microsoft", "state": "on", "detail": null, "account": "ola@firma.pl" },
+               { "source": "google", "state": "off", "detail": null, "account": null },
+               { "source": "ics", "state": "on", "detail": null, "account": "2" } ],
+  "meetings": [ { "id": "…", "source": "microsoft", "subject": "Przegląd sprintu", "startMs": 1760356800000, "endMs": 1760360400000, "online": true } ],
+  "conflicts": [ { "meeting": { "id": "…", "source": "microsoft", "subject": "Przegląd sprintu", "startMs": 1760356800000, "endMs": 1760360400000, "online": true },
+                   "breakNumber": 2, "breakStartMs": 1760356300000, "breakEndMs": 1760357200000,
+                   "choice": "remindLater", "nextReminderMs": 1760355000000, "remindLaterAllowed": true, "tooLong": false } ],
+  "planned": true, "lastSyncMs": 1760350000000, "googlePending": false }
+```
+
+Profil 45/15 od `lastSyncMs`: 2. przerwa to minuty 105–120, spotkanie trwa od minuty 113 do 173 (nachodzi też na 3. przerwę, ale kolizja jest zgłaszana raz,
+z pierwszą przerwą). „Przypomnij później” wybrane na stronie Skupienie daje okienko 30 min przed spotkaniem (`nextReminderMs`).
+
+`PopupInfo` (ostatnie przypomnienie o tym spotkaniu, 10 min przed, w 2. cyklu sesji uruchomionej w chwili `lastSyncMs`: bez „przypomnij później”;
+`phaseSecs` ma znaczenie tylko w okienkach faz):
+
+```json
+{ "revision": 14, "kind": "meetingReminder", "cycle": 2, "phaseSecs": 0, "launchers": [], "reminder": null,
+  "meeting": { "meeting": { "id": "…", "source": "microsoft", "subject": "Przegląd sprintu", "startMs": 1760356800000, "endMs": 1760360400000, "online": true },
+               "breakNumber": 2, "breakStartMs": 1760356300000, "breakEndMs": 1760357200000,
+               "choice": "remindLater", "nextReminderMs": null, "remindLaterAllowed": false, "tooLong": false } }
+```
+
+`Config`, tylko pole dodane przez ADR-016 (wartości domyślne):
+
+```json
+{ "calendar": { "microsoft": false, "google": false, "googleClientId": "", "googleClientSecret": "", "ics": false, "horizonHours": 10 } }
+```
 
 `MediaWindowStatus` (okno YouTube z domyślnym streamem):
 
@@ -589,6 +651,78 @@ Gdy Oświetlenie nocne jest niedostępne, powłoka przechodzi na gammę (w drug�
 Śledzenie: tracker wywołuje `UsageAccumulator::add_sample(process, title, idle, ms)`, przy czym `title` to `None`, gdy `trackTitles` jest wyłączone.
 Sekundy, w których na pierwszym planie jest powierzchnia powłoki Windows (`focus_core::stats::is_shell_surface(process, class)`; klasa okna z `focus-platform`
 `foreground`), są pomijane w całości. `clear_history` usuwa `history.jsonl` i ostatnie podsumowanie; przy `keepHistory: false` powłoka nie dopisuje sesji do historii.
+
+### 6.8 Kalendarze i spotkania w przerwach (ADR-016)
+
+Nowe pole `Config.calendar` (stary `config.json` bez niego wczytuje się z kalendarzami wyłączonymi; częściowy obiekt jest uzupełniany domyślnymi):
+
+| Pole | Typ | Domyślnie | Znaczenie |
+|---|---|---|---|
+| `calendar.microsoft` | `boolean` | `false` | kalendarz Microsoft 365 / Outlook przez konto Microsoft z ustawień Teams (Graph, delegowane `Calendars.Read`; logowanie Teams prosi o ten zakres tylko wtedy, gdy to pole jest włączone) |
+| `calendar.google` | `boolean` | `false` | Google Calendar (OAuth dla aplikacji instalowanych); potrzebuje `googleClientId` (włączenie bez niego jest poprawne, ale źródło nie działa) |
+| `calendar.googleClientId` | `string` | `""` | identyfikator klienta OAuth typu „Aplikacja komputerowa” z projektu Google Cloud użytkownika; przycinany, a niepusty musi przejść `is_google_client_id` (`<prefiks>.apps.googleusercontent.com`, tylko `[A-Za-z0-9._-]`, najwyżej 255 znaków) |
+| `calendar.googleClientSecret` | `string` | `""` | sekret tego samego klienta „Aplikacja komputerowa”; punkt tokenów Google go wymaga (wymiana kodu i odświeżanie; pusty nie jest wysyłany). Google dokumentuje go w aplikacjach instalowanych jako niepoufny, więc leży w `config.json`, nigdy w logach. Przycinany, a niepusty musi przejść `is_google_client_secret` (najwyżej 100 znaków `[A-Za-z0-9_-]`). Stary config bez pola: `""` |
+| `calendar.ics` | `boolean` | `false` | linki ICS / iCal; same linki leżą osobno, zaszyfrowane (`set_ics_urls` / `get_ics_urls`) |
+| `calendar.horizonHours` | `number` | `10` | ile godzin naprzód czytamy spotkania, 1..=24 |
+
+Błędy walidacji: `config.invalid` z polem `calendar.horizonHours`, `calendar.googleClientId` albo `calendar.googleClientSecret` (komunikat nie powtarza sekretu).
+
+Nowe DTO i pola:
+
+| Typ | Pola / warianty | Uwagi |
+|---|---|---|
+| `CalendarSource` | `microsoft`, `google`, `ics` | argument `disconnect_calendar` |
+| `MeetingChoice` | `extend`, `pauseAtBreak`, `ignore`, `remindLater` | argument `set_meeting_choice` |
+| `Meeting` | `id` (źródło + id wydarzenia + początek), `source`, `subject`, `startMs`, `endMs`, `online` (jest link Teams / Meet / Zoom / Webex) | bez spotkań odrzuconych, odwołanych, „wolnych” i całodniowych; każde wystąpienie spotkania cyklicznego osobno |
+| `MeetingConflict` | `meeting`, `breakNumber` (od 1), `breakStartMs`, `breakEndMs`, `choice` (`null` = jeszcze bez wyboru), `nextReminderMs`, `remindLaterAllowed`, `tooLong` | pierwsza przerwa, na którą spotkanie nachodzi; `remindLaterAllowed: false` w ostatnim przypomnieniu (10 min przed) i gdy do spotkania zostało 10 min lub mniej; `tooLong: true` (`#[serde(default)]`) dla spotkania dłuższego niż 4 h: sesja ignoruje dla niego `extend` / `pauseAtBreak`, Skupienie pokazuje notkę „Spotkanie dłuższe niż 4 h — nie przedłużam skupienia” i wyłącza te przyciski, okienko przypomnienia ich nie pokazuje |
+| `CalendarSourceStatus` | `source`, `state` (`IntegrationState`), `detail` (angielski szczegół: błąd albo stan), `account` (konto albo liczba linków ICS) | jedno na źródło |
+| `CalendarStatus` | `revision`, `sources`, `meetings` (posortowane po początku), `conflicts`, `planned` (`true` = przerwy sesji, która zaczęłaby się teraz; `false` = trwającej sesji), `lastSyncMs`, `googlePending` | getter `get_calendar`, event `calendar://changed` |
+| `MeetingHoldView` | `subject`, `untilMs` (koniec spotkania), `choice` | `SessionSnapshot.meetingHold` |
+| `SessionSnapshot.musicMuted` | `boolean` | Focus (także w pauzie) w trakcie spotkania z wyborem `extend`; w Idle i w przerwie zawsze `false` |
+| `SessionSnapshot.meetingHold` | `MeetingHoldView \| null` | przedłużony focus (do końca fazy) albo wstrzymana przerwa (do Wznów) |
+| `PopupKind.meetingReminder` | – | okienko „przypomnij później” z wyborem dla spotkania (`PopupInfo.meeting`) |
+| `PopupKind.breakHeld` | – | przerwa zaczęła się wstrzymana z powodu spotkania (`PopupInfo.meeting`) |
+| `PopupInfo.meeting` | `MeetingConflict \| null` | `#[serde(default)]` |
+
+Core (`focus-core`, bez zegara i sieci; czasy kalendarzowe w ms od epoki Unix):
+- `calendar::plan_breaks(now_ms, focus_remaining_ms, in_break_remaining_ms, cycle, &profile, horizon_ms) -> Vec<BreakWindow>`: przerwy zaczynające się przed
+  `now + horizon` (najwyżej `MAX_PLANNED_BREAKS` = 512). Idle (oba `None`): sesja, która zaczęłaby się teraz, numeracja od 1. Focus (`Some(pozostało)`):
+  pierwsza przerwa ma numer `cycle` i zaczyna się za `pozostało`. Przerwa: trwającej nie ma na liście, następna ma numer `cycle + 1`. Pauza: zamrożony czas,
+  jakby faza ruszyła teraz. Wejście z powłoki: `snapshot.cycle` i `Session::remaining_ms(now)`.
+- `calendar::conflicts(&breaks, &meetings) -> Vec<(indeks spotkania, BreakWindow)>`: przecięcie półotwartych przedziałów (styk się nie liczy), każde spotkanie raz.
+- `calendar::reminder_schedule(meeting_start_ms, now_ms, stage) -> Option<(due_ms, remind_later_allowed)>`: etap `n` przypada
+  `timing::MEETING_REMINDER_LEAD_MINUTES[n]` (30, 20, 10) minut przed spotkaniem; etap z porą ≤ `now` jest pomijany; ostatni (10 min) daje `false`;
+  `None` = nie ma już etapu (nie oferować „przypomnij później”). Powłoka trzyma dla każdego spotkania etap (ile razy wybrano „przypomnij później”),
+  przy każdym takim wyborze bierze z tej funkcji porę następnego okienka (`nextReminderMs`) i zwiększa etap, a `remindLaterAllowed` to „został jeszcze etap”.
+- `config::CalendarConfig::normalized()` i `horizon_ms()`, `config::is_google_client_id(id)`, `config::is_google_client_secret(secret)`.
+- `calendar::meeting_hold_allowed(start_ms, end_ms)`: spotkanie ma długość i trwa najwyżej `timing::MAX_MEETING_HOLD_MS` (4 h; dokładnie 4 h jeszcze tak).
+  Powłoka liczy z tego `MeetingConflict.tooLong` i odrzuca `extend` / `pauseAtBreak` dla dłuższych spotkań (`calendar.meetingTooLong`).
+- `session::MeetingHold { id, subject, start_mono_ms, end_mono_ms, start_wall_ms, end_wall_ms, choice }` i `MeetingHold::from_meeting(&meeting, choice, now)`
+  (`mono = now.mono_ms + (wall − now.wall_ms)`, z nasyceniem; `None` dla `ignore` / `remindLater`, spotkania bez długości i spotkania dłuższego niż 4 h).
+- `Input::SetMeetingHolds(Vec<MeetingHold>)`: zastępuje wszystkie blokady, bez efektów, w Idle i w trakcie sesji; zostają tylko `extend` / `pauseAtBreak`
+  z `end > start` i długością najwyżej `MAX_MEETING_HOLD_MS` na obu zegarach (dłuższe spotkanie nie przedłuża focusa, nie wstrzymuje przerwy
+  i nie wycisza muzyki). Powłoka wysyła **wszystkie** spotkania z takim wyborem po każdej synchronizacji, zmianie wyboru, Start i Wznów.
+- Reguły (tylko gdy tick osiąga termin focusa; okno `[now, now + break)`; każda blokada najwyżej raz na sesję; tylko spotkania do 4 h): `extend` wygrywa (najpóźniejszy koniec;
+  termin = koniec spotkania, bez efektów, przedłużenia się łączą); potem `pauseAtBreak` (najpóźniejszy koniec; przerwa w pauzie z pełną długością,
+  efekty jak zwykle, tylko `Notify(BreakHeld { subject })` zamiast `Notify(BreakStarted)`); inaczej zwykła przerwa. Pomiń fazę nigdy nie stosuje blokad.
+  Usunięcie blokady w trakcie przedłużenia go nie skraca.
+- `NotifyKind::BreakHeld { subject: Option<String> }` (`None` przy pustym temacie); `NotifyKind` nie jest już `Copy`.
+  Powłoka pokazuje go jako okienko `breakHeld` (albo toast) z długością przerwy z profilu.
+
+Platforma i powłoka (ADR-016 pkt 1–2): kalendarz Microsoft przez logowanie Teams (te same rejestracja, token i device code; `TeamsClient::begin_login(calendar)`
+prosi o `teams::login_scopes(calendar)`, czyli `Calendars.Read` tylko przy włączonym `calendar.microsoft`; logowanie bez tego zakresu daje źródłu błąd
+„reconnect needed …”, a Ustawienia → Kalendarze pokazują „Połącz ponownie” = `teams_connect`; koniec logowania przy już połączonym koncie powłoka traktuje
+jak nowe połączenie i od razu czyta kalendarz),
+`focus-platform/src/calendar/google.rs` (OAuth loopback + PKCE, Calendar API tylko do odczytu, zakres `calendar.readonly`, `client_secret` w formularzu
+wymiany kodu i odświeżania, gdy niepusty), `focus-platform/src/calendar/ics.rs`
+(pobieranie i parser iCalendar z `RRULE` / `EXDATE` / `RECURRENCE-ID` i strefami), `focus-platform/src/secrets.rs` (pliki szyfrowane DPAPI: `google-token.bin`,
+`ics-links.bin`; poza Windows niedostępne). Powłoka (`src-tauri/src/calendar/`, czysta część w `model.rs`) synchronizuje źródła poza aktorem sesji
+(aktor nie czeka na sieć, zasada 3), zapisuje wybory w `meeting-choices.json` (tylko id spotkania i wybór, bez tematu), liczy kolizje, planuje okienka `meetingReminder`, wysyła
+`Input::SetMeetingHolds` do aktora i emituje `calendar://changed`. Okno `popup` wysyła wybór z przypomnienia przez `set_meeting_choice`.
+Tokenów, linków ICS ani tematów spotkań nie loguje: szczegół błędu zamienia każdy adres na `<link>`, a błąd linku ICS podaje jego numer, nie treść.
+Czysta część (`model.rs`): łączenie źródeł (kopie spotkania z kilku źródeł: to samo id albo ten sam temat z początkiem w odstępie do minuty; wybór kopii przechodzi
+na spotkanie, które zostało), wybory z etapem przypomnień (zapominane po końcu spotkania), walidacja linków ICS (`https://` albo `webcal://` z hostem, bez spacji,
+najwyżej 10 po 2048 znaków; `webcal://` jest pobierany przez `https://`), najwyżej 200 spotkań.
 
 ## 7. Model wątków i współbieżności
 
