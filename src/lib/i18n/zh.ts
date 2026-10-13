@@ -3,6 +3,7 @@
 // effects. "FocusMode" is a name and is never translated; neither is the file name websiteblacklist.txt.
 // Chinese has no plural forms, so no pluralizer is needed. Terms: docs/i18n-glossary.md (column ZH).
 import type { Strings } from "./pl";
+import { collectionZh } from "./collection/zh";
 
 export const zh: Strings = {
   appName: "FocusMode",
@@ -1322,26 +1323,35 @@ export const zh: Strings = {
       title: "欢迎使用 FocusMode",
       lead:
         "设置好时长和音乐，按下“开始”，FocusMode 会陪你在专注和休息之间循环，直到你按下“停止”。先来选择语言。",
-      line: "你好！我带你看看，只要一分钟。",
+      lines: [
+        "嘿！很高兴认识你！我是 Axi！这就是 FocusMode！",
+        "我来帮你按自己的习惯调好设置，只要一小会儿！",
+      ],
       languageLabel: "应用语言",
     },
     music: {
       title: "播放什么？",
       lead:
         "默认播放内置的 Open Lo-Fi，无需联网。你也可以选择流媒体、自己的链接、音乐文件夹、噪音或静音。",
-      line: "需要背景音吗？休息时音乐也会继续播放。",
+      lines: [
+        "在这里你可以选择听我的音乐，还是更喜欢直播或播放列表？也可以选白噪音，或者不放音乐专心工作。",
+      ],
     },
     shields: {
       title: "专注时的防护",
       lead:
         "专注期间，FocusMode 可以帮你挡住干扰。休息时和停止后，一切都会恢复原样。",
-      line: "选择要保护你的项目。休息时防护会解除。",
+      lines: [
+        "现在选择要不要让我帮你专注工作。我可以盯着你别刷 TikTok 停不下来，如果你愿意，我也可以帮你关掉 Steam。",
+      ],
       teamsLater: "稍后可在“设置”的防护部分连接 Microsoft 帐户。",
     },
     extras: {
       title: "再来几个附加功能",
       lead: "这里的一切都是可选的，之后都可以在“设置”中更改。",
-      line: "准备好了！随时可以按“开始”。",
+      lines: [
+        "一切就绪，我们开始吧！工作顺利！",
+      ],
       tintHint:
         "晚上让屏幕颜色更暖。默认关闭，时间和强度可在“设置”中调整。",
       connectTitle: "日历和工作工具",
@@ -1502,7 +1512,13 @@ export const zh: Strings = {
     "work.jiraEmail": "Jira 帐户电子邮件",
     "work.azureOrg": "Azure DevOps 组织",
     appCategories: "应用标签",
+    rewardTheme: "收藏主题",
+    "ambience.volume": "背景音音量",
+    "ambience.layers": "背景音",
   },
+
+  /** Beta collection (ADR-024): collection themes, background sounds, the mixer; texts in `./collection/zh.ts`. */
+  collection: collectionZh,
 
   dialog: {
     cancel: "取消",

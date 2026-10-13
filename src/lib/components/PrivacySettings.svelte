@@ -115,7 +115,9 @@
   );
   const pendingBody = $derived.by(() => {
     if (pending === null) return "";
-    const consequence = p.consequences[pending] ?? "";
+    const base = p.consequences[pending] ?? "";
+    // The beta collection (ADR-024) lives in rewards.json too: its unlocks go with it.
+    const consequence = pending === "rewards" ? `${base} ${strings.collection.resetNote}`.trim() : base;
     return sessionRuns ? `${consequence} ${p.sessionStops}`.trim() : consequence;
   });
 
@@ -124,6 +126,8 @@
     if (kind === null) return;
     // Errors are shown inside the dialog (ConfirmDialog keeps it open).
     await privacy.remove([kind]);
+    // The shell also drops the collection theme from config.json (ADR-024); the local config follows.
+    if (kind === "rewards") config.applyStored((c) => (c.rewardTheme = null));
     toasts.push(kind === "blocklist" ? p.blocklistReset : p.deleted(p.items[kind]), "info");
   }
 
@@ -230,7 +234,9 @@
                       <span class="badge">{strings.youtube.signedIn}</span>
                     {/if}
                   </p>
-                  <p class="hint">{p.explain[kind]}</p>
+                  <p class="hint">
+                    {p.explain[kind]}{#if kind === "rewards"}{" "}{strings.collection.privacyNote}{/if}
+                  </p>
                 </div>
                 <p class="meta small tabular">{metaText(item)}</p>
                 <div class="action">

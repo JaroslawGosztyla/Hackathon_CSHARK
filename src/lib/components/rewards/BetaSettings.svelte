@@ -2,9 +2,12 @@
   // Settings → "Funkcje beta" (ADR-022): the master switch (off by default) and, while it is on, sparks / levels /
   // streak with their options, and small steps. Turning anything off hides its UI and keeps the data (days while the
   // rewards are off count as paused). "Zacznij od nowa" is the only reset, never suggested anywhere else.
+  // ADR-024: also "Dźwięki tła" (the ambience master switch and a button that opens the mixer by the dock); "Zacznij
+  // od nowa" also resets the collection (the dialog says so) and drops the collection theme from the local config.
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import Switch from "$lib/components/Switch.svelte";
   import { intlLocale } from "$lib/i18n/index.svelte";
+  import { ambience } from "$lib/state/ambience.svelte";
   import { config } from "$lib/state/config.svelte";
   import { rewards } from "$lib/state/rewards.svelte";
   import { strings } from "$lib/strings";
@@ -37,6 +40,17 @@
 
   function set(mutate: (c: Config) => void): void {
     config.update(mutate, true);
+  }
+
+  /** Opens the ambience mixer above the music dock (the dock is on every page) and moves the focus there. */
+  function openMixer(): void {
+    ambience.mixerOpen = true;
+  }
+
+  /** "Zacznij od nowa": the shell also clears the collection theme in config.json; the local config follows. */
+  async function reset(): Promise<void> {
+    await rewards.reset();
+    config.applyStored((c) => (c.rewardTheme = null));
   }
 
   function toggleDay(day: Weekday, on: boolean): void {
@@ -194,6 +208,18 @@
             onchange={(on) => set((c) => (c.rewards.microSteps = on))}
           />
         </div>
+
+        <div class="item">
+          <Switch
+            id="beta-ambience"
+            label={strings.collection.beta.label}
+            hint={strings.collection.beta.hint}
+            checked={ambience.cfg.enabled}
+            onchange={(on) => ambience.setEnabled(on)}
+          >
+            <button type="button" class="btn btn-sm" onclick={openMixer}>{strings.collection.beta.openMixer}</button>
+          </Switch>
+        </div>
       </div>
     {/if}
   </Switch>
@@ -201,10 +227,10 @@
   <ConfirmDialog
     bind:open={resetOpen}
     title={s.settings.resetTitle}
-    body={s.settings.resetBody}
+    body={`${s.settings.resetBody} ${strings.collection.resetNote}`}
     confirmLabel={s.settings.resetConfirm}
     danger
-    onconfirm={() => rewards.reset()}
+    onconfirm={reset}
   />
 {/if}
 

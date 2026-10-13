@@ -9,6 +9,13 @@ import { addDays, DAYS_PER_WEEK, mondayOf, todayDate } from "$lib/week";
 import { config } from "./config.svelte";
 import { SAMPLE_WEEK_LABELS, sampleWeeklyStats } from "./samples";
 
+/** Builds the sample stats of the week that contains `date` (developer samples, ADR-019; memory only). */
+export type WeeklySampleBuilder = (
+  date: string,
+  now: number,
+  labels: Readonly<Record<string, AppCategory>>,
+) => WeeklyStats;
+
 /** The key of an app in `Config.appCategories` (focus-core `normalize_app_categories`: trimmed, lowercase). */
 export function labelKey(process: string): string {
   return process.trim().toLowerCase();
@@ -25,6 +32,8 @@ class WeeklyStore {
   unavailable = $state(false);
   /** Developer-mode sample (ADR-019): its labels, in memory only; null = real data. */
   sampleLabels = $state<Record<string, AppCategory> | null>(null);
+  /** Builds the sample weeks (the presentation showcase brings its own history); null = `sampleWeeklyStats`. */
+  private sampleBuilder = $state.raw<WeeklySampleBuilder | null>(null);
   /** Bumped by `requestedChanged` so `stats` rebuilds a sample for the newly picked week. */
   private sampleTick = $state(0);
 
@@ -45,7 +54,7 @@ class WeeklyStore {
   stats = $derived.by((): WeeklyStats | null => {
     void this.sampleTick;
     const labels = this.sampleLabels;
-    if (labels !== null) return sampleWeeklyStats(this.picked ?? todayDate(), Date.now(), labels);
+    if (labels !== null) return (this.sampleBuilder ?? sampleWeeklyStats)(this.picked ?? todayDate(), Date.now(), labels);
     return this.real;
   });
 
@@ -119,9 +128,10 @@ class WeeklyStore {
     config.update((c) => (c.appCategories = toggle(c.appCategories)), true);
   }
 
-  /** Shows the developer-mode sample (ADR-019), from the current week. */
-  showSample(): void {
-    this.sampleLabels = { ...SAMPLE_WEEK_LABELS };
+  /** Shows the developer-mode sample (ADR-019), from the current week: `build` makes the weeks (default: the sample week). */
+  showSample(labels: Readonly<Record<string, AppCategory>> = SAMPLE_WEEK_LABELS, build: WeeklySampleBuilder | null = null): void {
+    this.sampleBuilder = build;
+    this.sampleLabels = { ...labels };
     this.picked = null;
     this.error = null;
   }
@@ -130,6 +140,7 @@ class WeeklyStore {
   clearSample(): void {
     if (this.sampleLabels === null) return;
     this.sampleLabels = null;
+    this.sampleBuilder = null;
     this.picked = null;
     this.requestedChanged();
   }

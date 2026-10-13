@@ -5,6 +5,7 @@
 // "FocusMode" is a name and is never translated; neither is the file name websiteblacklist.txt.
 import type { Strings } from "./pl";
 import { pluralizer } from "./plural";
+import { collectionEs } from "./collection/es";
 
 const plural = pluralizer("es");
 
@@ -1404,26 +1405,35 @@ export const es: Strings = {
       title: "Te damos la bienvenida a FocusMode",
       lead:
         "Ajusta los tiempos y la música, pulsa Iniciar y FocusMode te acompaña entre concentración y descansos hasta que pulses Detener. Empecemos por el idioma.",
-      line: "¡Hola! Te enseño todo. Lleva un minuto.",
+      lines: [
+        "¡Hola! ¡Encantada de conocerte! ¡Soy Axi! ¡Y esta es la app FocusMode!",
+        "Te ayudaré a ajustarlo todo a tu gusto, ¡solo tomará un momento!",
+      ],
       languageLabel: "Idioma de la aplicación",
     },
     music: {
       title: "¿Qué suena?",
       lead:
         "De forma predeterminada suena Open Lo-Fi, que viene con la app y funciona sin internet. También puedes elegir un stream, tus propios enlaces, una carpeta de música, ruido o silencio.",
-      line: "¿Algo de fondo? La música sigue también en los descansos.",
+      lines: [
+        "Aquí puedes elegir si quieres escuchar mi música, ¿o quizá prefieres un stream o una playlist? También hay ruido, o trabajar sin música.",
+      ],
     },
     shields: {
       title: "Protecciones para concentrarte",
       lead:
         "Durante la concentración, FocusMode puede mantener lejos las distracciones. En los descansos y tras Detener, todo vuelve a la normalidad.",
-      line: "Elige qué debe protegerte. En los descansos, las protecciones se retiran.",
+      lines: [
+        "Ahora elige si te ayudo a mantener la concentración en tu trabajo. Puedo vigilar que no te pierdas haciendo scroll infinito en TikTok, o cerrarte Steam si quieres.",
+      ],
       teamsLater: "Conectarás tu cuenta de Microsoft más tarde en Configuración, en las protecciones.",
     },
     extras: {
       title: "Unos extras",
       lead: "Todo aquí es opcional y puedes cambiarlo más tarde en Configuración.",
-      line: "¡Listo! Iniciar te espera cuando quieras.",
+      lines: [
+        "¡Todo listo, podemos empezar! ¡Suerte con el trabajo!",
+      ],
       tintHint:
         "Colores de pantalla más cálidos por la noche. Desactivado de forma predeterminada: las horas y la intensidad se ajustan en Configuración.",
       connectTitle: "Calendario y herramientas de trabajo",
@@ -1592,7 +1602,13 @@ export const es: Strings = {
     "work.jiraEmail": "correo de la cuenta de Jira",
     "work.azureOrg": "organización de Azure DevOps",
     appCategories: "etiquetas de aplicaciones",
+    rewardTheme: "tema de la colección",
+    "ambience.volume": "volumen de los sonidos de fondo",
+    "ambience.layers": "sonidos de fondo",
   },
+
+  /** Beta collection (ADR-024): collection themes, background sounds, the mixer; texts in `./collection/es.ts`. */
+  collection: collectionEs,
 
   dialog: {
     cancel: "Cancelar",

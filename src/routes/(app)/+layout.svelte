@@ -24,7 +24,7 @@
   import { rewards } from "$lib/state/rewards.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
-  import { applyTheme, DEFAULT_THEME, isTheme, readCachedTheme, type Theme } from "$lib/themes";
+  import { applyTheme, DEFAULT_THEME, effectiveTheme, isTheme, isThemeId, readCachedTheme, type ThemeId } from "$lib/themes";
 
   let { children }: { children: Snippet } = $props();
 
@@ -116,15 +116,20 @@
   const reducedMotion = new MediaQuery("(prefers-reduced-motion: reduce)");
 
   // ---------------------------------------------------------------------------
-  // Theme: config.theme on <html data-theme>; until the config arrives, the theme of the last run.
+  // Theme: config.theme on <html data-theme>; until the config arrives, the theme of the last run. With the beta on, an
+  // unlocked collection theme (config.rewardTheme, ADR-024) replaces it; a Developer-page theme sample wins over both.
   // ---------------------------------------------------------------------------
 
-  const startTheme: Theme = readCachedTheme() ?? DEFAULT_THEME;
+  const startTheme: ThemeId = readCachedTheme() ?? DEFAULT_THEME;
   applyTheme(startTheme);
 
-  const theme = $derived.by((): Theme => {
-    const configured = config.value?.theme;
-    return isTheme(configured) ? configured : startTheme;
+  const theme = $derived.by((): ThemeId => {
+    if (dev.themePreview !== null) return dev.themePreview;
+    const cfg = config.value;
+    if (!cfg) return startTheme;
+    const base: ThemeId = isTheme(cfg.theme) ? cfg.theme : startTheme;
+    const shown = effectiveTheme(cfg, rewards.real?.unlocks);
+    return isThemeId(shown) ? shown : base;
   });
 
   $effect.pre(() => applyTheme(theme));

@@ -27,6 +27,7 @@
   import { config } from "$lib/state/config.svelte";
   import { rewards, sessionSteps } from "$lib/state/rewards.svelte";
   import { session } from "$lib/state/session.svelte";
+  import { showcaseMode } from "$lib/state/showcaseMode.svelte";
   import { work, workEnabled } from "$lib/state/work.svelte";
   import { strings } from "$lib/strings";
 
@@ -59,7 +60,8 @@
   const player = useRewardPlayer("focus");
   const steps = $derived(rewards.stepsActive ? sessionSteps() : []);
   const rewardsView = $derived(rewards.active ? rewards.view : null);
-  const showIntro = $derived((rewards.configActive || rewards.sampling) && !rewards.introSeen);
+  /** Not during the presentation showcase (ADR-019): on stage the app shows its everyday state. */
+  const showIntro = $derived((rewards.configActive || rewards.sampling) && !rewards.introSeen && !showcaseMode.active);
   /** Focus with small steps: the "Teraz:" line comes first under the buttons (it must stay above the music dock). */
   const stepsInFocus = $derived(snap.phase === "focus" && steps.length > 0);
   /** Break: the recap in one line under the buttons, in view at any window size (the card below has the details). */
@@ -119,7 +121,7 @@
         phase={snap.phase}
         paused={snap.paused}
         cycle={snap.cycle}
-        demo={snap.demo}
+        demo={snap.demo && !showcaseMode.active}
       />
     {/key}
   </div>

@@ -19,15 +19,17 @@
   import { ONBOARDING_STEPS, onboarding, type OnboardingStep } from "$lib/state/onboarding.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
-  import type { Theme } from "$lib/themes";
+  import type { ThemeId } from "$lib/themes";
   import ExtrasStep from "./ExtrasStep.svelte";
   import ShieldsStep from "./ShieldsStep.svelte";
   import WelcomeStep from "./WelcomeStep.svelte";
+  import { language } from "$lib/i18n/index.svelte";
+  import { wizardVoices } from "./voice";
   import WizardMascot from "./WizardMascot.svelte";
 
   interface Props {
     /** The theme in use (the window's background scene is drawn behind the wizard too). */
-    theme: Theme;
+    theme: ThemeId;
   }
 
   let { theme }: Props = $props();
@@ -51,6 +53,8 @@
 
   const step = $derived(onboarding.step);
   const texts = $derived(s[step]);
+  /** Axi's recorded voice for this step (Polish only for now). */
+  const voices = $derived(wizardVoices(language(), step));
   const total = ONBOARDING_STEPS.length;
   const showMascot = $derived(mascotEnabled(config.value));
 
@@ -225,7 +229,7 @@
   <div class="main" class:with-mascot={showMascot}>
     {#if showMascot}
       <div class="mascot">
-        <WizardMascot pose={POSES[step]} line={texts.line} />
+        <WizardMascot pose={POSES[step]} lines={texts.lines} {voices} volume={config.value?.chimeVolume ?? 1} />
       </div>
     {/if}
 

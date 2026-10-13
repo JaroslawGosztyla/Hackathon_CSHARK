@@ -1,0 +1,87 @@
+/*
+ * Sakura night (beta collection, ADR-024): a big moon in a blue-violet sky, cherry branches in blossom from the
+ * corners and petals drifting across. Blossom-pink accent, pale aqua breaks.
+ *
+ * Contrast (WCAG 2.x, measured on these tokens; --surface composited over --bg-1):
+ *   --text       on surface-solid 15.2 · surface-raised 13.9 · bg-1 16.3 · surface 15.4
+ *   --text-2     on surface-solid 11.0 · surface-raised 10.1 · bg-1 11.8 · surface 11.2
+ *   --text-muted on surface-solid 6.6 · surface-raised 6.0 · bg-1 7.0 · surface 6.6
+ *   --accent-ink on --accent 9.5 · --break-ink on --break 9.9 · --danger on surface-solid 8.8
+ *   on surface: --reward-ink 13.5 · --reward 13.5 · --bubble 10.1 · confetti ≥ 9.7
+ *   --quiet-mark on surface-solid 3.5 · --focus-ring on bg-0 15.9
+ */
+
+:root[data-theme="sakuraNight"],
+[data-theme="sakuraNight"]:not(:root) {
+  color-scheme: dark;
+
+  --bg-0: #0c0b1f;
+  --bg-1: #15132d;
+  --glow-warm: #3a2346;
+  --glow-cool: #1a2148;
+
+  --surface: rgba(29, 25, 54, 0.84);
+  --surface-solid: #1d1937;
+  --surface-raised: #252043;
+  --surface-inset: rgba(242, 228, 255, 0.05);
+  --surface-hover: rgba(242, 228, 255, 0.1);
+  --border: rgba(244, 212, 236, 0.12);
+  --border-strong: rgba(244, 212, 236, 0.26);
+  --border-hover: rgba(244, 212, 236, 0.38);
+
+  --text: #f8f1fb;
+  --text-2: #d8cde4;
+  --text-muted: #a99cbd;
+
+  --accent: #f6aed0;
+  --accent-strong: #ffcbe2;
+  --accent-soft: rgba(246, 174, 208, 0.16);
+  --accent-ink: #34102a;
+  --accent-line: rgba(246, 174, 208, 0.45);
+
+  --break: #9ed9d4;
+  --break-strong: #bde7e3;
+  --break-soft: rgba(158, 217, 212, 0.16);
+  --break-ink: #0a2826;
+  --break-line: rgba(158, 217, 212, 0.45);
+
+  --danger: #ffa58e;
+  --danger-soft: rgba(255, 165, 142, 0.14);
+  --danger-line: rgba(255, 165, 142, 0.45);
+  --ok: #9ed9d4;
+  --muted-mark: #645b83;
+
+  --focus-ring: #ffe6b3;
+
+  --track: rgba(242, 228, 255, 0.07);
+  --track-strong: rgba(242, 228, 255, 0.13);
+  --knob-fill: #fffaff;
+  --scrim: rgba(5, 4, 16, 0.66);
+  --dock-bg: rgba(26, 22, 49, 0.94);
+  --shadow-color: rgba(3, 2, 12, 0.5);
+  --shadow-sm:
+    0 6px 16px rgba(3, 2, 12, 0.55),
+    0 1px 3px rgba(3, 2, 12, 0.45);
+  --logo-bg: rgba(246, 174, 208, 0.16);
+  --logo-moon: #f6aed0;
+  --logo-star: #ffe6b3;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d8cde4' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Beta rewards (ADR-022). */
+  --quiet-mark: #776d97;
+  --reward: #ffe1a3;
+  --reward-ink: #ffe1a3;
+  --bubble: #a9c8ff;
+  --confetti-1: #ffe1a3;
+  --confetti-2: #a9c8ff;
+  --confetti-3: #f6aed0;
+  --confetti-4: #9ed9d4;
+
+  /* Blue-violet night, a moonlit glow at the upper right (the scene draws the moon, hills and blossoms). */
+  --app-bg:
+    radial-gradient(800px 560px at 80% 14%, rgba(214, 200, 255, 0.14) 0%, transparent 65%),
+    radial-gradient(900px 420px at 10% 105%, var(--glow-warm) 0%, transparent 65%),
+    linear-gradient(180deg, #0b0a1e 0%, #141230 45%, #231a42 82%, #2c1f4a 100%);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  --header-line: rgba(244, 212, 236, 0.1);
+}

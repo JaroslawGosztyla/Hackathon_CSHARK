@@ -24,6 +24,7 @@ import type {
   WorkSource,
 } from "$lib/types";
 import { pluralizer } from "./plural";
+import { collectionPl } from "./collection/pl";
 
 const pluralPl = pluralizer("pl");
 
@@ -695,9 +696,9 @@ export const pl = {
 
   mascot: {
     /** Settings → Wygląd. */
-    setting: "Pokaż maskotkę (aksolotl)",
+    setting: "Pokaż Axi (maskotka aksolotl)",
     settingHint:
-      "Aksolotl w słuchawkach obok zegara, w przerwie, w podsumowaniu i w okienkach przy zmianie fazy. Podpowiada dobre praktyki i propozycje na przerwę.",
+      "Axi, aksolotl w słuchawkach, obok zegara, w przerwie, w podsumowaniu i w okienkach przy zmianie fazy. Podpowiada dobre praktyki i propozycje na przerwę.",
     /** Bubble labels on the Skupienie page. */
     practiceLabel: "Dobra praktyka",
     nextUpLabel: "Co dalej?",
@@ -722,7 +723,7 @@ export const pl = {
     conflictHint: (subject: string) =>
       `Spotkanie w czasie przerwy: ${subject}. Zdecyduj poniżej, co z nim zrobić.`,
     /** Skupienie page: the label of the axolotl button (a click tickles it). */
-    tickle: "Połaskocz aksolotla",
+    tickle: "Połaskocz Axi",
     /** What the tickled axolotl says (one at random, never the same twice in a row). */
     tickleLines: [
       "Hej, to łaskocze!",
@@ -730,7 +731,7 @@ export const pl = {
       "Bup! Wracamy do pracy?",
       "Mam łaskotki na skrzelach!",
       "Głaskanie przyjęte. Skupienie +1!",
-      "Ostrożnie, jestem mięciutki!",
+      "Ostrożnie, jestem mięciutka!",
       "Jeszcze raz? No dobra!",
       "Masz mnie! Mam tam łaskotki!",
     ],
@@ -1374,7 +1375,7 @@ export const pl = {
         numbersOnly: "Tylko liczby",
       },
       celebrationsHint: "Gdy system prosi o mniej animacji, świętowanie jest zawsze spokojne.",
-      companion: "Aksolotl pracuje razem ze mną",
+      companion: "Axi pracuje razem ze mną",
       companionHint: "W skupieniu siedzi tyłem i patrzy w ten sam ekran.",
       storage:
         "Postępy zostają na tym komputerze (rewards.json): liczby i daty, bez tytułów, kroków i nazw aplikacji.",
@@ -1435,26 +1436,35 @@ export const pl = {
       title: "Witaj w FocusMode",
       lead:
         "Ustaw czasy i muzykę, naciśnij Start, a FocusMode poprowadzi cię przez skupienie i przerwy, aż naciśniesz Stop. Zacznijmy od języka.",
-      line: "Cześć! Pokażę ci, co tu jest. To zajmie minutę.",
+      lines: [
+        "Hej! Miło Cię poznać! Jestem Axi! A oto aplikacja FocusMode!",
+        "Pomogę Ci dobrać ustawienia pod siebie, to zajmie tylko chwilkę!",
+      ],
       languageLabel: "Język aplikacji",
     },
     music: {
       title: "Co ma grać?",
       lead:
         "Domyślnie gra Open Lo-Fi z zestawu, także bez internetu. Możesz też wybrać stream, własne linki, folder z muzyką, szum albo ciszę.",
-      line: "Coś w tle? Muzyka gra dalej także w przerwie.",
+      lines: [
+        "Tutaj możesz wybrać czy chcesz słuchać mojej muzyki, czy może preferujesz stream albo playlistę? Jest też opcja na szum lub pracę bez muzyki.",
+      ],
     },
     shields: {
       title: "Osłony na czas skupienia",
       lead:
         "W skupieniu FocusMode może trzymać rozpraszacze z daleka. W przerwie i po Stop wszystko wraca do normy.",
-      line: "Zaznacz, co ma cię chronić. W przerwie osłony schodzą.",
+      lines: [
+        "A teraz wybierz czy mam pomagać Ci w skupieniu się na swojej pracy. Mogę pilnować żebyś nie doomscrollował tiktoka, albo też wyłączę Ci Steama jeśli chcesz.",
+      ],
       teamsLater: "Konto Microsoft połączysz później w Ustawieniach, w sekcji osłon.",
     },
     extras: {
       title: "Jeszcze kilka drobiazgów",
       lead: "Wszystko tu jest opcjonalne. Każdą z tych rzeczy zmienisz później w Ustawieniach.",
-      line: "Gotowe! Start czeka, kiedy tylko zechcesz.",
+      lines: [
+        "Wszystko gotowe, możemy zaczynać! Powodzenia w pracy!",
+      ],
       tintHint:
         "Wieczorem cieplejsze barwy ekranu. Domyślnie wyłączone: godziny i siłę ustawisz w Ustawieniach.",
       connectTitle: "Kalendarz i narzędzia pracy",
@@ -1621,7 +1631,13 @@ export const pl = {
     "work.jiraEmail": "e-mail konta Jira",
     "work.azureOrg": "organizacja Azure DevOps",
     appCategories: "etykiety aplikacji",
+    rewardTheme: "motyw z kolekcji",
+    "ambience.volume": "głośność dźwięków tła",
+    "ambience.layers": "dźwięki tła",
   } as Record<string, string>,
+
+  /** Beta collection (ADR-024): collection themes, background sounds, the mixer; texts in `./collection/pl.ts`. */
+  collection: collectionPl,
 
   dialog: {
     cancel: "Anuluj",

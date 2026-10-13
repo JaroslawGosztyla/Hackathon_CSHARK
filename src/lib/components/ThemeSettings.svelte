@@ -2,20 +2,50 @@
   // Theme picker: a radio group of live previews. Each preview carries its own `data-theme`, so it is drawn with
   // the real tokens of the theme it shows (app.css). Picking one saves `config.theme` at once; the switch
   // crossfades (View Transitions) unless the user prefers reduced motion.
+  // Beta (ADR-024): below the base themes the "Kolekcja" grid (CollectionGrid) adds the collection themes to the same
+  // radio group. Picking an unlocked one saves `config.rewardTheme` (the base theme stays as the fallback, marked
+  // "Motyw podstawowy"); picking a base theme clears it. Without the beta the grid is not rendered at all.
   import { flushSync } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
+  import CollectionGrid from "$lib/components/collection/CollectionGrid.svelte";
   import { config } from "$lib/state/config.svelte";
-  import { applyTheme, DEFAULT_THEME, isTheme, THEMES, type Theme } from "$lib/themes";
+  import { dev } from "$lib/state/dev.svelte";
+  import { rewards } from "$lib/state/rewards.svelte";
+  import { showcaseMode } from "$lib/state/showcaseMode.svelte";
+  import { strings } from "$lib/strings";
+  import {
+    applyTheme,
+    DEFAULT_THEME,
+    effectiveTheme,
+    isRewardTheme,
+    isTheme,
+    isThemeId,
+    THEMES,
+    type Theme,
+    type ThemeId,
+  } from "$lib/themes";
   import { litPath, moonPhase } from "$lib/themes/moon";
   import { themeStrings as t } from "$lib/themes/strings";
 
   const uid = $props.id();
   const reducedMotion = new MediaQuery("(prefers-reduced-motion: reduce)");
 
-  const current = $derived.by((): Theme => {
+  /** The user's base theme (the fallback of a collection theme). */
+  const base = $derived.by((): Theme => {
     const configured = config.value?.theme;
     return isTheme(configured) ? configured : DEFAULT_THEME;
   });
+
+  /** The theme on screen: a Developer collection sample, else the config's (`effectiveTheme`). */
+  const current = $derived.by((): ThemeId => {
+    if (dev.themePreview !== null) return dev.themePreview;
+    const cfg = config.value;
+    if (!cfg) return base;
+    const shown = effectiveTheme(cfg, rewards.real?.unlocks);
+    return isThemeId(shown) ? shown : base;
+  });
+  /** A collection theme is on screen: the base card shows the "Motyw podstawowy" badge instead of being selected. */
+  const collectionShown = $derived(isRewardTheme(current));
 
   const moon = moonPhase(new Date());
   const moonLit = litPath(moon.fraction, 12, 12, 9);
@@ -29,13 +59,27 @@
   /** The crossfade waits for a frame; the choice is saved after this delay even if no frame comes. */
   const COMMIT_TIMEOUT_MS = 300;
 
-  function choose(theme: Theme): void {
+  function choose(theme: ThemeId): void {
     if (theme === current || !config.value) return;
     let committed = false;
     const commit = () => {
       if (committed) return;
       committed = true;
-      config.update((c) => (c.theme = theme), true);
+      if (isRewardTheme(theme)) {
+        // A Developer sample collection never saves anything: the pick previews the theme instead. So does the
+        // presentation showcase (ADR-019): its collection is the seeded ledger's, not the real one.
+        if (rewards.sampleStatus !== null || showcaseMode.active) {
+          dev.previewRewardTheme(theme, strings.collection.themeNames[theme]);
+        } else {
+          config.update((c) => (c.rewardTheme = theme), true);
+        }
+      } else {
+        if (dev.themePreview !== null) dev.themePreview = null;
+        config.update((c) => {
+          c.theme = theme;
+          c.rewardTheme = null;
+        }, true);
+      }
       applyTheme(theme);
     };
     const animate =
@@ -62,9 +106,10 @@
   <legend class="sr-only">{t.legend}</legend>
   <p class="hint">{t.hint}</p>
 
+  {#if rewards.betaOn}<h3 class="group-title">{strings.collection.baseTitle}</h3>{/if}
   <div class="grid">
     {#each THEMES as theme (theme)}
-      <label class="option" class:selected={theme === current}>
+      <label class="option" class:selected={theme === current} class:fallback={collectionShown && theme === base}>
         <input
           class="sr-only"
           type="radio"
@@ -119,10 +164,17 @@
             {/if}
           </span>
           <span class="desc" id="{uid}-{theme}-desc">{description(theme)}</span>
+          {#if collectionShown && theme === base}
+            <span class="badge fallback-badge" title={strings.collection.baseBadgeHint}>{strings.collection.baseBadge}</span>
+          {/if}
         </span>
       </label>
     {/each}
   </div>
+
+  {#if rewards.betaOn}
+    <CollectionGrid group="{uid}-theme" {current} disabled={!config.ready} onchoose={(theme) => choose(theme)} />
+  {/if}
 </fieldset>
 
 <style>
@@ -174,6 +226,22 @@
   .option.selected {
     border-color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  /* The base theme behind a collection theme: marked, not selected. */
+  .option.fallback {
+    border-style: dashed;
+    border-color: var(--accent-line);
+  }
+
+  .group-title {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .fallback-badge {
+    align-self: flex-start;
+    margin-top: 4px;
   }
 
   .option:has(input:focus-visible) {

@@ -18,6 +18,15 @@ demo:
 demo:
     FOCUSMODE_DEMO=1 npm run tauri dev
 
+# Run the app in presentation mode (demo timings + showcase data, developer mode for this run only)
+[windows]
+presentation:
+    $env:FOCUSMODE_PRESENTATION = "1"; npm run tauri dev
+
+[unix]
+presentation:
+    FOCUSMODE_PRESENTATION=1 npm run tauri dev
+
 # Format Rust code
 fmt:
     cargo fmt --all

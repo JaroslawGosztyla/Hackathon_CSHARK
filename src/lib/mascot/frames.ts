@@ -112,7 +112,9 @@ export type RewardBeat =
   | "pondFull"
   | "earlyStop"
   | "goalDone"
-  | "intro";
+  | "intro"
+  /** Beta collection (ADR-024): a theme or a background sound was unlocked. */
+  | "unlock";
 
 const pose = (name: PoseName, ms: number): MascotStep => ({ frame: poseFrame(name), ms });
 
@@ -138,6 +140,7 @@ export const REWARD_STEPS: Record<RewardBeat, readonly MascotStep[]> = {
   earlyStop: [pose("10-holding-heart", 2000)],
   goalDone: [pose("02-clasped-hands-heart", 1600)],
   intro: [pose("05-look-up", 800), pose("02-clasped-hands-heart", 4000)],
+  unlock: [pose("06-amazed-sparkles", 1600)],
 };
 
 /**

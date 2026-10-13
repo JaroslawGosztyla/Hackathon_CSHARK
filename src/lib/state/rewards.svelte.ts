@@ -17,6 +17,7 @@ import type {
 } from "$lib/types";
 import { config } from "./config.svelte";
 import { session } from "./session.svelte";
+import { showcaseMode } from "./showcaseMode.svelte";
 import { toasts } from "./toasts.svelte";
 
 /** Per-viewer convenience (not data): the one-time intro card was dismissed in this WebView. */
@@ -93,24 +94,27 @@ class RewardsStore {
 
   /** Developer samples are shown. */
   sampling = $derived(this.sampleStatus !== null || this.sampleMoments.length > 0);
-  /** `Config.betaFeatures` (off until the config arrives, and with a config from before the switch). */
-  betaOn = $derived(config.value?.betaFeatures === true);
+  /**
+   * `Config.betaFeatures` (off until the config arrives, and with a config from before the switch). The presentation
+   * showcase (ADR-019) counts it as on, with the beta defaults below, in memory only (the shell does the same).
+   */
+  betaOn = $derived(config.value?.betaFeatures === true || showcaseMode.active);
   /** Sparks, levels and streak are on (`Config::rewards_active`), from the local config so a switch shows at once. */
-  configActive = $derived(this.betaOn && config.value?.rewards?.enabled === true);
+  configActive = $derived(showcaseMode.active || (this.betaOn && config.value?.rewards?.enabled === true));
   /** Every reward surface shows (also for a Developer sample). */
   active = $derived(this.sampling || this.configActive);
   /** Small steps are on (`Config::steps_active`). */
-  stepsActive = $derived(this.betaOn && config.value?.rewards?.microSteps === true);
+  stepsActive = $derived(showcaseMode.active || (this.betaOn && config.value?.rewards?.microSteps === true));
   /** The status to show: a sample wins over the shell's. */
   view = $derived(this.sampleStatus ?? (this.configActive ? this.real : null));
   /** "Pokazuj serię" (the streak is still computed when it is hidden). */
-  showStreak = $derived(config.value?.rewards?.showStreak !== false);
+  showStreak = $derived(showcaseMode.active || config.value?.rewards?.showStreak !== false);
   /** OS reduced motion, or its simulation on the Developer page. */
   reduced = $derived(this.simulateReduced || this.#reducedMotion.current);
 
   /** The effective level: numbers only stays; reduced motion caps the rest at calm; a Developer override wins. */
   celebration = $derived.by((): CelebrationLevel => {
-    const configured = this.levelOverride ?? config.value?.rewards?.celebrations ?? "full";
+    const configured = this.levelOverride ?? (showcaseMode.active ? "full" : (config.value?.rewards?.celebrations ?? "full"));
     if (configured === "numbersOnly") return "numbersOnly";
     return this.reduced ? "calm" : configured;
   });

@@ -3,6 +3,15 @@
 // the shell, and no link of a sample is ever opened. Ids start with `dev-sample-` (the shell treats meeting choices for
 // such ids as no-ops); links start with `SAMPLE_URL_PREFIX`.
 import type {
+  AmbienceLayer,
+  AmbienceUnlock,
+  RewardTheme,
+  Season,
+  SeasonWindow,
+  ThemeUnlock,
+  UnlockRule,
+  UnlocksView,
+  UnlockState,
   AppCategory,
   AppUsage,
   CategoryTotals,
@@ -736,7 +745,9 @@ export type RewardMomentSample =
   | "sessionEnd"
   | "earlyStop"
   | "goalDone"
-  | "sticker";
+  | "sticker"
+  | "unlockHalloween"
+  | "unlockUnderwater";
 
 /** Mirrors focus-core `rewards.rs` (odds, pity, rest bank, level spans), for realistic samples only. */
 const SAMPLE_ODDS = { nonePermille: 500, bubblePermille: 320, pearlPermille: 150, goldenPermille: 30, pityBlocks: 4 };
@@ -816,7 +827,159 @@ export function sampleRewardsStatus(kind: RewardsStatusSample, now: number): Rew
     odds: SAMPLE_ODDS,
     stickers: first ? [] : ["firstStep", "dailyGoal", "comeback"],
     pending: [],
+    // ADR-024: the collection of a user at this level and best streak, in the current month.
+    unlocks: sampleUnlocks(new Date(now).getMonth() + 1, new Date(now).getFullYear(), level, first ? 0 : 12, now),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Beta collection (ADR-024): sample collection views. A TS mirror of focus-core `unlocks.rs` (rules, seasonal windows
+// with the Easter computus) used ONLY for Developer samples; the real view always comes from the shell.
+// ---------------------------------------------------------------------------
+
+const SAMPLE_SEASON_GOAL_DAYS = 3;
+const SAMPLE_EASTER_MARGIN_DAYS = 7;
+const DAY_MS_UTC = 86_400_000;
+
+const seasonal = (season: Season): UnlockRule => ({ type: "seasonal", season, goalDays: SAMPLE_SEASON_GOAL_DAYS });
+
+/** Mirrors `THEME_RULES` (catalogue order). */
+const SAMPLE_THEME_RULES: readonly (readonly [RewardTheme, UnlockRule])[] = [
+  ["underwater", { type: "level", level: 3 }],
+  ["rainyWindow", { type: "bestStreak", days: 7 }],
+  ["forestCabin", { type: "level", level: 6 }],
+  ["sakuraNight", { type: "bestStreak", days: 14 }],
+  ["newYear", seasonal("newYear")],
+  ["valentines", seasonal("valentines")],
+  ["easter", seasonal("easter")],
+  ["summer", seasonal("summer")],
+  ["halloween", seasonal("halloween")],
+  ["christmas", seasonal("christmas")],
+];
+
+/** Mirrors `AMBIENCE_RULES` (catalogue order). */
+const SAMPLE_AMBIENCE_RULES: readonly (readonly [AmbienceLayer, UnlockRule])[] = [
+  ["rain", { type: "free" }],
+  ["wind", { type: "free" }],
+  ["thunder", { type: "level", level: 2 }],
+  ["cafe", { type: "level", level: 4 }],
+  ["fireplace", { type: "bestStreak", days: 5 }],
+  ["forest", { type: "level", level: 5 }],
+  ["ocean", { type: "level", level: 7 }],
+  ["spookyNight", { type: "withTheme", theme: "halloween" }],
+  ["winterCottage", { type: "withTheme", theme: "christmas" }],
+];
+
+/** Days since 1970-01-01 of a civil date (UTC arithmetic: no time-zone or DST edge). */
+const civilDay = (year: number, month: number, day: number) => Math.round(Date.UTC(year, month - 1, day) / DAY_MS_UTC);
+const civilIso = (dayNumber: number) => new Date(dayNumber * DAY_MS_UTC).toISOString().slice(0, 10);
+const daysInMonth = (year: number, month: number) => new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+/** Western Easter Sunday (anonymous Gregorian algorithm), as focus-core `easter_sunday`. */
+export function sampleEasterSunday(year: number): { month: number; day: number } {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return { month, day };
+}
+
+const SEASON_MONTH: Record<Exclude<Season, "easter">, number> = {
+  newYear: 1,
+  valentines: 2,
+  summer: 7,
+  halloween: 10,
+  christmas: 12,
+};
+
+/** First and last day (day numbers) of `season`'s window in `year`, as focus-core `season_window`. */
+function sampleSeasonWindow(season: Season, year: number): { start: number; end: number; month: number | null } {
+  if (season !== "easter") {
+    const month = SEASON_MONTH[season];
+    return { start: civilDay(year, month, 1), end: civilDay(year, month, daysInMonth(year, month)), month };
+  }
+  const easter = sampleEasterSunday(year);
+  const sunday = civilDay(year, easter.month, easter.day);
+  const monthStart = civilDay(year, easter.month, 1);
+  const monthEnd = civilDay(year, easter.month, daysInMonth(year, easter.month));
+  const start = Math.min(monthStart, sunday - SAMPLE_EASTER_MARGIN_DAYS);
+  const end = Math.max(monthEnd, sunday + SAMPLE_EASTER_MARGIN_DAYS);
+  return { start, end, month: start === monthStart && end === monthEnd ? easter.month : null };
+}
+
+/** The open window of `season` on `today`, else the next one (this year if still ahead, else next year). */
+function sampleWindowView(season: Season, today: number, year: number): SeasonWindow {
+  let w = sampleSeasonWindow(season, year);
+  if (w.end < today) w = sampleSeasonWindow(season, year + 1);
+  return { season, start: civilIso(w.start), end: civilIso(w.end), open: w.start <= today && today <= w.end, month: w.month };
+}
+
+/**
+ * A sample collection for `month` of `year`: a user at `level` with a best streak of `best`, two goal days in the
+ * open seasonal window (`availableNow` 2/3), every other seasonal theme locked with its next window. "Today" is the
+ * real day in the current month, else the 15th of `month`. Never unlocks anything: it is only a view.
+ */
+export function sampleUnlocks(month: number, year: number, level = 4, best = 5, now = Date.now()): UnlocksView {
+  const real = new Date(now);
+  const current = real.getFullYear() === year && real.getMonth() + 1 === month;
+  const today = current ? civilDay(year, month, real.getDate()) : civilDay(year, month, 15);
+  const earnedOn = civilIso(today - 9);
+  const meets = (rule: UnlockRule): boolean =>
+    rule.type === "free" ||
+    (rule.type === "level" && level >= rule.level) ||
+    (rule.type === "bestStreak" && best >= rule.days);
+  const progressOf = (rule: UnlockRule) =>
+    rule.type === "level"
+      ? { have: Math.min(level, rule.level), need: rule.level }
+      : rule.type === "bestStreak"
+        ? { have: Math.min(best, rule.days), need: rule.days }
+        : null;
+
+  const themes: ThemeUnlock[] = SAMPLE_THEME_RULES.map(([theme, rule]) => {
+    if (rule.type === "seasonal") {
+      const window = sampleWindowView(rule.season, today, year);
+      const state: UnlockState = window.open ? "availableNow" : "locked";
+      const progress = window.open ? { have: 2, need: rule.goalDays } : null;
+      return { theme, state, rule, progress, window, unlockedOn: null };
+    }
+    const unlocked = meets(rule);
+    return {
+      theme,
+      state: unlocked ? "unlocked" : "locked",
+      rule,
+      progress: unlocked ? null : progressOf(rule),
+      window: null,
+      unlockedOn: unlocked ? earnedOn : null,
+    };
+  });
+
+  const ambiences: AmbienceUnlock[] = SAMPLE_AMBIENCE_RULES.map(([layer, rule]) => {
+    if (rule.type === "free") return { layer, state: "free", rule, progress: null, unlockedOn: null };
+    if (rule.type === "withTheme") {
+      const unlocked = themes.some((t) => t.theme === rule.theme && t.state === "unlocked");
+      return { layer, state: unlocked ? "unlocked" : "locked", rule, progress: null, unlockedOn: unlocked ? earnedOn : null };
+    }
+    const unlocked = meets(rule);
+    return {
+      layer,
+      state: unlocked ? "unlocked" : "locked",
+      rule,
+      progress: unlocked ? null : progressOf(rule),
+      unlockedOn: unlocked ? earnedOn : null,
+    };
+  });
+
+  return { themes, ambiences };
 }
 
 /** Small steps of the sample summary (plain sample texts). */
@@ -851,6 +1014,8 @@ function sampleMoment(kind: MomentKind, now: number, patch: Partial<RewardMoment
     firstStep: false,
     quiet: false,
     preview: false,
+    unlockedThemes: [],
+    unlockedAmbiences: [],
     ...patch,
     sample: true,
   };
@@ -934,5 +1099,10 @@ export function sampleRewardMoment(kind: RewardMomentSample, now: number): Rewar
       return sampleMoment("goalDone", now, { lines: [rewardLine("goalDone", 10)] });
     case "sticker":
       return block([], { stickers: ["firstStep"] });
+    // ADR-024: the 3rd goal day of October unlocks the theme and its background sound in one moment.
+    case "unlockHalloween":
+      return block([goal], { dailyGoal: true, unlockedThemes: ["halloween"], unlockedAmbiences: ["spookyNight"] });
+    case "unlockUnderwater":
+      return block([], { levelUp: 3, levelsGained: 1, unlockedThemes: ["underwater"] });
   }
 }

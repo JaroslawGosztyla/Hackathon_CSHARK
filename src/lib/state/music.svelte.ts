@@ -52,6 +52,11 @@ class MusicStore {
   playlistEpoch = $state(0);
   /** Someone wants the music on (it plays unless the session holds it silent). */
   wanted = $derived(this.intent === "session" || this.intent === "user");
+  /**
+   * The music is actually playing now (the dock's engine reports "playing"; set by MusicPlayer.svelte). The beta
+   * ambience (ADR-024) follows it, so it pauses with the music in a held break, a meeting mute or a pause in the dock.
+   */
+  audible = $state(false);
   private request = 0;
   private libraryRequest: Promise<void> | null = null;
 

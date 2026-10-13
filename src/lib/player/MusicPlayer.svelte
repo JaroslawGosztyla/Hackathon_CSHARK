@@ -6,7 +6,13 @@
   // mute hold it silent. Links whose owner refuses embedding (and, when signed in to YouTube, every YouTube
   // item, ADR-021) play in a separate YouTube window (the engine routes play/pause/volume there); the dock then offers
   // "Pokaż okno" / "Otwórz ponownie".
+  // Beta (ADR-024): a "Dźwięki tła" button opens the ambience mixer above the dock; the ambience follows the music
+  // (`music.audible`, set here from the engine's status) or plays alone when the user starts it there.
   import { onMount, untrack } from "svelte";
+  import { ambienceEngine } from "$lib/ambience/engine.svelte";
+  import AmbienceHost from "$lib/components/ambience/AmbienceHost.svelte";
+  import AmbienceMixer from "$lib/components/ambience/AmbienceMixer.svelte";
+  import { ambience } from "$lib/state/ambience.svelte";
   import { config } from "$lib/state/config.svelte";
   import { mediaWindow } from "$lib/state/mediaWindow.svelte";
   import { music } from "$lib/state/music.svelte";
@@ -137,7 +143,22 @@
       created.destroy();
       engine = null;
       music.videoVisible = false;
+      music.audible = false;
     };
+  });
+
+  // The music actually plays (the beta ambience follows it, ADR-024).
+  $effect(() => {
+    music.audible = view.status === "playing";
+  });
+
+  let mixerButton = $state<HTMLButtonElement | null>(null);
+  /** Some of the user's ambience layers sound now (the button shows it). */
+  const ambienceOn = $derived(ambienceEngine.sample === null && ambienceEngine.sounding.length > 0);
+
+  // The beta went off: the mixer closes with it.
+  $effect(() => {
+    if (!ambience.betaOn && ambience.mixerOpen) untrack(() => (ambience.mixerOpen = false));
   });
 
   /** Session the dock saw last (undefined before the first run). */
@@ -367,6 +388,29 @@
           <rect x="16.5" y="5" width="2.5" height="14" rx="1" fill="currentColor" />
         </svg>
       </button>
+      {#if ambience.betaOn}
+        <button
+          class="btn btn-sm ambience-btn"
+          class:on={ambienceOn}
+          type="button"
+          bind:this={mixerButton}
+          aria-expanded={ambience.mixerOpen}
+          aria-controls="ambience-mixer"
+          title={strings.collection.mixer.open}
+          onclick={() => (ambience.mixerOpen = !ambience.mixerOpen)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path
+              d="M3 9c2-2.5 4-2.5 6 0s4 2.5 6 0 4-2.5 6 0M3 15c2-2.5 4-2.5 6 0s4 2.5 6 0 4-2.5 6 0"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span class="ambience-label">{strings.collection.mixer.open}</span>
+        </button>
+      {/if}
       <label class="volume">
         <span class="sr-only">{strings.player.volume}</span>
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -394,7 +438,12 @@
       </label>
     </div>
   </div>
+
+  {#if ambience.betaOn}
+    <AmbienceMixer id="ambience-mixer" anchor={mixerButton} />
+  {/if}
 </section>
+<AmbienceHost />
 
 <style>
   .dock {
@@ -506,6 +555,23 @@
     align-items: center;
     gap: 6px;
     color: var(--text-2);
+  }
+
+  /* The ambience mixer button (beta): the label hides on a narrow window (the icon and title stay). */
+  .ambience-btn.on {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+  }
+
+  @media (max-width: 760px) {
+    .ambience-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
   }
 
   .volume input {

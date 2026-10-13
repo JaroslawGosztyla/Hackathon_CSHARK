@@ -160,7 +160,7 @@ export class RewardPlayer {
     this.beat = -1;
     // `still` covers numbers only and calm: the final number at once.
     this.shown = still ? total : 0;
-    this.announcement = announce(m, strings.rewards, rewards.showStreak);
+    this.announcement = announce(m, strings.rewards, rewards.showStreak, strings.collection);
 
     if (stale || level === "numbersOnly") {
       // Numbers only / stale: the final state at once, no pose, no sound (a burst stays as `last`).

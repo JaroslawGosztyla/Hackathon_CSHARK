@@ -7,10 +7,11 @@
       // flashes the opaque app background.
       if (/^\/popup\/?$/.test(location.pathname)) document.documentElement.setAttribute("data-overlay", "");
       // The theme of the last run (cached by $lib/themes), set before the first paint so a light theme does not
-      // flash dark at startup. The config stays the source of truth: the layouts apply it once it arrives.
+      // flash dark at startup. The config stays the source of truth: the layouts apply it once it arrives. The list holds
+      // the base themes and the beta collection themes (ADR-024, src/lib/themes/catalog.ts).
       try {
         var cachedTheme = localStorage.getItem("focusmode.theme");
-        if (/^(midnight|vaporwave|lunar|autumn|dark|light|pixel)$/.test(cachedTheme || "")) {
+        if (/^(midnight|vaporwave|lunar|autumn|dark|light|pixel|underwater|rainyWindow|forestCabin|sakuraNight|newYear|valentines|easter|summer|halloween|christmas)$/.test(cachedTheme || "")) {
           document.documentElement.setAttribute("data-theme", cachedTheme);
         }
       } catch (e) {
@@ -35,6 +36,10 @@
       }
       html[data-theme="light"] {
         background: #eceef2;
+        color-scheme: light;
+      }
+      html[data-theme="easter"] {
+        background: #eef2e4;
         color-scheme: light;
       }
       html[data-overlay],

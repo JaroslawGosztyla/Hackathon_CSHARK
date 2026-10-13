@@ -7,6 +7,9 @@
   // In the content flow (never over the session buttons), never modal, never takes focus. Skip, Esc or a click on the
   // card shows the final state at once. Calm: every beat in its final state at once (same timing, no particles);
   // numbers only: everything listed at once.
+  // Beta collection (ADR-024): an unlock beat shows the new theme's live tile with "Wypróbuj" (or one line for the new
+  // background sounds); unlock rows stay in the compact final state too, so "Wypróbuj" is still there after the play.
+  import UnlockTile from "$lib/components/collection/UnlockTile.svelte";
   import {
     CHIP_STAGGER,
     COUNT_START,
@@ -16,10 +19,12 @@
     lineSparks,
     pickAt,
     surpriseSparks,
+    unlockBeatText,
     type Beat,
   } from "$lib/rewards/choreography";
   import type { RewardPlayer } from "$lib/rewards/player.svelte";
   import { rewards } from "$lib/state/rewards.svelte";
+  import { showcaseMode } from "$lib/state/showcaseMode.svelte";
   import { strings } from "$lib/strings";
   import type { RewardMoment } from "$lib/types";
   import BetaBadge from "./BetaBadge.svelte";
@@ -89,6 +94,8 @@
     });
     return out;
   });
+  /** The compact final state keeps only the unlock rows (their "Wypróbuj" stays reachable). */
+  const shownRows = $derived(compact ? rows.filter((row) => row.beat.kind === "unlock") : rows);
 
   function beatText(beat: Beat, m: RewardMoment, n: number): string | null {
     switch (beat.kind) {
@@ -123,6 +130,8 @@
         return beat.sticker ? s.album.unlocked(s.album.sticker[beat.sticker].name) : null;
       case "stickersMore":
         return s.inAlbum(m.stickers.length - MAX_STICKER_BEATS);
+      case "unlock":
+        return beat.unlock ? unlockBeatText(beat.unlock, strings.collection) : null;
     }
   }
 
@@ -170,7 +179,7 @@
         <span aria-hidden="true" class="tabular">{header(moment, shownNumber, info.total)}</span>
         <span class="sr-only">{header(moment, info.total, info.total)}</span>
       </h2>
-      {#if moment.preview || moment.sample}<span class="badge demo">{s.demo}</span>{/if}
+      {#if (moment.preview || moment.sample) && !showcaseMode.active}<span class="badge demo">{s.demo}</span>{/if}
       {#if !embedded}<BetaBadge />{/if}
       <span class="spacer"></span>
       {#if playing}
@@ -201,11 +210,18 @@
       </ul>
     {/if}
 
-    {#if rows.length > 0 && !compact}
+    {#if shownRows.length > 0}
       <ul class="beats">
-        {#each rows as row (row.index)}
+        {#each shownRows as row (row.index)}
           {#if row.index <= reached}
             {@const now = playing && row.index === reached}
+            {@const unlock = row.beat.unlock}
+            {#if unlock?.kind === "theme" && info.level !== "numbersOnly"}
+              <li class="beat unlock-row">
+                <!-- A preview moment's unlock (the presentation showcase) is not in the real ledger: "Wypróbuj" previews it. -->
+                <UnlockTile theme={unlock.theme} sample={moment.sample || moment.preview} {still} entering={now} />
+              </li>
+            {:else}
             <li class="beat kind-{row.beat.kind}" class:now class:moving={now && !still}>
               <span class="icon" aria-hidden="true">
                 {#if row.beat.kind === "dailyGoal" && view}
@@ -223,12 +239,23 @@
                   <span class="zz">z</span>
                 {:else if row.beat.kind === "surprise"}
                   <span class="pearl rarity-{moment.surprise}" class:flip={now && !still}></span>
+                {:else if row.beat.kind === "unlock" && row.beat.unlock?.kind === "ambience"}
+                  <svg class="wave" viewBox="0 0 24 24" width="18" height="18">
+                    <path
+                      d="M3 9c2-2.5 4-2.5 6 0s4 2.5 6 0 4-2.5 6 0M3 15c2-2.5 4-2.5 6 0s4 2.5 6 0 4-2.5 6 0"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                  </svg>
                 {:else}
                   <SparkIcon size={18} />
                 {/if}
               </span>
               <span class="text">{row.text}</span>
             </li>
+            {/if}
           {/if}
         {/each}
       </ul>
@@ -434,6 +461,16 @@
       opacity: 0;
       transform: scale(1.8);
     }
+  }
+
+  /* An unlocked theme (ADR-024): the tile row spans the card. */
+  .unlock-row {
+    display: block;
+    font-weight: 400;
+  }
+
+  .wave {
+    color: var(--reward-ink);
   }
 
   .zz {

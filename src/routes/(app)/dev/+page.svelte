@@ -7,6 +7,7 @@
   import { formatClock } from "$lib/format";
   import {
     DEV,
+    DEV_PRESENTATION,
     MASCOT_MOODS,
     MASCOT_REACTIONS,
     POPUP_SAMPLES,
@@ -24,8 +25,10 @@
   import DevRewards from "$lib/components/rewards/DevRewards.svelte";
   import { config, reminderForBreak } from "$lib/state/config.svelte";
   import { dev, SEQUENCE_STEP_MS } from "$lib/state/dev.svelte";
+  import { presentation } from "$lib/state/presentation.svelte";
   import { session } from "$lib/state/session.svelte";
-  import { THEMES } from "$lib/themes";
+  import { showcaseMode } from "$lib/state/showcaseMode.svelte";
+  import { REWARD_THEMES, THEMES } from "$lib/themes";
   import { breakTipText, pickBreakTip, WORKING_TIPS, workingTipText } from "$lib/tips";
   import type { ChimeKind, ChimeSound, Language } from "$lib/types";
 
@@ -191,13 +194,18 @@
               <p class="hint">{DEV.sessionHint}</p>
             </div>
           </div>
+          <!-- Presentation mode = demo timings + the showcase (`$lib/state/presentation.svelte`). -->
           <Switch
             id="dev-presentation"
-            label={DEV.presentationMode(dev.presentationLengths.focusSecs, dev.presentationLengths.breakSecs)}
-            hint={dev.presentationDiffers ? DEV.presentationPending : DEV.presentationHint}
-            checked={dev.presentationOn}
-            onchange={(on) => dev.setPresentation(on)}
+            label={DEV_PRESENTATION.label}
+            hint={presentation.timingDiffers
+              ? DEV_PRESENTATION.pending
+              : DEV_PRESENTATION.hint(dev.presentationLengths.focusSecs, dev.presentationLengths.breakSecs)}
+            checked={showcaseMode.active}
+            disabled={presentation.busy}
+            onchange={(on) => presentation.set(on)}
           />
+          {#if showcaseMode.launch}<p class="hint">{DEV_PRESENTATION.launched}</p>{/if}
           <p class="readout tabular" class:break={snap.phase === "break"} aria-live="polite">{sessionLine}</p>
           <div class="buttons">
             <button
@@ -498,6 +506,31 @@
                   {DEV.themeNames[theme]}
                 </button>
               {/each}
+            </div>
+          </fieldset>
+          <fieldset class="set">
+            <legend>{DEV.rewardThemesLabel}</legend>
+            <p class="hint">{DEV.rewardThemesHint}</p>
+            <div class="buttons">
+              {#each REWARD_THEMES as theme (theme)}
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  class:btn-primary={dev.themePreview === theme}
+                  aria-pressed={dev.themePreview === theme}
+                  onclick={() => dev.previewRewardTheme(theme, DEV.rewardThemeNames[theme])}
+                >
+                  {DEV.rewardThemeNames[theme]}
+                </button>
+              {/each}
+              <button
+                type="button"
+                class="btn btn-sm"
+                disabled={dev.themePreview === null}
+                onclick={() => dev.previewRewardTheme(null, DEV.rewardThemeStop)}
+              >
+                {DEV.rewardThemeStop}
+              </button>
             </div>
           </fieldset>
           <fieldset class="set" disabled={!config.ready}>

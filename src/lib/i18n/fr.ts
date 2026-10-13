@@ -5,6 +5,7 @@
 // Terms: docs/i18n-glossary.md (column FR).
 import type { Strings } from "./pl";
 import { pluralizer } from "./plural";
+import { collectionFr } from "./collection/fr";
 
 const plural = pluralizer("fr");
 
@@ -1418,26 +1419,35 @@ export const fr: Strings = {
       title: "Bienvenue dans FocusMode",
       lead:
         "Réglez les durées et la musique, appuyez sur Démarrer, et FocusMode vous accompagne entre concentration et pauses jusqu'à ce que vous appuyiez sur Arrêter. Commençons par la langue.",
-      line: "Bonjour ! Je vous fais faire le tour. Ça prend une minute.",
+      lines: [
+        "Coucou ! Ravie de vous rencontrer ! Je suis Axi ! Et voici FocusMode !",
+        "Je vais vous aider à tout régler selon vos goûts, ça ne prendra qu'un instant !",
+      ],
       languageLabel: "Langue de l'application",
     },
     music: {
       title: "Quelle musique ?",
       lead:
         "Par défaut, la musique intégrée Open Lo-Fi joue, même hors connexion. Vous pouvez aussi choisir un flux, vos propres liens, un dossier de musique, un bruit de fond ou le silence.",
-      line: "Un fond sonore ? La musique continue aussi pendant les pauses.",
+      lines: [
+        "Ici, vous pouvez choisir d'écouter ma musique, ou préférez-vous un stream ou une playlist ? Il y a aussi du bruit, ou travailler sans musique.",
+      ],
     },
     shields: {
       title: "Des boucliers pour la concentration",
       lead:
         "Pendant la concentration, FocusMode peut tenir les distractions à distance. Pendant les pauses et après l'arrêt, tout redevient normal.",
-      line: "Choisissez ce qui doit vous protéger. Les boucliers tombent pendant les pauses.",
+      lines: [
+        "Maintenant, choisissez si je dois vous aider à garder votre concentration au travail. Je peux veiller à ce que vous ne fassiez pas défiler TikTok sans fin, ou fermer Steam pour vous si vous voulez.",
+      ],
       teamsLater: "Vous connecterez votre compte Microsoft plus tard, dans les Paramètres, avec les boucliers.",
     },
     extras: {
       title: "Quelques options en plus",
       lead: "Tout ici est facultatif et se modifie plus tard dans les Paramètres.",
-      line: "C'est prêt ! Démarrer vous attend quand vous voulez.",
+      lines: [
+        "Tout est prêt, on peut commencer ! Bon courage pour le travail !",
+      ],
       tintHint:
         "Des couleurs d'écran plus chaudes le soir. Désactivé par défaut. Les heures et l'intensité se règlent dans les Paramètres.",
       connectTitle: "Calendrier et outils de travail",
@@ -1606,7 +1616,13 @@ export const fr: Strings = {
     "work.jiraEmail": "e-mail du compte Jira",
     "work.azureOrg": "organisation Azure DevOps",
     appCategories: "étiquettes des applications",
+    rewardTheme: "thème de la collection",
+    "ambience.volume": "volume des sons d'ambiance",
+    "ambience.layers": "sons d'ambiance",
   },
+
+  /** Beta collection (ADR-024): collection themes, background sounds, the mixer; texts in `./collection/fr.ts`. */
+  collection: collectionFr,
 
   dialog: {
     cancel: "Annuler",

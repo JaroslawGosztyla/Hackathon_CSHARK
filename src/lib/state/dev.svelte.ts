@@ -13,10 +13,12 @@ import { goto } from "$app/navigation";
 import { page } from "$app/state";
 import { untrack } from "svelte";
 import * as api from "$lib/api";
-import { DEV, DEV_REWARDS, POPUP_SAMPLES, type PopupSample } from "$lib/i18n/dev";
+import { ambienceEngine } from "$lib/ambience/engine.svelte";
+import { DEV, DEV_COLLECTION, DEV_REWARDS, POPUP_SAMPLES, type PopupSample } from "$lib/i18n/dev";
 import type { MascotMood, MascotReaction } from "$lib/mascot/frames";
 import { errorText, strings } from "$lib/strings";
-import type { ChimeKind, ChimeSound, DevAction, Language, MeetingChoice, Phase, Theme } from "$lib/types";
+import type { ThemeId } from "$lib/themes";
+import type { ChimeKind, ChimeSound, DevAction, Language, MeetingChoice, Phase, RewardTheme, Theme } from "$lib/types";
 import { calendar } from "./calendar.svelte";
 import { config } from "./config.svelte";
 import { nudge } from "./nudge.svelte";
@@ -33,6 +35,7 @@ import {
   type BreakPlan,
 } from "./samples";
 import { session } from "./session.svelte";
+import { showcaseMode } from "./showcaseMode.svelte";
 import { summary } from "./summary.svelte";
 import { tint } from "./tint.svelte";
 import { toasts } from "./toasts.svelte";
@@ -121,6 +124,11 @@ class DevStore {
    * the session it was switched in. Ignored once that session is over (the snapshot then shows the real state).
    */
   presentationPending = $state.raw<{ on: boolean; sessionId: string | null } | null>(null);
+  /**
+   * A beta collection theme (ADR-024) shown on screen instead of the real one, whatever its lock state: a sample only
+   * (never saved, never unlocks anything). The layout applies it; cleared with the other samples.
+   */
+  themePreview = $state<ThemeId | null>(null);
 
   /** Presentation mode as the next Start uses it: a switch made during the running session, else the snapshot's. */
   presentationOn = $derived.by((): boolean => {
@@ -139,8 +147,11 @@ class DevStore {
       : { focusSecs: DEMO_FOCUS_SECS, breakSecs: DEMO_BREAK_SECS };
   });
 
-  /** `Config.developerMode` (off until the config arrives, and with a shell from before the setting). */
-  enabled = $derived(config.value?.developerMode === true);
+  /**
+   * `Config.developerMode` (off until the config arrives, and with a shell from before the setting), or a run started
+   * with `--presentation` (on for that run only, the setting is not changed).
+   */
+  enabled = $derived(config.value?.developerMode === true || showcaseMode.launch);
   /** The Developer tab is in the navigation. */
   tabVisible = $derived(this.enabled && !this.cleanScreenshots);
 
@@ -157,6 +168,8 @@ class DevStore {
     if (tint.sample !== null) out.push(names.tint);
     if (weekly.sampling) out.push(names.week);
     if (this.mascotMood !== null) out.push(names.mood);
+    if (this.themePreview !== null) out.push(names.themePreview);
+    if (ambienceEngine.sample !== null) out.push(DEV_COLLECTION.sampleName);
     if (rewards.sampling) out.push(DEV_REWARDS.sampleName);
     return out;
   });
@@ -421,6 +434,8 @@ class DevStore {
     session.sampleHold = null;
     session.sampleSmartBreak = null;
     this.mascotMood = null;
+    this.themePreview = null;
+    ambienceEngine.stopSample();
     rewards.clearSamples();
     this.queue = [];
     if (nudge.current?.matched === sampleNudge().matched) nudge.dismiss();
@@ -433,6 +448,12 @@ class DevStore {
 
   setTheme(theme: Theme, what: string): void {
     if (config.update((c) => (c.theme = theme), true)) this.ok(DEV.sent(what));
+  }
+
+  /** Shows a collection theme (ADR-024) on screen as a sample, locked or not; `null` ends the preview. Never saved. */
+  previewRewardTheme(theme: RewardTheme | null, what: string): void {
+    this.themePreview = theme;
+    this.ok(DEV.sent(what));
   }
 
   /** The 8-bit theme (pixelated axolotl) and the Skupienie page, in one click. */

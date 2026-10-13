@@ -6,7 +6,8 @@
   import * as api from "$lib/api";
   import { EVENTS } from "$lib/bindings/names";
   import { followLanguage } from "$lib/i18n/index.svelte";
-  import { applyTheme, DEFAULT_THEME, isTheme, readCachedTheme } from "$lib/themes";
+  import { applyTheme, DEFAULT_THEME, effectiveTheme, isTheme, isThemeId, readCachedTheme } from "$lib/themes";
+  import type { UnlocksView } from "$lib/types";
 
   let { children }: { children: Snippet } = $props();
 
@@ -23,8 +24,18 @@
    */
   async function refreshTheme(): Promise<void> {
     try {
-      const cfg = await api.getConfig();
-      if (isTheme(cfg.theme)) applyTheme(cfg.theme);
+      // A beta collection theme (ADR-024) shows only while it is unlocked: the collection comes with the rewards status
+      // (read only; the popup never acks). Without it (older shell) the config is trusted.
+      const [cfg, unlocks] = await Promise.all([
+        api.getConfig(),
+        api
+          .getRewards()
+          .then((status): UnlocksView | null => status.unlocks ?? null)
+          .catch(() => null),
+      ]);
+      const shown = effectiveTheme(cfg, unlocks);
+      if (isThemeId(shown)) applyTheme(shown);
+      else if (isTheme(cfg.theme)) applyTheme(cfg.theme);
       followLanguage(cfg.language);
     } catch (e) {
       const err = api.toAppError(e);

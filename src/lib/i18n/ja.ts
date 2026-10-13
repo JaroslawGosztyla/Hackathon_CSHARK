@@ -3,6 +3,7 @@
 // "FocusMode" is a name and is never translated; neither is the file name websiteblacklist.txt.
 // Japanese has no plural forms, so no pluralizer is needed. Terms: docs/i18n-glossary.md (column JA).
 import type { Strings } from "./pl";
+import { collectionJa } from "./collection/ja";
 
 export const ja: Strings = {
   appName: "FocusMode",
@@ -1346,26 +1347,35 @@ export const ja: Strings = {
       title: "FocusMode へようこそ",
       lead:
         "時間と音楽を決めて「開始」を押すと、「停止」を押すまで FocusMode が集中と休憩をくり返し案内します。まずは言語を選びましょう。",
-      line: "こんにちは！ひととおりご案内します。1 分で終わります。",
+      lines: [
+        "やあ！はじめまして！わたしは Axi です！そしてこれが FocusMode です！",
+        "あなた好みの設定をお手伝いします。すぐに終わりますよ！",
+      ],
       languageLabel: "アプリの言語",
     },
     music: {
       title: "何を流しますか？",
       lead:
         "最初は内蔵の Open Lo-Fi が流れます。インターネットは不要です。ストリーム、自分のリンク、音楽フォルダー、ノイズ、無音も選べます。",
-      line: "BGM はいかがですか？休憩中も音楽は流れ続けます。",
+      lines: [
+        "ここでは、わたしの音楽を聴くか、それとも配信やプレイリストがいいかを選べます。ノイズや、音楽なしで作業することもできます。",
+      ],
     },
     shields: {
       title: "集中のためのシールド",
       lead:
         "集中中は FocusMode が気が散るものを遠ざけます。休憩中と停止後は、すべて元に戻ります。",
-      line: "守ってほしいものを選んでください。休憩中はシールドが外れます。",
+      lines: [
+        "次に、お仕事に集中できるよう、わたしがお手伝いするかを選んでください。TikTok を延々とスクロールしないように見張ったり、ご希望なら Steam を閉じたりできます。",
+      ],
       teamsLater: "Microsoft アカウントは、あとで「設定」のシールドの項目で接続できます。",
     },
     extras: {
       title: "そのほかのオプション",
       lead: "ここはすべて任意です。あとから「設定」でいつでも変更できます。",
-      line: "準備完了です！いつでも「開始」を押してください。",
+      lines: [
+        "準備完了、さあ始めましょう！お仕事がんばってください！",
+      ],
       tintHint:
         "夕方から画面の色を暖かくします。初期設定ではオフです。時間と強さは「設定」で調整できます。",
       connectTitle: "カレンダーと仕事ツール",
@@ -1530,7 +1540,13 @@ export const ja: Strings = {
     "work.jiraEmail": "Jira アカウントのメールアドレス",
     "work.azureOrg": "Azure DevOps の組織",
     appCategories: "アプリのラベル",
+    rewardTheme: "コレクションのテーマ",
+    "ambience.volume": "環境音の音量",
+    "ambience.layers": "環境音",
   },
+
+  /** Beta collection (ADR-024): collection themes, background sounds, the mixer; texts in `./collection/ja.ts`. */
+  collection: collectionJa,
 
   dialog: {
     cancel: "キャンセル",

@@ -3,6 +3,7 @@
   // rewards store's sample layer (memory only, `sample: true`): never acknowledged, sent to the shell or written. The
   // popups use the existing `dev_trigger` popup; the sounds ask the shell (`play_reward_sound`).
   import * as api from "$lib/api";
+  import DevCollection from "$lib/components/collection/DevCollection.svelte";
   import { DEV, DEV_REWARDS } from "$lib/i18n/dev";
   import { rewardCues } from "$lib/mascot/cues.svelte";
   import { POSE_NAMES, poseFrame, reactionSteps, rewardSteps } from "$lib/mascot/frames";
@@ -269,6 +270,9 @@
       <button type="button" class="btn btn-sm" onclick={intro}>{d.intro}</button>
     </div>
   </fieldset>
+
+  <!-- Beta collection (ADR-024): ambience samples, spooky one-shots, the sample month. -->
+  <DevCollection />
 </section>
 
 <style>

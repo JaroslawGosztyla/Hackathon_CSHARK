@@ -8,6 +8,7 @@ import { calendar, reportCalendarError } from "./calendar.svelte";
 import { config } from "./config.svelte";
 import { mediaWindow } from "./mediaWindow.svelte";
 import { nudge } from "./nudge.svelte";
+import { presentation } from "./presentation.svelte";
 import { privacy } from "./privacy.svelte";
 import { rewards } from "./rewards.svelte";
 import { session } from "./session.svelte";
@@ -85,6 +86,8 @@ export function initAppState(): () => void {
 
   void config.load();
   void summary.load();
+  // Presentation mode (ADR-019): a showcase the shell started (`--presentation`, a reload) and the language it follows.
+  unlisteners.push(presentation.listen());
 
   return () => {
     disposed = true;

@@ -1,5 +1,6 @@
 // Mascot art: the frame atlases and their manifests in static/mascot (art/mascot/README.md). Each atlas is fetched
 // once per window. The art is only displayed as it is: never redrawn, recoloured or traced.
+import { showcaseMode } from "$lib/state/showcaseMode.svelte";
 import type { Config, RewardsConfig } from "$lib/types";
 
 /** The axolotl of a host: the main window's (`main`) or the popup's peeking one (`peek`), each with its own frames. */
@@ -63,7 +64,10 @@ export const FRAME_GEOMETRY: Record<MascotAtlas, MascotGeometry> = {
  * that show poses, ADR-022) and the mascot is shown. Otherwise the atlas is never requested.
  */
 export function posesAllowed(cfg: Config | null): boolean {
-  if (cfg === null || cfg.betaFeatures !== true || (cfg.showMascot as boolean | undefined) === false) return false;
+  if (cfg === null || (cfg.showMascot as boolean | undefined) === false) return false;
+  // The presentation showcase (ADR-019) counts the beta features as on, rewards included (memory only).
+  if (showcaseMode.active) return true;
+  if (cfg.betaFeatures !== true) return false;
   const rewards = cfg.rewards as RewardsConfig | undefined;
   return rewards !== undefined && (rewards.enabled || rewards.microSteps);
 }

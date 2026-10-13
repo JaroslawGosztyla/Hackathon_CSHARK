@@ -8,6 +8,7 @@ import { page } from "$app/state";
 import { tick } from "svelte";
 import type { Config } from "$lib/types";
 import { config } from "./config.svelte";
+import { showcaseMode } from "./showcaseMode.svelte";
 
 /** The steps, in order (their texts: `strings.onboarding.steps`). */
 export const ONBOARDING_STEPS = ["welcome", "music", "shields", "extras"] as const;
@@ -48,7 +49,8 @@ class OnboardingStore {
 
   /** Opens the wizard for a fresh install: the first loaded config with `onboardingDone: false`, once per window. */
   follow(cfg: Config | null): void {
-    if (this.#decided || cfg === null) return;
+    // Not on stage (presentation showcase, ADR-019): a fresh install sees the wizard with the next config after it.
+    if (this.#decided || cfg === null || showcaseMode.active) return;
     this.#decided = true;
     // A config from an older shell build has no field: an existing user.
     if ((cfg.onboardingDone as boolean | undefined) === false) this.#show(false);

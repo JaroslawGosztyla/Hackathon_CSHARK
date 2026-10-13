@@ -1,0 +1,91 @@
+/*
+ * Underwater (beta collection theme, ADR-024): the axolotl's home. Deep teal water, soft pink accents (like its gills),
+ * aqua for breaks. Full token set of a base theme (app.css) + the reward tokens (ADR-022). The doubled selector (0,2,0)
+ * wins over app.css's shared blocks whatever order the CSS loads in.
+ *
+ * Contrast (WCAG 2.x, measured; --surface composited over --bg-0):
+ *   --text        on surface-solid 13.9 · surface-raised 12.1 · bg-1 15.5 · surface 15.3
+ *   --text-2      on surface-solid 10.3 · surface-raised  9.0 · bg-1 11.5 · surface 11.4
+ *   --text-muted  on surface-solid  6.6 · surface-raised  5.8 · bg-1  7.4 · surface  7.3
+ *   --accent-ink on --accent 8.8 · --break-ink on --break 9.4 · --accent-strong on surface-solid 9.7 · --danger 8.0
+ *   --reward-ink on surface 12.8 · --reward 12.1 · --bubble 12.5 · confetti ≥ 8.5 (all on --surface)
+ *   --quiet-mark on surface-solid 3.7 · --focus-ring on bg-0 16.0
+ */
+
+:root[data-theme="underwater"],
+[data-theme="underwater"]:not(:root) {
+  color-scheme: dark;
+
+  --bg-0: #041626;
+  --bg-1: #072036;
+  --glow-warm: #17485a;
+  --glow-cool: #0c2c4a;
+
+  --surface: rgba(8, 36, 56, 0.84);
+  --surface-solid: #0b2a40;
+  --surface-raised: #11344d;
+  --surface-inset: rgba(200, 245, 255, 0.05);
+  --surface-hover: rgba(200, 245, 255, 0.1);
+  --border: rgba(170, 230, 245, 0.13);
+  --border-strong: rgba(170, 230, 245, 0.28);
+  --border-hover: rgba(170, 230, 245, 0.4);
+
+  --text: #ecfaff;
+  --text-2: #c0dce8;
+  --text-muted: #8fb3c4;
+
+  /* Axolotl pink (dark ink), aqua for breaks. */
+  --accent: #ff9fbf;
+  --accent-strong: #ffc0d5;
+  --accent-soft: rgba(255, 159, 191, 0.16);
+  --accent-ink: #3a0a1e;
+  --accent-line: rgba(255, 159, 191, 0.45);
+
+  --break: #72dccd;
+  --break-strong: #9ae8dc;
+  --break-soft: rgba(114, 220, 205, 0.15);
+  --break-ink: #052a25;
+  --break-line: rgba(114, 220, 205, 0.45);
+
+  /* Coral, not pink: never mistaken for the accent. */
+  --danger: #ffab85;
+  --danger-soft: rgba(255, 171, 133, 0.14);
+  --danger-line: rgba(255, 171, 133, 0.45);
+  --ok: #72dccd;
+  --muted-mark: #4f6f84;
+
+  --focus-ring: #fff1a8;
+
+  --track: rgba(200, 245, 255, 0.07);
+  --track-strong: rgba(200, 245, 255, 0.13);
+  --knob-fill: #f4fdff;
+  --scrim: rgba(2, 10, 18, 0.64);
+  --dock-bg: rgba(8, 34, 54, 0.94);
+  --shadow-color: rgba(1, 6, 14, 0.5);
+  --shadow-sm:
+    0 6px 16px rgba(1, 6, 14, 0.55),
+    0 1px 3px rgba(1, 6, 14, 0.45);
+  --logo-bg: rgba(255, 159, 191, 0.14);
+  --logo-moon: #ff9fbf;
+  --logo-star: #fff1a8;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23c0dce8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  --chart-other: #7f97a6;
+  --chart-idle: #34506a;
+
+  /* Water: lit teal near the surface, deep blue towards the sandy floor. */
+  --app-bg:
+    radial-gradient(90% 50% at 50% -8%, rgba(120, 220, 230, 0.28) 0%, transparent 70%),
+    linear-gradient(180deg, #0f5266 0%, #0b3c58 28%, #082c48 56%, #06203a 80%, #071a30 100%);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+
+  /* Rewards (ADR-022). */
+  --quiet-mark: #61839a;
+  --reward: #ffd98a;
+  --reward-ink: #ffe0a0;
+  --bubble: #a8ecff;
+  --confetti-1: #ffd98a;
+  --confetti-2: #a8ecff;
+  --confetti-3: #ff9fbf;
+  --confetti-4: #c6f08a;
+}

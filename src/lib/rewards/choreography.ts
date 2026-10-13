@@ -3,7 +3,17 @@
 // modal, never over the session buttons; in focus only the user's own Start, tick and back-from-break move.
 import type { RewardBeat } from "$lib/mascot/frames";
 import type { Strings } from "$lib/i18n/pl";
-import type { CelebrationLevel, MomentKind, Rarity, RewardLine, RewardMoment, RewardSound, StickerId } from "$lib/types";
+import type {
+  AmbienceLayer,
+  CelebrationLevel,
+  MomentKind,
+  Rarity,
+  RewardLine,
+  RewardMoment,
+  RewardSound,
+  RewardTheme,
+  StickerId,
+} from "$lib/types";
 
 // ---------------------------------------------------------------------------
 // Timings (ms). Full and Calm use the same durations; Calm shows each beat's final state at once.
@@ -40,6 +50,10 @@ export const POND_MS = 1500;
 export const STICKER_MS = 1200;
 /** Stickers get their own beat up to this many, then one "+N w albumie" line. */
 export const MAX_STICKER_BEATS = 2;
+/** Beta collection (ADR-024): an unlocked theme (its tile) or the unlocked background sounds (one beat together). */
+export const UNLOCK_MS = 1600;
+/** Unlocked themes get their own beat up to this many, then one "+N w kolekcji" line. */
+export const MAX_UNLOCK_BEATS = 2;
 /** Beats that would start after this render in their final state at once. */
 export const MAX_BURST_MS = 8000;
 
@@ -128,8 +142,20 @@ export function hasAchievements(m: RewardMoment): boolean {
     m.restDayEarned ||
     m.levelUp !== null ||
     m.pondFull ||
-    m.stickers.length > 0
+    m.stickers.length > 0 ||
+    unlockedThemes(m).length > 0 ||
+    unlockedAmbiences(m).length > 0
   );
+}
+
+/** The collection themes a moment unlocked (an older shell sends none). */
+export function unlockedThemes(m: RewardMoment): readonly RewardTheme[] {
+  return (m.unlockedThemes as RewardTheme[] | undefined) ?? [];
+}
+
+/** The background sounds a moment unlocked (an older shell sends none). */
+export function unlockedAmbiences(m: RewardMoment): readonly AmbienceLayer[] {
+  return (m.unlockedAmbiences as AmbienceLayer[] | undefined) ?? [];
 }
 
 /** Worth showing at all (an update earned in focus carries nothing: its achievements wait for the break). */
@@ -152,7 +178,14 @@ export type BeatKind =
   | "levelUp"
   | "pondFull"
   | "sticker"
-  | "stickersMore";
+  | "stickersMore"
+  | "unlock";
+
+/** What an `unlock` beat shows (ADR-024): a theme's tile, the new background sounds, or "+N w kolekcji". */
+export type UnlockBeat =
+  | { kind: "theme"; theme: RewardTheme }
+  | { kind: "ambience"; layers: readonly AmbienceLayer[] }
+  | { kind: "more"; count: number };
 
 export interface Beat {
   kind: BeatKind;
@@ -165,6 +198,8 @@ export interface Beat {
   confetti: boolean;
   /** The sticker of a `sticker` beat. */
   sticker: StickerId | null;
+  /** What an `unlock` beat shows. */
+  unlock: UnlockBeat | null;
 }
 
 interface BeatSpec {
@@ -172,6 +207,7 @@ interface BeatSpec {
   ms: number;
   confetti?: boolean;
   sticker?: StickerId | null;
+  unlock?: UnlockBeat | null;
 }
 
 /** Count-up time with its chips (they fade in while the number counts). */
@@ -181,7 +217,9 @@ function countMs(lines: number): number {
 
 /**
  * The beats of a burst, in the fixed order: count-up → surprise → daily goal → comeback → streak (+ milestone) →
- * rest days → level up → pond full → stickers. `firstGoal`: the very first daily goal (confetti). With "numbers only"
+ * rest days → level up → pond full → stickers → unlocks (beta collection, ADR-024: one beat per theme, at most
+ * `MAX_UNLOCK_BEATS`, then "+N w kolekcji", then one beat for the background sounds). `firstGoal`: the very first
+ * daily goal (confetti). With "numbers only"
  * every beat starts at once (a static list). `showStreak` off ("Pokazuj serię"): no streak or rest-day beats, so no
  * pose, sound or announcement about a streak that is not shown.
  */
@@ -199,6 +237,15 @@ export function beatsFor(m: RewardMoment, level: CelebrationLevel, firstGoal = f
   if (m.pondFull) specs.push({ kind: "pondFull", ms: POND_MS });
   for (const sticker of m.stickers.slice(0, MAX_STICKER_BEATS)) specs.push({ kind: "sticker", ms: STICKER_MS, sticker });
   if (m.stickers.length > MAX_STICKER_BEATS) specs.push({ kind: "stickersMore", ms: STICKER_MS });
+  const themes = unlockedThemes(m);
+  for (const theme of themes.slice(0, MAX_UNLOCK_BEATS)) {
+    specs.push({ kind: "unlock", ms: UNLOCK_MS, confetti: true, unlock: { kind: "theme", theme } });
+  }
+  if (themes.length > MAX_UNLOCK_BEATS) {
+    specs.push({ kind: "unlock", ms: STICKER_MS, unlock: { kind: "more", count: themes.length - MAX_UNLOCK_BEATS } });
+  }
+  const layers = unlockedAmbiences(m);
+  if (layers.length > 0) specs.push({ kind: "unlock", ms: UNLOCK_MS, unlock: { kind: "ambience", layers } });
 
   const beats: Beat[] = [];
   let at = 0;
@@ -211,6 +258,7 @@ export function beatsFor(m: RewardMoment, level: CelebrationLevel, firstGoal = f
       late: level !== "numbersOnly" && start > MAX_BURST_MS,
       confetti: spec.confetti === true,
       sticker: spec.sticker ?? null,
+      unlock: spec.unlock ?? null,
     });
     at += spec.ms + BEAT_GAP;
   }
@@ -248,6 +296,8 @@ export function poseFor(beat: Beat, m: RewardMoment): RewardBeat | null {
     case "sticker":
     case "stickersMore":
       return null;
+    case "unlock":
+      return beat.unlock?.kind === "more" ? null : "unlock";
   }
 }
 
@@ -303,6 +353,9 @@ export function beatSound(beat: Beat, m: RewardMoment): RewardSound | null {
       return "sparkle";
     case "streak":
       return m.milestone !== null ? "sparkle" : null;
+    case "unlock":
+      // The existing sparkle, once per burst at most (`soundFor` keeps a single sound per moment).
+      return beat.unlock?.kind === "more" ? null : "sparkle";
     default:
       return null;
   }
@@ -354,6 +407,26 @@ export function rarityName(r: Rarity, s: RewardStrings): string {
   return s.rarity[r];
 }
 
+/** "Nowy motyw: Halloween" per unlocked theme, then "Nowy dźwięk tła: Upiorna noc" (ADR-024). */
+export function unlockLines(m: RewardMoment, c: Strings["collection"]): string[] {
+  const lines = unlockedThemes(m).map((theme) => c.newTheme(c.themeNames[theme]));
+  const layers = unlockedAmbiences(m);
+  if (layers.length > 0) lines.push(c.newAmbience(layers.map((layer) => c.ambienceNames[layer]).join(", ")));
+  return lines;
+}
+
+/** The text of an `unlock` beat. */
+export function unlockBeatText(unlock: UnlockBeat, c: Strings["collection"]): string {
+  switch (unlock.kind) {
+    case "theme":
+      return c.newTheme(c.themeNames[unlock.theme]);
+    case "ambience":
+      return c.newAmbience(unlock.layers.map((layer) => c.ambienceNames[layer]).join(", "));
+    case "more":
+      return c.moreInCollection(unlock.count);
+  }
+}
+
 /** The label of a line chip ("Pełny blok", "Skupienie", "Kroki ×3"). */
 export function lineLabel(line: RewardLine, s: RewardStrings): string {
   const labels = s.line;
@@ -380,7 +453,12 @@ export function lineSparks(m: RewardMoment, kind: RewardLine["kind"]): number {
  * Start and a ticked step are announced; back from a break is announced by the phase change already. The streak is
  * left out while it is not shown (`showStreak`).
  */
-export function announce(m: RewardMoment, s: RewardStrings, showStreak = true): string {
+export function announce(
+  m: RewardMoment,
+  s: RewardStrings,
+  showStreak = true,
+  c: Strings["collection"] | null = null,
+): string {
   switch (m.kind) {
     case "start":
       return s.announceSparks(m.sparks);
@@ -400,6 +478,7 @@ export function announce(m: RewardMoment, s: RewardStrings, showStreak = true): 
       if (m.dailyGoal) parts.push(s.announceDailyGoal);
       if (m.streak !== null && showStreak) parts.push(s.announceStreak(m.streak));
       if (m.levelUp !== null) parts.push(s.announceLevel(m.levelUp));
+      if (c) parts.push(...unlockLines(m, c).map((line) => `${line}.`));
       return parts.join(" ");
     }
   }

@@ -5,7 +5,8 @@
 // (`sampleTexts`).
 import type { MascotMood, MascotReaction } from "$lib/mascot/frames";
 import type { RewardMomentSample, RewardsStatusSample } from "$lib/state/samples";
-import type { Phase, PopupKind } from "$lib/types";
+import type { SpookyOneShot } from "$lib/ambience/layers/spookyNight";
+import type { AmbienceLayer, Phase, PopupKind, RewardTheme } from "$lib/types";
 import { de } from "./de";
 import { en } from "./en";
 import { es } from "./es";
@@ -168,6 +169,7 @@ export const DEV = {
     tint: "tint pause",
     week: "week",
     mood: "held mood",
+    themePreview: "collection theme",
   },
 
   lookTitle: "Look & feel",
@@ -175,6 +177,22 @@ export const DEV = {
   themesLabel: "Theme",
   /** The page stays English whatever the UI language: the English theme and phase names. */
   themeNames: en.themes.names,
+  rewardThemesLabel: "Collection themes (beta) · sample",
+  rewardThemesHint: "Shows the theme on screen whatever its lock state; never saved and never unlocks anything.",
+  /** English names of the beta collection themes (ADR-024); the product names live in the locale files. */
+  rewardThemeNames: {
+    underwater: "Underwater",
+    rainyWindow: "Rainy window",
+    forestCabin: "Forest cabin",
+    sakuraNight: "Sakura night",
+    newYear: "New Year",
+    valentines: "Valentine's",
+    easter: "Easter",
+    summer: "Summer",
+    halloween: "Halloween",
+    christmas: "Christmas",
+  } satisfies Record<RewardTheme, string>,
+  rewardThemeStop: "Stop theme preview",
   phaseNames: en.phase,
   languagesPick: "Language",
   systemLanguage: "System",
@@ -394,6 +412,8 @@ export const DEV_REWARDS = {
     { kind: "earlyStop", label: "Early stop" },
     { kind: "goalDone", label: "Goal done “Tak”" },
     { kind: "sticker", label: "Sticker unlocked" },
+    { kind: "unlockHalloween", label: "Unlock · Halloween (theme + sound)" },
+    { kind: "unlockUnderwater", label: "Unlock · Underwater (theme)" },
   ] as const satisfies readonly { kind: RewardMomentSample; label: string }[],
   statusLabel: "Status samples",
   statuses: [
@@ -425,4 +445,60 @@ export const DEV_REWARDS = {
   levelAuto: "Use the setting",
   reduced: "Simulate reduced motion",
   intro: "Show intro card again",
+};
+
+/** Beta collection (ADR-024) on the Developer page: ambience samples and the sample month. English only. */
+export const DEV_COLLECTION = {
+  ambienceLabel: "Ambience (beta) · sample",
+  ambienceHint: (secs: number) =>
+    `Plays one layer alone for ${secs} s or until "Stop ambience", whatever its lock state and the beta switch; never writes the config. Moderate volume.`,
+  /** English layer names (the product names live in the locale files). */
+  layerNames: {
+    rain: "Rain",
+    wind: "Wind",
+    thunder: "Thunder",
+    cafe: "Café",
+    fireplace: "Fireplace",
+    forest: "Forest & crickets",
+    ocean: "Ocean",
+    spookyNight: "Spooky night",
+    winterCottage: "Winter cottage",
+  } satisfies Record<AmbienceLayer, string>,
+  stop: "Stop ambience",
+  oneShotsLabel: "Spooky night · one-shots",
+  oneShots: { owl: "Owl", creak: "Creak", thunder: "Distant thunder" } satisfies Record<SpookyOneShot, string>,
+  sampleName: "ambience",
+  monthLabel: "Collection · sample month",
+  monthHint:
+    "Shows Settings → Wygląd → Kolekcja as in that month (level 4, best streak 5: Underwater unlocked, the open seasonal window at 2/3, the others with their windows). A view only: nothing unlocks.",
+  monthPick: "Month",
+  monthShow: "Show the collection",
+  months: [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ],
+  monthSent: (month: string, year: number) => `collection sample: ${month} ${year}`,
+};
+
+/** "Presentation mode" (Session card): demo timings + the showcase (`$lib/state/presentation.svelte`), English only. */
+export const DEV_PRESENTATION = {
+  label: "Presentation mode — demo timings + showcase data",
+  hint: (focusSecs: number, breakSecs: number) =>
+    `For a live demo: ${focusSecs} s focus / ${breakSecs} s break, an 8-hour workday in Podsumowanie, three weeks of history, the weekly stats, “Co dalej?” and the beta rewards primed so the first block and break show the Start float, a step, the daily goal, the streak, a level up and a pearl. Also hides the Developer tab (Ctrl+Shift+D brings it back) and opens Skupienie. Memory only: nothing is saved or sent; switching it off (or a restart) brings your real data back.`,
+  pending: "The demo timings start with the next Start; the running session keeps its lengths. The showcase data shows now.",
+  launched: "Started with --presentation: developer mode is on for this run only.",
+  now: (on: boolean) => (on ? "Presentation mode on: the showcase shows." : "Presentation mode off: your real data shows again."),
+  nextStart: (on: boolean) =>
+    `Presentation mode ${on ? "on" : "off"}: the showcase ${on ? "shows" : "is gone"} now; the timings change at the next Start.`,
+  name: "presentation mode",
 };

@@ -1,0 +1,87 @@
+/*
+ * Valentine's (beta collection, ADR-024): a pink-violet dusk over soft hills, with hearts drifting up.
+ * The accent is rose; --danger is a warm apricot so it never reads as the accent.
+ *
+ * Contrast (WCAG 2.x, measured on these tokens; --surface composited over --bg-1):
+ *   --text       on surface-solid 15.4 · surface-raised 14.2 · bg-1 16.4 · surface 15.7
+ *   --text-2     on surface-solid 11.7 · surface-raised 10.7 · bg-1 12.4 · surface 11.8
+ *   --text-muted on surface-solid 6.8 · surface-raised 6.3 · bg-1 7.2 · surface 6.9
+ *   --accent-ink on --accent 8.6 · --break-ink on --break 9.8 · --danger on surface-solid 9.1
+ *   on surface: --reward-ink 12.5 · --reward 12.5 · --bubble 10.9 · confetti ≥ 8.5
+ *   --quiet-mark on surface-solid 3.5 · --focus-ring on bg-0 15.3
+ */
+
+:root[data-theme="valentines"],
+[data-theme="valentines"]:not(:root) {
+  color-scheme: dark;
+
+  --bg-0: #140a19;
+  --bg-1: #211029;
+  --glow-warm: #5b2443;
+  --glow-cool: #2a1a46;
+
+  --surface: rgba(41, 20, 46, 0.84);
+  --surface-solid: #29152f;
+  --surface-raised: #331a3a;
+  --surface-inset: rgba(255, 222, 236, 0.05);
+  --surface-hover: rgba(255, 222, 236, 0.1);
+  --border: rgba(255, 196, 220, 0.12);
+  --border-strong: rgba(255, 196, 220, 0.26);
+  --border-hover: rgba(255, 196, 220, 0.38);
+
+  --text: #fff1f5;
+  --text-2: #ebcfdb;
+  --text-muted: #bd9bad;
+
+  --accent: #ff97ba;
+  --accent-strong: #ffb8d0;
+  --accent-soft: rgba(255, 151, 186, 0.16);
+  --accent-ink: #34091d;
+  --accent-line: rgba(255, 151, 186, 0.45);
+
+  --break: #98dcc6;
+  --break-strong: #b7e9d8;
+  --break-soft: rgba(152, 220, 198, 0.16);
+  --break-ink: #0b2a21;
+  --break-line: rgba(152, 220, 198, 0.45);
+
+  --danger: #ffaa7f;
+  --danger-soft: rgba(255, 170, 127, 0.14);
+  --danger-line: rgba(255, 170, 127, 0.45);
+  --ok: #98dcc6;
+  --muted-mark: #745879;
+
+  --focus-ring: #ffe2a6;
+
+  --track: rgba(255, 222, 236, 0.07);
+  --track-strong: rgba(255, 222, 236, 0.13);
+  --knob-fill: #fff7fa;
+  --scrim: rgba(12, 4, 14, 0.64);
+  --dock-bg: rgba(36, 17, 41, 0.94);
+  --shadow-color: rgba(10, 2, 12, 0.48);
+  --shadow-sm:
+    0 6px 16px rgba(10, 2, 12, 0.52),
+    0 1px 3px rgba(10, 2, 12, 0.42);
+  --logo-bg: rgba(255, 151, 186, 0.16);
+  --logo-moon: #ff97ba;
+  --logo-star: #ffe2a6;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23ebcfdb' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Beta rewards (ADR-022). */
+  --quiet-mark: #85698a;
+  --reward: #ffd68a;
+  --reward-ink: #ffd68a;
+  --bubble: #a9d2ff;
+  --confetti-1: #ffd68a;
+  --confetti-2: #a9d2ff;
+  --confetti-3: #ff97ba;
+  --confetti-4: #98dcc6;
+
+  /* Dusk: plum above, rose toward the hills (the scene draws the hills, clouds and hearts). */
+  --app-bg:
+    radial-gradient(1000px 420px at 72% 88%, rgba(255, 150, 160, 0.22) 0%, transparent 70%),
+    radial-gradient(900px 520px at 10% -10%, var(--glow-cool) 0%, transparent 65%),
+    linear-gradient(180deg, #170a1f 0%, #2a1236 38%, #4f1d4a 72%, #7a3456 92%, #8c4058 100%);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  --header-line: rgba(255, 196, 220, 0.1);
+}

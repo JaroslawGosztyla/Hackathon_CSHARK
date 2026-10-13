@@ -17,19 +17,83 @@
 
   interface Props {
     pose: PoseName;
-    /** What the axolotl says on this step; said again when it changes (e.g. a new language on the first step). */
-    line: string;
+    /**
+     * What Axi says on this step, one bubble after another (the next one shortly after the previous one is fully
+     * shown); said again from the first when they change (e.g. a new language on the first step).
+     */
+    lines: readonly string[];
+    /** Axi's recording for each bubble (same order as `lines`; empty = text only, see `voice.ts`). */
+    voices?: readonly string[];
+    /** Voice volume 0..1 (the app's sound volume). */
+    volume?: number;
   }
 
-  let { pose, line }: Props = $props();
+  let { pose, lines, voices = [], volume = 1 }: Props = $props();
+
+  /** Pause between a fully shown (and fully spoken) bubble and the next one of the same step. */
+  const NEXT_LINE_DELAY_MS = 900;
 
   // The controller only drives the speech's timing here (its mouth frames are never shown over a pose).
   const mascot = useMascot("main");
   const speech = useSpeech(mascot, { persist: true });
 
+  /** The bubble of `lines` shown now. */
+  let index = $state(0);
+  /** The recording of the current bubble has ended (or there is none, or it could not play). */
+  let voiceDone = $state(true);
+  let audio: HTMLAudioElement | null = null;
+
+  function stopVoice(): void {
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+    }
+    voiceDone = true;
+  }
+
+  function playVoice(url: string | undefined): void {
+    stopVoice();
+    if (!url || volume <= 0) return;
+    audio ??= new Audio();
+    const el = audio;
+    el.src = url;
+    el.volume = Math.min(1, Math.max(0, volume));
+    el.onended = () => (voiceDone = true);
+    el.onerror = () => (voiceDone = true);
+    voiceDone = false;
+    el.play().catch(() => (voiceDone = true));
+  }
+
+  /** Shows bubble `i` and plays its recording. */
+  function speak(i: number): void {
+    const text = lines[i];
+    if (text === undefined) return;
+    index = i;
+    speech.say({ text, urgent: true, tag: "onboarding" });
+    playVoice(voices[i]);
+  }
+
   $effect(() => {
-    const text = line;
-    untrack(() => speech.say({ text, urgent: true, tag: "onboarding" }));
+    void lines;
+    void voices;
+    untrack(() => speak(0));
+  });
+
+  // The next bubble follows once the current one is fully shown and spoken (a click on the bubble shows its text at
+  // once; the recording still plays to its end).
+  $effect(() => {
+    if (!speech.complete || !voiceDone) return;
+    if (lines[index + 1] === undefined) return;
+    const next = index + 1;
+    const timer = setTimeout(() => speak(next), NEXT_LINE_DELAY_MS);
+    return () => clearTimeout(timer);
+  });
+
+  // A new step, Skip or closing the wizard silences Axi at once.
+  $effect(() => () => {
+    stopVoice();
+    audio = null;
   });
 </script>
 

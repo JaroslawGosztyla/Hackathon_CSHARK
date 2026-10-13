@@ -1,4 +1,5 @@
-// Offline noise generator (WebAudio): looping stereo buffers of brown / pink / white noise.
+// Offline noise generator (WebAudio): looping stereo buffers of brown / pink / white noise (shared with the beta
+// ambience layers of `$lib/ambience` through `noiseBuffer`).
 import type { NoiseColor } from "$lib/types";
 
 const LOOP_SECONDS = 6;
@@ -79,7 +80,7 @@ function seamlessLoop(raw: Float32Array<ArrayBuffer>, loopLength: number, fadeLe
   return out;
 }
 
-function createNoiseBuffer(ctx: AudioContext, color: NoiseColor): AudioBuffer {
+function createNoiseBuffer(ctx: BaseAudioContext, color: NoiseColor): AudioBuffer {
   const loopLength = Math.floor(ctx.sampleRate * LOOP_SECONDS);
   const fadeLength = Math.floor(ctx.sampleRate * CROSSFADE_SECONDS);
   const buffer = ctx.createBuffer(2, loopLength, ctx.sampleRate);
@@ -87,6 +88,27 @@ function createNoiseBuffer(ctx: AudioContext, color: NoiseColor): AudioBuffer {
     const raw = generateChannel(color, loopLength + fadeLength);
     normalizeRms(raw);
     buffer.copyToChannel(seamlessLoop(raw, loopLength, fadeLength), channel);
+  }
+  return buffer;
+}
+
+/** Noise buffers per audio context, shared by the music's noise source and the beta ambience layers (ADR-024). */
+const sharedBuffers = new WeakMap<BaseAudioContext, Map<NoiseColor, AudioBuffer>>();
+
+/**
+ * A seamless 6 s stereo loop of `color` noise (RMS-normalised), rendered once per context and colour and shared by
+ * every user of that context. Loop it with `AudioBufferSourceNode.loop`.
+ */
+export function noiseBuffer(ctx: BaseAudioContext, color: NoiseColor): AudioBuffer {
+  let byColor = sharedBuffers.get(ctx);
+  if (!byColor) {
+    byColor = new Map();
+    sharedBuffers.set(ctx, byColor);
+  }
+  let buffer = byColor.get(color);
+  if (!buffer) {
+    buffer = createNoiseBuffer(ctx, color);
+    byColor.set(color, buffer);
   }
   return buffer;
 }
@@ -104,7 +126,6 @@ interface Voice {
 export class NoiseBackend {
   private master: GainNode | null = null;
   private voice: Voice | null = null;
-  private buffers = new Map<NoiseColor, AudioBuffer>();
   private color: NoiseColor = "brown";
   private volume = 0.6;
   private readonly events: NoiseEvents;
@@ -129,13 +150,8 @@ export class NoiseBackend {
     try {
       if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
       const master = this.ensureMaster(ctx);
-      let buffer = this.buffers.get(this.color);
-      if (!buffer) {
-        buffer = createNoiseBuffer(ctx, this.color);
-        this.buffers.set(this.color, buffer);
-      }
       const source = ctx.createBufferSource();
-      source.buffer = buffer;
+      source.buffer = noiseBuffer(ctx, this.color);
       source.loop = true;
       const fade = ctx.createGain();
       const now = ctx.currentTime;

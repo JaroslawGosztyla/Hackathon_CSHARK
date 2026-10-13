@@ -4,6 +4,7 @@ import * as api from "$lib/api";
 import type { SessionSummary } from "$lib/types";
 import { config } from "./config.svelte";
 import { isSampleId } from "./samples";
+import { showcaseMode } from "./showcaseMode.svelte";
 import { toasts } from "./toasts.svelte";
 
 export const HISTORY_LIMIT = 20;
@@ -72,6 +73,10 @@ class SummaryStore {
    * A developer-mode sample goes away: the app opens Podsumowanie for the session that just ended, not the sample.
    */
   add(summary: SessionSummary): void {
+    // Presentation showcase (ADR-019): a demo session is not stored or remembered by the shell either; the sample
+    // workday stays on stage and the real layer stays exactly as it was (also for a demo session that started on
+    // stage and ends after the showcase was switched off).
+    if (showcaseMode.shownOnly(summary.sessionId, summary.demo)) return;
     this.real.last = summary;
     this.sample = null;
     this.selectedId = null;

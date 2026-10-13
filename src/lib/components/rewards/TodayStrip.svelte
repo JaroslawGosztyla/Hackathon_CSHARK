@@ -4,6 +4,7 @@
   import { REST_EARN_EVERY } from "$lib/rewards/choreography";
   import { config } from "$lib/state/config.svelte";
   import { rewards } from "$lib/state/rewards.svelte";
+  import { showcaseMode } from "$lib/state/showcaseMode.svelte";
   import { strings } from "$lib/strings";
   import type { RewardsStatus } from "$lib/types";
   import BetaBadge from "./BetaBadge.svelte";
@@ -49,11 +50,12 @@
 <section class="card today-strip" aria-labelledby="{uid}-title">
   <div class="head">
     <h2 id="{uid}-title" class="title">{s.todayTitle}</h2>
-    {#if status.preview}<span class="badge demo">{s.demo}</span>{/if}
+    <!-- The presentation showcase must look like the real app on stage: no "demo" badge. -->
+    {#if status.preview && !showcaseMode.active}<span class="badge demo">{s.demo}</span>{/if}
     <BetaBadge />
     <span class="spacer"></span>
     <!-- The odds only while surprises are on (otherwise they would promise something that never comes). -->
-    {#if config.value?.rewards?.surprises !== false}
+    {#if showcaseMode.active || config.value?.rewards?.surprises !== false}
       <SurpriseOdds odds={status.odds} collection={status.collection} />
     {/if}
   </div>

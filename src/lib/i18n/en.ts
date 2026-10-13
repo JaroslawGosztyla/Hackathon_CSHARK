@@ -3,6 +3,7 @@
 // "FocusMode" is a name and is never translated; neither is the file name websiteblacklist.txt.
 import type { Strings } from "./pl";
 import { pluralizer } from "./plural";
+import { collectionEn } from "./collection/en";
 
 const plural = pluralizer("en");
 
@@ -656,9 +657,9 @@ export const en: Strings = {
   },
 
   mascot: {
-    setting: "Show the mascot (axolotl)",
+    setting: "Show Axi, the axolotl mascot",
     settingHint:
-      "An axolotl in headphones next to the clock, during breaks, in the summary and in the pop-ups when the phase changes. It shares good practices and break suggestions.",
+      "Axi, an axolotl in headphones, next to the clock, during breaks, in the summary and in the pop-ups when the phase changes. It shares good practices and break suggestions.",
     practiceLabel: "Good practice",
     nextUpLabel: "What's next?",
     startLines: [
@@ -679,7 +680,7 @@ export const en: Strings = {
     ],
     conflictHint: (subject: string) =>
       `A meeting falls during a break: ${subject}. Decide below what to do with it.`,
-    tickle: "Tickle the axolotl",
+    tickle: "Tickle Axi",
     tickleLines: [
       "Hey, that tickles!",
       "Hehe, stop it!",
@@ -1303,7 +1304,7 @@ export const en: Strings = {
         numbersOnly: "Numbers only",
       },
       celebrationsHint: "When your system asks for less motion, celebrations are always calm.",
-      companion: "The axolotl works alongside me",
+      companion: "Axi works alongside me",
       companionHint: "During focus it sits with its back to you, facing the same screen.",
       storage:
         "Progress stays on this computer (rewards.json): numbers and dates, no titles, steps or app names.",
@@ -1360,26 +1361,35 @@ export const en: Strings = {
       title: "Welcome to FocusMode",
       lead:
         "Set your times and music, press Start, and FocusMode takes you through focus and breaks until you press Stop. Let's start with the language.",
-      line: "Hi! Let me show you around. It takes a minute.",
+      lines: [
+        "Hey! Nice to meet you! I'm Axi! And this is FocusMode!",
+        "I'll help you set everything up just the way you like it, it'll only take a moment!",
+      ],
       languageLabel: "App language",
     },
     music: {
       title: "What should play?",
       lead:
         "By default the built-in Open Lo-Fi plays, even offline. You can also pick a stream, your own links, a music folder, noise or silence.",
-      line: "Something in the background? The music keeps playing in breaks too.",
+      lines: [
+        "Here you can choose whether to listen to my music, or maybe you prefer a stream or a playlist? There is also noise, or working without music.",
+      ],
     },
     shields: {
       title: "Shields for focus time",
       lead:
         "During focus FocusMode can keep distractions away. In breaks and after Stop everything goes back to normal.",
-      line: "Pick what should protect you. The shields come down in breaks.",
+      lines: [
+        "Now choose whether I should help you stay focused on your work. I can make sure you don't doomscroll TikTok, or I'll close Steam for you if you want.",
+      ],
       teamsLater: "Connect your Microsoft account later in Settings, under the shields.",
     },
     extras: {
       title: "A few extras",
       lead: "Everything here is optional, and you can change any of it later in Settings.",
-      line: "All set! Start is waiting whenever you are.",
+      lines: [
+        "All set, let's get started! Good luck with your work!",
+      ],
       tintHint:
         "Warmer screen colours in the evening. Off by default: set the hours and strength in Settings.",
       connectTitle: "Calendar and work tools",
@@ -1543,7 +1553,13 @@ export const en: Strings = {
     "work.jiraEmail": "Jira account email",
     "work.azureOrg": "Azure DevOps organization",
     appCategories: "app labels",
+    rewardTheme: "collection theme",
+    "ambience.volume": "background sound volume",
+    "ambience.layers": "background sounds",
   },
+
+  /** Beta collection (ADR-024): collection themes, background sounds, the mixer; texts in `./collection/en.ts`. */
+  collection: collectionEn,
 
   dialog: {
     cancel: "Cancel",

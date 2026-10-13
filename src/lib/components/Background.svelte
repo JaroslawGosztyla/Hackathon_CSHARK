@@ -5,14 +5,15 @@
   // Developer tab, ADR-019): `steps` (tabs − 1) only divides it, so the scene never shows its edge or resizes.
   // Static when the user prefers reduced motion.
   import type { Component } from "svelte";
-  import type { Theme } from "$lib/themes";
+  import { isTheme, type Theme, type ThemeId } from "$lib/themes";
+  import { REWARD_SCENES } from "$lib/themes/scenes";
   import Autumn from "./backgrounds/Autumn.svelte";
   import Lunar from "./backgrounds/Lunar.svelte";
   import Midnight from "./backgrounds/Midnight.svelte";
   import Pixel from "./backgrounds/Pixel.svelte";
   import Vaporwave from "./backgrounds/Vaporwave.svelte";
 
-  let { theme, pan = 0, steps = 2 }: { theme: Theme; pan?: number; steps?: number } = $props();
+  let { theme, pan = 0, steps = 2 }: { theme: ThemeId; pan?: number; steps?: number } = $props();
 
   /** At least one step (a single tab never pans), and the pan never runs past the last step. */
   const stepCount = $derived(Math.max(1, Math.trunc(steps)));
@@ -29,7 +30,8 @@
     pixel: Pixel,
   };
 
-  const Scene = $derived(SCENES[theme]);
+  /** A beta collection theme (ADR-024) brings its own scene from its folder (`$lib/themes/scenes`). */
+  const Scene = $derived(isTheme(theme) ? SCENES[theme] : (REWARD_SCENES[theme] ?? null));
 </script>
 
 <div class="backdrop" aria-hidden="true" style:--pan={panSteps} style:--pan-steps={stepCount}>

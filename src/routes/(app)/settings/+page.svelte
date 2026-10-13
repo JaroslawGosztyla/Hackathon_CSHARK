@@ -21,6 +21,7 @@
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
+  import { showcaseMode } from "$lib/state/showcaseMode.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
   import {
     isUiLanguage,
@@ -107,7 +108,7 @@
     </p>
   </div>
 
-  {#if session.snapshot.demo}
+  {#if session.snapshot.demo && !showcaseMode.active}
     <p class="badge demo">{strings.settings.demoNote}</p>
   {/if}
 
