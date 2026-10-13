@@ -360,6 +360,32 @@ Gdy FocusMode już działa (np. w zasobniku), `focusmode.exe --demo` nie urucham
 i pokazuje jej okno, o ile nie trwa sesja. W trakcie sesji (także w pauzie) pojawi się powiadomienie „Zatrzymaj sesję, aby włączyć tryb prezentacji”.
 Tryb demo zostaje do zamknięcia aplikacji; zwykłe czasy wracają po ponownym uruchomieniu bez `--demo`. `FOCUSMODE_DEMO=1` działa tylko przy pierwszym uruchomieniu.
 
+## Tryb prezentacji (pokaz na żywo)
+
+Na krótki pokaz (np. 3 minuty na finale): czasy demo **40 s / 20 s** i **dane pokazowe**, żeby aplikacja wyglądała jak używana od tygodni:
+w Podsumowaniu ośmiogodzinny dzień pracy (Visual Studio Code, Teams, Chrome, Opera GX, Claude, Discord, Terminal, Figma, Outlook, Spotify,
+Eksplorator, z tytułami okien w podpowiedziach), około trzech tygodni historii, statystyki tygodnia i mapy cieplne (z etykietami aplikacji),
+„Co dalej?” i cel sesji oraz nagrody beta przygotowane na żywe momenty: poziom 8 (pasek w 85%), seria 12 dni, a pierwszy blok demo i przerwa
+pokazują +12 za Start, +3 za krok, a w przerwie cel dnia, serię 13, awans na poziom 9 i co najmniej perłę (w październiku także motyw Halloween).
+Nagrody beta pokazują się także przy wyłączonych funkcjach beta (tylko w pamięci, ustawienie się nie zmienia). Nie ma znaczka „demo”,
+a karta Deweloper się chowa (Ctrl+Shift+D ją przywraca).
+
+```powershell
+# zainstalowana aplikacja (np. skrót na pulpicie)
+& "$env:LOCALAPPDATA\FocusMode\focusmode.exe" --presentation
+
+# dev (PowerShell)
+$env:FOCUSMODE_PRESENTATION=1; npm run tauri dev
+```
+
+W bashu: `FOCUSMODE_PRESENTATION=1 npm run tauri dev`. Z `just`: `just presentation`. Ten sam tryb włącza przełącznik
+„Presentation mode — demo timings + showcase data” na stronie Deweloper (tryb dewelopera). `--presentation` włącza tryb dewelopera tylko na to
+uruchomienie (ustawienie się nie zmienia). Gdy FocusMode już działa, `focusmode.exe --presentation` przełącza działającą aplikację
+(czasy demo od następnego Startu, jeśli trwa sesja).
+
+Wszystko żyje tylko w pamięci: `config.json`, `history.jsonl` i `rewards.json` zostają bez zmian (sesje demo z pokazu się nie zapisują),
+nic nie wychodzi z komputera. Wyłączenie przełącznika albo ponowne uruchomienie przywraca prawdziwe dane; Stop, Pomiń i Pauza działają zawsze.
+
 ## Muzyka w zestawie i licencje
 
 Domyślna muzyka to 12 utworów z kolekcji **Open Lo-Fi** autorstwa btahir (<https://github.com/btahir/open-lofi>, wydanie v1.0.0),
@@ -495,13 +521,14 @@ Potem:
 npm install                          # na VM: przy „Assertion failed … loop->time” usuń node_modules i powtórz
 npm run tauri dev                    # aplikacja w trybie dev
 FOCUSMODE_DEMO=1 npm run tauri dev   # tryb demo (PowerShell: $env:FOCUSMODE_DEMO=1; npm run tauri dev)
+FOCUSMODE_PRESENTATION=1 npm run tauri dev   # tryb prezentacji: demo + dane pokazowe (zainstalowana: focusmode.exe --presentation)
 cargo test --workspace --locked      # testy Rust; regeneruje też bindingi TS w src/lib/bindings/
 cargo clippy --workspace --all-targets -- -D warnings
 npm run check                        # svelte-check / TypeScript
 npm run tauri build                  # instalator NSIS → target/release/bundle/nsis/FocusMode_0.1.0_x64-setup.exe
 ```
 
-Z [`just`](https://github.com/casey/just): `just dev`, `just demo`, `just check`, `just build` (lista: `just`).
+Z [`just`](https://github.com/casey/just): `just dev`, `just demo`, `just presentation`, `just check`, `just build` (lista: `just`).
 W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w jego kodzie kliknij „Odśwież” na stronie rozszerzeń.
 
 | Katalog | Zawartość |

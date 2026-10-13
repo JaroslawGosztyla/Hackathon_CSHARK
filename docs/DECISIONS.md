@@ -1457,6 +1457,17 @@ z dużą liczbą przycisków wywołujących okienka i inne efekty.
 - *Uzupełnienie 2026-10-13 (prośba właściciela):* `DevAction` ma też `presentationMode { on }` (profil demo z `--demo` w działającym procesie,
   bez zapisu; w trakcie sesji od następnego Startu) i `factoryReset` (ścieżka „Usuń wszystko” z ADR-020, potem `config.json` i restart
   jak po świeżej instalacji; poza folderami aplikacji nic). Szczegóły: ARCHITECTURE §6.11.
+- *Uzupełnienie 2026-10-13 (finał hackathonu, prośba właściciela):* „Presentation mode” to czasy demo **i pokaz** (bez zmiany kontraktu:
+  ten sam `presentationMode { on }`). Powłoka (`src-tauri/src/showcase.rs`): zasiany podgląd nagród (poziom 8 w 85%, seria 12/21, bank 2/3,
+  cel dnia 10/30, pełny licznik litości, kolekcja ADR-024 z sezonem o jeden dzień celu przed motywem), trzymany przez kolejne Starty; reguły
+  bety dla podglądu, faktów demo, kroków i linii nagród w okienkach (w pamięci, `Config` bez zmian); sesja demo w trakcie pokazu się nie zapisuje
+  (`history.jsonl`, ostatnie podsumowanie), także gdy kończy się już po wyłączeniu pokazu; fakty prawdziwych sesji zostają przy prawdziwych
+  regułach. Motyw z kolekcji pokazu („Wypróbuj”, Ustawienia → Kolekcja) jest tylko podglądem, nie trafia do `Config.rewardTheme`. UI (`presentation.svelte.ts`,
+  `showcase.ts`): warstwy próbek (dzień pracy, ~3 tygodnie historii, 10 tygodni do statystyk tygodnia, „Co dalej?”, cel), beta liczona jako
+  włączona, bez znaczków „demo”, „Czyste zrzuty” i Skupienie. `--presentation` (albo `FOCUSMODE_PRESENTATION=1`) startuje w tym trybie z
+  trybem dewelopera tylko na to uruchomienie; o pokazie, który zaczęła powłoka, okno główne dowiaduje się ze wskazówki
+  `window.__FOCUSMODE_LAUNCH__` (dwie wartości logiczne, `eval` przy załadowaniu strony; poza kontraktem IPC, do przeniesienia w następnej
+  rundzie kontraktu). Nic z pokazu nie trafia do `config.json`, `history.jsonl` ani `rewards.json` (test w `rewards.rs`).
 
 **Co zmienia:**
 - ADR-014 pkt 5: strona Deweloper tylko po angielsku (pkt 3).
@@ -1828,3 +1839,80 @@ użytkownik widzi błąd pola (tak działa każdy zapis configu). Szczegóły: A
   w `TintStatus` tylko lokalnie, etykiety aplikacji tylko w configu.
 - CLAUDE.md (zastosowane w rundzie integracji): zakres „ADR-013 + ADR-014…023”; w Strukturze moduł słońca w `focus-core`, statystyki tygodnia
   w `stats.rs` i `weekly.rs`, inteligentne przerwy, kreator w `src/lib/components/onboarding/`, sekcja tygodnia w `src/lib/components/week/`.
+
+## ADR-024: Kolekcja beta: motywy i dźwięki tła do odblokowania
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu), funkcja w becie. Wdrożone: kontrakt IPC (`/sync-contract`, R24-00): typy w `api.rs`,
+pola configu z wartościami domyślnymi i walidacją, katalog z regułami, oknami sezonów i Wielkanocą (`crates/focus-core/src/unlocks.rs`, z testami),
+rusztowanie UI (`src/lib/themes/catalog.ts`, `scenes.ts`, `Background`, motyw na ekranie w obu oknach, podgląd motywów
+na stronie Deweloper); część A (rdzeń i powłoka): rekordy w `rewards.json`, ocena odblokowań i dni sezonów, prawdziwy widok kolekcji, odblokowania
+w momentach, ciche nadrabianie przy wczytaniu i po włączeniu nagród, odrzucanie zablokowanego `rewardTheme`, czyszczenie go przy „Zacznij od nowa”
+i usunięciu nagród w panelu prywatności (z testami). Pozostałe części: B (motywy Halloween, Święta, Wielkanoc, Podwodny dom), C (Nowy Rok,
+Walentynki, Lato, Deszczowe okno, Leśna chatka, Noc sakury), D (silnik dźwięków tła, mikser, kolekcja w wyborze motywu, momenty odblokowania).
+Szczegóły kontraktu i przykłady JSON: ARCHITECTURE §6.16.
+
+**Kontekst:** prośba właściciela: beta ma zamieniać motywy i dźwięki tła w nagrody za korzystanie z aplikacji i za serie; motywy świąteczne
+(Halloween, Wielkanoc, Boże Narodzenie i podobne) do zdobycia tylko w swoim miesiącu (teraz, w październiku: Halloween z dyniami, strachem na wróble,
+nietoperzami i upiornymi dźwiękami); bez bety żadnych dodatkowych skórek; wyłączenie bety nie może kasować postępu.
+
+**Opcje (co jest nagrodą):**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Zamknąć część istniejących motywów za nagrody | mniej grafiki do zrobienia | beta zabiera coś, co było darmowe; odrzucone |
+| **Nowe motywy i warstwy dźwięku tylko w becie, zdobywane poziomem, najdłuższą serią albo celem dnia w oknie sezonu; zdobyte zostają na zawsze** | nic nie znika; warunki łagodne i jawne; sezon raz w roku | 10 motywów i 9 warstw dźwięku do zrobienia; teksty w 10 językach |
+| Sklep za iskierki | wybór użytkownika | waluta do wydawania (ADR-022 odrzucił); odrzucone |
+| Losowane motywy | emocje | wzorzec hazardowy (ADR-022 pkt 6); odrzucone |
+
+**Opcje (jak zapisać wybrany motyw z kolekcji):**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Nowe warianty `Theme` | jedno pole | starsza wersja nie wczyta configu z nowym motywem (cały plik „uszkodzony”), brak „ostatniego motywu podstawowego”, każda mapa `Record<Theme, …>` w UI do zmiany |
+| **Osobne pole `Config.rewardTheme` obok `theme`** | `theme` zawsze jest motywem podstawowym (bez bety i jako zapas); starsze wersje ignorują nieznane pole; istniejący kod bez zmian | motyw na ekranie liczy się z dwóch pól (`effectiveTheme`) |
+
+**Decyzja:**
+1. **Siedem motywów podstawowych zostaje darmowych dla wszystkich.** Beta dokłada kolekcję: 10 motywów (`RewardTheme`) i 9 warstw dźwięku tła
+   (`AmbienceLayer`). Bez bety kolekcji nie widać i nic z niej nie działa: na ekranie jest `theme` (ostatni motyw podstawowy), dźwięki tła nie grają.
+   Po ponownym włączeniu bety wybrany motyw kolekcji wraca.
+2. **Warunki** (katalog `unlocks::THEME_RULES` / `AMBIENCE_RULES`, nazwane liczby): Podwodny dom — poziom 3; Deszczowe okno — najdłuższa seria 7;
+   Leśna chatka — poziom 6; Noc sakury — najdłuższa seria 14; motywy sezonowe — cel dnia w 3 różne dni okna sezonu. Dźwięki: deszcz i wiatr od razu
+   w becie; burza — poziom 2; kawiarnia — poziom 4; kominek — najdłuższa seria 5; las i świerszcze — poziom 5; ocean — poziom 7; „Upiorna noc” razem
+   z Halloween, „Zimowa chatka” razem ze Świętami. Warunki są stanem, nie zdarzeniem: kto już ma poziom 6, dostaje Leśną chatkę przy najbliższym fakcie.
+3. **Sezony** (`unlocks::season_window`, dzień nagród od 04:00): Nowy Rok — styczeń, Walentynki — luty, Lato — lipiec, Halloween — październik,
+   Święta — grudzień, Wielkanoc — miesiąc zachodniej Niedzieli Wielkanocnej (anonimowy algorytm gregoriański, `easter_sunday`) rozciągnięty tak,
+   żeby sięgał co najmniej 7 dni przed i po niej (2024: 1.03–7.04, 2026: 29.03–30.04, 2027: 1.03–4.04, w pozostałych latach 2024–2030 kwiecień
+   albo 25.03–30.04). Okna się nie nakładają. Motyw sezonowy można zdobyć tylko w oknie; zdobyty zostaje na cały rok. Poza oknem karta mówi tylko,
+   kiedy będzie dostępny („Dostępny w październiku”), bez odliczania; w oknie pokazuje postęp („2/3 w tym październiku”).
+4. **Postęp nigdy nie znika przez wyłączenie bety albo nagród.** Odblokowania (id i dzień) i dni z celem w oknach sezonów leżą w `rewards.json`
+   obok księgi, jako tekst (nowszy plik wczyta się w starszej aplikacji). Czyści je tylko „Zacznij od nowa” i usunięcie pozycji `rewards` w panelu
+   prywatności (okno potwierdzenia mówi, że odblokowania też znikną); wtedy `rewardTheme` wraca do `null`. Dni z wyłączonymi nagrodami nie dają
+   postępu (jak dla serii). Podgląd demo i próbki ze strony Deweloper nigdy niczego nie odblokowują.
+5. **Moment odblokowania** to osiągnięcie jak naklejka („skupienie jest święte”, ADR-022 pkt 7): w focusie czeka, pokazuje się w podsumowaniu
+   przerwy albo po Stop (kafelek podglądu, „Nowy motyw: Halloween”, poza `06-amazed-sparkles`). Nigdy okienko poza sesją. Bez nowego `MomentKind`:
+   moment niesie `unlockedThemes` / `unlockedAmbiences`.
+6. **Wybór motywu:** motywy podstawowe jak dziś, a przy becie „Kolekcja”: karta zablokowana to pusta karta z „?” i warunkiem (bez przyciemnionej
+   sylwetki grafiki), odblokowana to żywy kafelek. Wybór motywu podstawowego czyści `rewardTheme`, wybór z kolekcji ustawia `rewardTheme`
+   (a `theme` zostaje). Powłoka nie zapisze motywu, który nie jest odblokowany (`config.invalid`, pole `rewardTheme`).
+7. **Grafika** własna projektu: SVG/CSS (sylwetki, płaska ilustracja), dopracowana w 960 × 640 i 1920 × 1080, animacje tylko `transform` / `opacity`,
+   statycznie przy ograniczonym ruchu; każdy motyw ma pełny zestaw tokenów (tekst ≥ 4,5:1, tokeny nagród, `--quiet-mark`), działa z maskotką
+   i okienkami faz; bez wariantu 8-bit. Halloween łagodny (bez krwi i straszenia). Każdy motyw we własnym folderze `src/lib/themes/<id>/`.
+8. **Dźwięki tła** syntetyzowane w WebAudio w oknie głównym (szum, filtry, obwiednie, proste oscylatory / FM), jeden `AudioContext`, wspólne bufory
+   szumu, limiter na wyjściu, bez plików audio. Grają razem z muzyką (te same zasady „kto włączył muzykę” co odtwarzacz) albo same po starcie
+   w mikserze; nigdy same przy starcie aplikacji. Bez nagłych, głośnych dźwięków: zdarzenia „Upiornej nocy” są rzadkie i ciche.
+9. **Kontrakt (R24-00):** pola `Config.rewardTheme` (`RewardTheme | null`) i `Config.ambience` (`AmbienceConfig { enabled, volume, layers:
+   AmbienceMix[] }`), `RewardsStatus.unlocks` (`UnlocksView { themes: ThemeUnlock[], ambiences: AmbienceUnlock[] }` ze stanem `UnlockState`,
+   regułą `UnlockRule`, postępem `UnlockProgress` i oknem `SeasonWindow`), `RewardMoment.unlockedThemes` / `unlockedAmbiences`; enumy `RewardTheme`,
+   `AmbienceLayer`, `Season`. Wszystkie z `serde(default)`. Bez nowych komend i eventów.
+
+**Konsekwencje:**
+- Stary `config.json` wczytuje się bez zmian zachowania (bez motywu kolekcji, dźwięki tła wyłączone). Bez bety aplikacja wygląda i brzmi jak przed ADR-024.
+- Okienko faz czyta `get_rewards` (tylko do odczytu), żeby pokazać ten sam motyw co okno główne.
+- `rewards.json` dostaje pola `unlocks` i `seasons` (tylko id, numery dni i lata).
+- Nowe teksty w 10 językach (nazwy, warunki, okna, mikser, moment) i 10 motywów z pełnymi tokenami.
+
+**Co zmienia:**
+- ADR-022: nowe osiągnięcie (odblokowanie) w momentach; „Zacznij od nowa” i usunięcie w panelu prywatności czyszczą też kolekcję.
+- ADR-015 (motywy): motyw na ekranie liczy się z `theme` i `rewardTheme`; motywy kolekcji w osobnych folderach.
+- ADR-019: strona Deweloper pokazuje każdy motyw i dźwięk kolekcji jako próbkę (bez odblokowania) i próbkę karty sezonowej w wybranym miesiącu.
+- ADR-020: pozycja `rewards` obejmuje kolekcję.
+- CLAUDE.md (po wdrożeniu): zakres „ADR-013 + ADR-014…024”; w Strukturze `unlocks.rs`, `src/lib/themes/<id>/`, `src/lib/ambience/`.

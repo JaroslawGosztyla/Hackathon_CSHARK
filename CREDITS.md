@@ -37,6 +37,9 @@ Zasoby dołączone do FocusMode (CLAUDE.md, zasada 10). Każdy nowy plik muzyki,
 
 - Dzwonki (wszystkie pakiety) są syntezowane w kodzie (`crates/focus-audio`) — bez plików z zewnątrz.
 - Własne dźwięki użytkownika są kopiowane do jego folderu danych aplikacji i nie trafiają do repozytorium.
+- **Głos Axi** w kreatorze pierwszego uruchomienia (`static/voice/pl/axi-setup-01…05.mp3`, tylko po polsku): nagrania przygotowane
+  przez właściciela projektu (Bartłomiej Szolc) generatorem głosu AI, własność projektu. Przed publikacją poza hackathonem
+  sprawdzić, czy warunki użytego narzędzia pozwalają dystrybuować nagrania w aplikacji.
 
 ## Teksty
 

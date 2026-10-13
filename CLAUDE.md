@@ -101,6 +101,7 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
 - `static/mascot/` — atlasy WebP i manifesty klatek maskotki (generowane z `art/mascot/` narzędziem `tools/mascot/`, nie edytuj ręcznie).
   `art/mascot/` — arkusze źródłowe właściciela + README (jak powstały klatki). `tools/mascot/` — powtarzalne cięcie arkuszy
   (Node + Edge headless; Real-ESRGAN tylko do przygotowania grafiki); nic z `art/` ani `tools/` nie trafia do aplikacji.
+- `static/voice/` — nagrania głosu Axi (kreator pierwszego uruchomienia, na razie tylko `pl/`; mapa plików w `src/lib/components/onboarding/voice.ts`; Git LFS).
 - `browser-extension/` — rozszerzenie MV3 (Chrome/Edge/Brave/Opera/Vivaldi): odpytuje most i przekierowuje rozpraszające strony na `blocked.html`.
   Trafia do instalatora jako zasób (`bundle.resources`).
 
@@ -110,6 +111,7 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
 npm install                          # raz, po sklonowaniu
 npm run tauri dev                    # uruchom aplikację (dev)
 FOCUSMODE_DEMO=1 npm run tauri dev   # tryb demo (dev): 40 s focus, przerwa 20 s  (PowerShell: $env:FOCUSMODE_DEMO=1; npm run tauri dev)
+FOCUSMODE_PRESENTATION=1 npm run tauri dev   # tryb prezentacji: demo + dane pokazowe, tryb dewelopera na to uruchomienie (zainstalowana: focusmode.exe --presentation; just presentation)
                                      # zainstalowana aplikacja: focusmode.exe --demo (przy działającej w Idle: przełącza ją w demo)
 cargo test --workspace --locked      # testy Rust (generuje też bindingi TS)
 cargo test -p focus-core             # tylko core + regeneracja src/lib/bindings/

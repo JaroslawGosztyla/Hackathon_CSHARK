@@ -628,3 +628,20 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   `Copy`; `PlanKey` w aktorze też nie; nowe `ActorCmd::SetSmartMeetings`, `CalendarCmd::SetSmartOptOut`; `StoredChoices.optOuts` (serde default, pomijane,
   gdy puste); `SessionPlan::breaks` jest teraz tylko testowe (plan idzie przez `smart_plan`). Usunięty pomocnik `not_implemented` w `commands.rs`
   (żadna komenda ADR-023 już go nie używa). Proszę o review `fit_break` i `Active::refit_smart`.
+- [2026-10-13] (B→A) Kontrakt ADR-024 (kolekcja beta: motywy i dźwięki tła do odblokowania, R24-00). Nowe DTO w `api.rs`: `RewardTheme`, `AmbienceLayer`,
+  `Season`, `AmbienceConfig`, `AmbienceMix`, `UnlockRule`, `UnlockState`, `UnlockProgress`, `SeasonWindow`, `ThemeUnlock`, `AmbienceUnlock`, `UnlocksView`;
+  pola `Config.rewardTheme` / `ambience`, `RewardsStatus.unlocks`, `RewardMoment.unlockedThemes` / `unlockedAmbiences` (wszystkie `serde(default)`);
+  nowy moduł `focus-core/src/unlocks.rs` (katalog z regułami, `easter_sunday`, `season_window`, `window_month`, `view_stub`). Bez nowych komend i eventów.
+  Do zrobienia w części A: pola księgi `unlocks` / `seasons` w `rewards.json` (id jako tekst), ocena odblokowań przy każdym fakcie (nie w podglądzie),
+  prawdziwy widok zamiast `view_stub`, momenty z odblokowaniami, odrzucenie zablokowanego `rewardTheme` w `update_config` i `rewardTheme = null` po
+  `reset_rewards` / usunięciu `rewards` w panelu prywatności. UI: motyw na ekranie liczy `effectiveTheme` (`src/lib/themes/catalog.ts`) w obu oknach;
+  okienko `popup` czyta `get_rewards` tylko do odczytu.
+- [2026-10-13] (B→A) ADR-024 część A (rdzeń + powłoka) wdrożona, kontrakt bez zmian. Rdzeń: `Ledger.unlocks` / `seasons` (`UnlockRecord`,
+  `SeasonProgress`, `MAX_UNLOCK_RECORDS`, `MAX_SEASON_RECORDS`), w `unlocks.rs`: `Unlockable`, `key` / `parse_key`, `season_on`, `window_view`,
+  `record_goal_day`, `evaluate`, `view(ledger, today, level)` (poziom pokazany w statusie, nie z sumy: w focusie nic nie wychodzi wcześniej),
+  `check_reward_theme`, `normalize`; `view_stub` usunięty. `rewards::catch_up(state, today) -> usize` (bez `rules`: powłoka woła ją tylko przy
+  włączonych nagrodach). Powłoka: nadrabianie przy wczytaniu, `RewardsHandle::is_theme_unlocked`, `commands::clear_reward_theme` (reset i panel
+  prywatności). Dla części D: `reset_rewards` zwraca tylko status, więc po `rewards.reset()` UI powinno zrobić
+  `config.applyStored((c) => (c.rewardTheme = null))`, inaczej następny zapis configu z nieaktualnym motywem dostanie `config.invalid` (`rewardTheme`).
+  Pokaz (`showcase.rs`): księga pokazu idzie trybem `Preview`, który w rdzeniu (zgodnie ze specyfikacją) nigdy nie odblokowuje; odblokowanie
+  „na scenie” musi więc robić sam pokaz na swojej księdze w pamięci (publiczne `unlocks::evaluate` / `record_goal_day`), nigdy na prawdziwej.

@@ -262,7 +262,7 @@ config spoza zakresów → błąd walidacji.
 
 > Stan na 2026-10-13 (z ADR-020, panel prywatności, i ADR-021, logowanie do YouTube, oba wdrożone; ADR-022, funkcje beta: kontrakt z R-00,
 > rdzeń i usługa nagród w powłoce z R-01…R-05; ADR-023, wyjątki odcienia, inteligentne przerwy, statystyki tygodnia i kreator: wszystkie cztery
-> części wdrożone, §6.15),
+> części wdrożone, §6.15; ADR-024, kolekcja beta: motywy i dźwięki tła, kontrakt R24-00 i część A (rdzeń, powłoka), §6.16),
 > zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
@@ -293,7 +293,7 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `stop_session` | – | `()` | idempotentna, działa w każdej fazie |
 | `skip_phase` | – | `()` | Focus → Przerwa od razu, Przerwa → następny Focus od razu |
 | `get_config` | – | `Config` | |
-| `update_config` | `config: Config` | `Config` | znormalizowany, zwalidowany i zapisany |
+| `update_config` | `config: Config` | `Config` | znormalizowany, zwalidowany i zapisany; motyw z kolekcji (`rewardTheme`), który nie jest odblokowany, → `config.invalid` z polem `rewardTheme` (ADR-024, §6.16) |
 | `list_folder_tracks` | `path: string` | `Track[]` | skan folderu; znalezione pliki audio trafiają do scope asset protocol |
 | `get_shield_status` | – | `ShieldStatus` | |
 | `get_current_usage` | – | `UsageReport` | użycie aplikacji w trwającej sesji (puste w Idle) |
@@ -342,9 +342,9 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `get_youtube_account` | – | `YoutubeAccount` | stan zalogowania do YouTube we wspólnym profilu WebView2 (ADR-021, §6.13); tylko obecność ciasteczek, nigdy ich wartości. Gdy stan jest wciąż nieznany i nic nie sprawdza, uruchamia jeszcze jedno sprawdzenie (wynik jako `youtube://account`; „Sprawdź ponownie” w UI) |
 | `youtube_sign_in` | – | `()` | otwiera (albo aktywuje) widoczne okno logowania `youtube-login` ze stroną Google; zamyka się samo, gdy pojawią się ciasteczka logowania youtube.com. Postęp w `youtube://account` |
 | `youtube_sign_out` | – | `()` | usuwa ciasteczka google.com / youtube.com profilu WebView2 (ciasteczka zgody `SOCS` / `CONSENT` zostają) |
-| `get_rewards` | – | `RewardsStatus` | iskierki, cel dnia, poziom, seria, tydzień i niepotwierdzone momenty (funkcje beta, ADR-022, §6.14); okno główne |
+| `get_rewards` | – | `RewardsStatus` | iskierki, cel dnia, poziom, seria, tydzień, niepotwierdzone momenty (funkcje beta, ADR-022, §6.14) i kolekcja `unlocks` (ADR-024, §6.16); okno główne, okienko `popup` czyta tylko `unlocks` (motyw na ekranie) |
 | `ack_reward_moments` | `upTo: number` | `()` | usuwa z `pending` momenty o `id <= upTo` (zagrane albo pokazane); tylko okno główne, okienko `popup` nigdy nie potwierdza |
-| `reset_rewards` | – | `RewardsStatus` | „Zacznij od nowa”: nowa księga z nowym ziarnem, podgląd demo znika; historii sesji nie rusza. UI najpierw pyta |
+| `reset_rewards` | – | `RewardsStatus` | „Zacznij od nowa”: nowa księga z nowym ziarnem, podgląd demo znika, odblokowane motywy i dźwięki tła też (a `rewardTheme` wraca do `null`); historii sesji nie rusza. UI najpierw pyta |
 | `play_reward_sound` | `sound: RewardSound` | `()` | krótki dźwięk nagrody (`pop` / `sparkle` / `fanfare`); no-op, gdy nagrody są nieaktywne, dźwięki nagród wyłączone, `celebrations: numbersOnly` albo użytkownik prezentuje; czeka, aż skończy się dzwonek fazy |
 | `set_session_steps` | `steps: StepDraft[]` | `()` | zastępuje małe kroki nadchodzącej albo trwającej sesji (każda faza); `id` = istniejący krok (zachowuje `done`), `null` = nowy. Błędy: `stepsOff` (małe kroki wyłączone), `tooManySteps` (pole `steps`, więcej niż 5). Nowy plan przychodzi w `session://snapshot`. Tekstów kroków nikt nie loguje |
 | `set_step_done` | `id: number, done: boolean` | `()` | odhacza / odznacza krok (Focus albo Przerwa, także w pauzie); w Idle albo dla nieznanego `id` no-op; `stepsOff` przy wyłączonych krokach |
@@ -1197,7 +1197,7 @@ i `app_local_data_dir` (`%LOCALAPPDATA%\com.focusmode.app`: profil WebView2 `EBW
 |---|---|---|---|
 | `settings` | `config.json` + `config.json.bak` | – | nie pojedynczo; `delete_all_data` zapisuje `Config::default()` jak `update_config` i usuwa `.bak` |
 | `history` | `history.jsonl` (`includesTitles`, gdy któraś sesja ma tytuły okien) | sesje | jak `clear_history` (plik + ostatnie podsumowanie) |
-| `rewards` | `rewards.json` + `rewards.json.bak` i odłożone `rewards.unreadable-*.json` (funkcje beta, ADR-022): liczby, numery dni i id sesji, bez tekstów | dni (z `rewards.json`) | jak `reset_rewards` (nowa księga w pamięci), przez wątek zapisu nagród, więc żaden zaległy zapis nie przywróci pliku; usuwa też odłożone `rewards.unreadable-*.json`. Nowego pliku nie zapisuje: pozycja wraca dopiero z następną iskierką |
+| `rewards` | `rewards.json` + `rewards.json.bak` i odłożone `rewards.unreadable-*.json` (funkcje beta, ADR-022): liczby, numery dni i id sesji, bez tekstów; także kolekcja (ADR-024: stałe id odblokowań, numery dni, lata i nazwy sezonów) | dni (z `rewards.json`) | jak `reset_rewards` (nowa księga w pamięci, odblokowania też znikają, `rewardTheme` wraca do `null`), przez wątek zapisu nagród, więc żaden zaległy zapis nie przywróci pliku; usuwa też odłożone `rewards.unreadable-*.json`. Nowego pliku nie zapisuje: pozycja wraca dopiero z następną iskierką |
 | `meetingChoices` | `meeting-choices.json` (id spotkań i wybory, bez tematów) | wybory | plik + wybory w pamięci modułu kalendarzy (blokady spotkań znikają z planu) |
 | `workSeen` | `work-seen.json` (id pozycji, bez tytułów) | id | plik + pamięć modułu „Co dalej?”; bieżące pozycje trafiają do znanych (`Announcer::remember`), więc nie wracają jako okienko `workDigest`, a na liście są „nowe”, dopóki użytkownik jej nie obejrzy (wtedy plik wraca) |
 | `microsoftToken` | `teams-token.bin` (DPAPI): logowanie Microsoft dla Teams i kalendarza | – | jak `teams_disconnect` (status Teams przywrócony wcześniej przez Stop) |
@@ -1660,6 +1660,114 @@ z „boing” z łaskotania (`mascot-boing` w `app.css`) i zdanie kroku w dymku 
 
 `HistoryChanged`: `{ "revision": 13 }`. `SunCity`: `{ "id": "pl-warszawa", "name": "Warszawa", "country": "PL", "latitude": 52.2297, "longitude": 21.0122 }`.
 `SessionSummary`, tylko pole dodane przez ADR-023 (znika z JSON-a, gdy puste): `{ "focusSpans": [ { "startMs": 1760342400000, "endMs": 1760345100000 } ] }`.
+
+### 6.16 Kolekcja beta: motywy i dźwięki tła do odblokowania (ADR-024)
+
+**Stan: kontrakt (R24-00) i część A (rdzeń + powłoka).** Typy, pola configu z wartościami domyślnymi i walidacją, katalog (`focus-core/src/unlocks.rs`:
+reguły, okna sezonów, Wielkanoc), pola momentu i statusu oraz rusztowanie UI (`src/lib/themes/catalog.ts`, `scenes.ts`, `Background`, motyw na ekranie
+w obu oknach, podgląd motywów na stronie Deweloper). Część A: rekordy `unlocks` / `seasons` w `rewards.json`, ocena odblokowań przy każdym fakcie
+prawdziwej księgi (`unlocks::evaluate`, `unlocks::record_goal_day`), `RewardsStatus.unlocks` z `unlocks::view`, odblokowania w momentach, ciche
+nadrabianie (`rewards::catch_up` przy wczytaniu, `config_changed` po włączeniu nagród), `update_config` odrzuca zablokowany `rewardTheme`,
+„Zacznij od nowa” i usunięcie nagród w panelu prywatności zapisują `rewardTheme = null`. Grafika motywów, dźwięki tła i UI kolekcji to części B–D.
+Bez nowych komend i eventów: kolekcja jedzie w `RewardsStatus` (`get_rewards` + `rewards://changed`, ADR-012).
+
+```rust
+// Config (nowe pola; serde default, więc stary config.json się wczytuje)
+pub reward_theme: Option<RewardTheme>,   // motyw z kolekcji; domyślnie None; na ekranie tylko przy betaFeatures i odblokowanym motywie
+pub ambience: AmbienceConfig,            // mikser dźwięków tła (działa tylko przy betaFeatures)
+pub struct AmbienceConfig { pub enabled: bool /* false */, pub volume: f32 /* 0..=1, 0.6 */, pub layers: Vec<AmbienceMix> /* domyślnie [rain on 0.5] */ }
+pub struct AmbienceMix { pub layer: AmbienceLayer, pub on: bool, pub volume: f32 /* 0..=1 */ }
+// RewardTheme (kolejność katalogu = RewardTheme::ALL; nazwa = wartość data-theme = folder src/lib/themes/<nazwa>/):
+//   underwater | rainyWindow | forestCabin | sakuraNight | newYear | valentines | easter | summer | halloween | christmas
+// AmbienceLayer (AmbienceLayer::ALL): rain | wind | thunder | cafe | fireplace | forest | ocean | spookyNight | winterCottage
+// Season (Season::ALL): newYear | valentines | easter | summer | halloween | christmas
+pub enum UnlockRule {   // #[serde(tag = "type")]: { "type": "level", "level": 3 }
+    Free, Level { level: u32 }, BestStreak { days: u32 }, Seasonal { season: Season, goal_days: u32 }, WithTheme { theme: RewardTheme } }
+pub enum UnlockState { Free, Unlocked, AvailableNow, Locked }
+pub struct UnlockProgress { pub have: u32 /* ≤ need */, pub need: u32 }
+pub struct SeasonWindow { pub season: Season, pub start: String, pub end: String /* RRRR-MM-DD, włącznie */, pub open: bool,
+    pub month: Option<u32> /* 1..=12, gdy okno to dokładnie jeden miesiąc */ }
+pub struct ThemeUnlock { pub theme: RewardTheme, pub state: UnlockState, pub rule: UnlockRule, pub progress: Option<UnlockProgress>,
+    pub window: Option<SeasonWindow> /* tylko seasonal */, pub unlocked_on: Option<String> }
+pub struct AmbienceUnlock { pub layer: AmbienceLayer, pub state: UnlockState, pub rule: UnlockRule, pub progress: Option<UnlockProgress>,
+    pub unlocked_on: Option<String> }
+pub struct UnlocksView { pub themes: Vec<ThemeUnlock>, pub ambiences: Vec<AmbienceUnlock> }   // w kolejności katalogu
+// RewardsStatus: #[serde(default)] pub unlocks: UnlocksView
+// RewardMoment:  #[serde(default)] pub unlocked_themes: Vec<RewardTheme>, #[serde(default)] pub unlocked_ambiences: Vec<AmbienceLayer>
+```
+
+**Walidacja configu** (`AmbienceConfig::normalized`): `ambience.volume` i głośność każdej warstwy w 0..=1 (inaczej `config.invalid` z polem
+`ambience.volume` / `ambience.layers`), warstwy bez duplikatów (wygrywa pierwszy wpis) i w kolejności katalogu. Config nie wie, co jest odblokowane:
+zablokowana warstwa po prostu nie gra, a zablokowany `rewardTheme` odrzuca powłoka.
+
+**Katalog** (`unlocks::THEME_RULES`, `unlocks::AMBIENCE_RULES`, nazwane liczby, zasada 2). Motywy całoroczne: Podwodny dom — poziom 3,
+Deszczowe okno — najdłuższa seria 7, Leśna chatka — poziom 6, Noc sakury — najdłuższa seria 14. Sezonowe (cel dnia w `SEASON_GOAL_DAYS` = 3
+różne dni nagród w jednym oknie sezonu; zdobyte zostają na cały rok): Nowy Rok — styczeń, Walentynki — luty, Wielkanoc — okno wielkanocne,
+Lato — lipiec, Halloween — październik, Święta — grudzień. Dźwięki tła: deszcz i wiatr darmowe w becie, burza — poziom 2, kawiarnia — poziom 4,
+kominek — najdłuższa seria 5, las i świerszcze — poziom 5, ocean — poziom 7, „Upiorna noc” razem z motywem Halloween, „Zimowa chatka” razem
+z motywem Święta. **Okno wielkanocne** (`season_window`): miesiąc Niedzieli Wielkanocnej (zachodniej, `easter_sunday`, anonimowy algorytm
+gregoriański), rozciągnięty tak, żeby sięgał co najmniej `EASTER_MARGIN_DAYS` = 7 dni przed i po Niedzieli Wielkanocnej (2024: 1.03–7.04,
+2025: kwiecień, 2026: 29.03–30.04, 2027: 1.03–4.04, 2028: kwiecień, 2029: 25.03–30.04, 2030: kwiecień). Okna się nie nakładają (test 2024–2060).
+Dzień należy do okna według dnia nagród (zaczyna się o 04:00).
+
+**Zasady (część A):** odblokowania liczy czysta funkcja przy każdym fakcie (stan, nie zbocze: poziom z sumy iskierek, najdłuższa seria, dni z celem
+w otwartym oknie), idempotentnie; w podglądzie demo i w próbkach nigdy. Odblokowanie to osiągnięcie: w focusie czeka do przerwy albo Stop (moment
+`breakStart` / `sessionEnd` / `goalDone` / `update` niesie `unlockedThemes` / `unlockedAmbiences`), a status w focusie go nie zdradza. Wyłączenie
+bety albo nagród niczego nie kasuje: `rewards.json` trzyma odblokowania i postęp sezonów; czyści je tylko „Zacznij od nowa” i usunięcie pozycji
+`rewards` w panelu prywatności (wtedy też `rewardTheme = null`). Dni z wyłączonymi nagrodami nie dają postępu. `update_config` odrzuca
+nieodblokowany `rewardTheme` (`config.invalid`, pole `rewardTheme`).
+
+Szczegóły części A:
+- **Księga** (`rewards.json`, `LEDGER_VERSION` bez zmian): `unlocks: [{ id, day }]` (id z `unlocks::key`, np. `theme:halloween`, od najstarszego,
+  najwyżej `MAX_UNLOCK_RECORDS` = 64) i `seasons: [{ season, year, days }]` (jeden wpis na sezon, rok ostatniego okna, najwyżej 3 dni, najwyżej
+  `MAX_SEASON_RECORDS` = 16). `Ledger::normalize` usuwa duplikaty (zostaje najwcześniejszy dzień), dni spoza okna i puste wpisy; nieznane id
+  i sezony (z nowszej wersji) zostają w pliku i są pomijane.
+- **Ocena:** każde przejście prawdziwej księgi (`apply`, `goal_done`, `config_changed`) zapisuje dzień z celem w oknie sezonu (`record_goal_day`,
+  raz na dzień; nowy rok okna zastępuje stary wpis; nic po zdobyciu motywu) i na końcu odblokowuje wszystko, czego reguła już jest spełniona
+  (`evaluate`, motywy przed dźwiękami, więc „Upiorna noc” przychodzi w tym samym momencie co Halloween). Tryb `Preview` (demo, pokaz) nigdy.
+- **Widok:** ta sama (w focusie zamaskowana) księga i ten sam poziom co reszta statusu, więc odblokowanie ani trzeci dzień sezonu nie pokazują
+  się przed momentem. `unlocked` ma dzień zdobycia (motyw sezonowy też najbliższe okno), `availableNow` postęp w otwartym oknie, `locked` postęp
+  poziomu / najdłuższej serii albo najbliższe okno sezonu.
+- **Nadrabianie bez świętowania:** przy wczytaniu `rewards.json` z włączonymi nagrodami (`rewards::catch_up`, zapis tylko przy zmianie, w logu
+  tylko liczba) i po włączeniu nagród (`config_changed`). Bez momentu i bez eventu.
+- **`update_config`** (`unlocks::check_reward_theme`): odrzuca tylko *zmianę* na zablokowany motyw; `null` i niezmieniony motyw zawsze
+  przechodzą (nieaktualna wartość nie blokuje innych ustawień, a na ekranie i tak wraca motyw podstawowy).
+- **„Zacznij od nowa” / panel prywatności:** świeża księga (bez odblokowań), a `commands::clear_reward_theme` zapisuje `rewardTheme = null` jak
+  `update_config`. `delete_privacy_data` zwraca zapisany config; `reset_rewards` zwraca tylko status, więc UI po nim ustawia u siebie
+  `rewardTheme = null` (`config.applyStored`).
+
+**Motyw na ekranie** (`effectiveTheme` w `src/lib/themes/catalog.ts`): `rewardTheme`, gdy `betaFeatures` i motyw jest odblokowany, inaczej `theme`
+(ostatni motyw podstawowy; bez bety zawsze on). Okno główne bierze kolekcję z `rewards.real.unlocks`, okienko `popup` czyta `get_rewards` przy każdym
+pokazaniu (tylko do odczytu). Dopóki statusu nie ma, config jest traktowany jako prawda (powłoka nie zapisze zablokowanego motywu). Strona Deweloper
+pokazuje dowolny motyw kolekcji jako próbkę (`dev.themePreview`, tylko w pamięci, nic nie odblokowuje).
+
+**Motywy w folderach** (`src/lib/themes/<id>/`): `tokens.css` (selektor `:root[data-theme="<id>"], [data-theme="<id>"]:not(:root)`, żeby wygrał
+ze wspólnymi blokami `app.css` niezależnie od kolejności CSS; pełny zestaw tokenów jak motywy podstawowe w `app.css`, z tokenami nagród
+i `--quiet-mark`; ładowany globem w `catalog.ts`, więc działa też w okienku), `Scene.svelte` (tło okna; rejestr `scenes.ts`, rysuje go
+`Background.svelte`), `Preview.svelte` (kafelek w wyborze motywu). Grafika własna projektu (SVG/CSS), animacje tylko `transform` / `opacity`,
+statycznie przy ograniczonym ruchu. Dźwięki tła syntetyzowane w WebAudio w oknie głównym (`src/lib/ambience/`), bez plików audio.
+
+`RewardsStatus.unlocks` (październik 2026, poziom 4, najdłuższa seria 6, dwa dni z celem w październiku; skrócone):
+
+```json
+{ "themes": [
+    { "theme": "underwater", "state": "unlocked", "rule": { "type": "level", "level": 3 }, "progress": null, "window": null, "unlockedOn": "2026-10-09" },
+    { "theme": "rainyWindow", "state": "locked", "rule": { "type": "bestStreak", "days": 7 }, "progress": { "have": 6, "need": 7 }, "window": null, "unlockedOn": null },
+    { "theme": "easter", "state": "locked", "rule": { "type": "seasonal", "season": "easter", "goalDays": 3 }, "progress": null,
+      "window": { "season": "easter", "start": "2027-03-01", "end": "2027-04-04", "open": false, "month": null }, "unlockedOn": null },
+    { "theme": "halloween", "state": "availableNow", "rule": { "type": "seasonal", "season": "halloween", "goalDays": 3 }, "progress": { "have": 2, "need": 3 },
+      "window": { "season": "halloween", "start": "2026-10-01", "end": "2026-10-31", "open": true, "month": 10 }, "unlockedOn": null } ],
+  "ambiences": [
+    { "layer": "rain", "state": "free", "rule": { "type": "free" }, "progress": null, "unlockedOn": null },
+    { "layer": "thunder", "state": "unlocked", "rule": { "type": "level", "level": 2 }, "progress": null, "unlockedOn": "2026-10-02" },
+    { "layer": "spookyNight", "state": "locked", "rule": { "type": "withTheme", "theme": "halloween" }, "progress": null, "unlockedOn": null } ] }
+```
+
+Moment z odblokowaniem (tylko pola dodane przez ADR-024): `{ "unlockedThemes": ["halloween"], "unlockedAmbiences": ["spookyNight"] }`.
+`Config` (tylko pola dodane przez ADR-024): `{ "rewardTheme": "halloween", "ambience": { "enabled": true, "volume": 0.6,
+"layers": [ { "layer": "rain", "on": true, "volume": 0.5 }, { "layer": "spookyNight", "on": true, "volume": 0.35 } ] } }`.
+`rewards.json` (część A; nowe pola, id jako tekst, więc nowszy plik wczytuje się też w starszej aplikacji):
+`{ "unlocks": [ { "id": "theme:underwater", "day": 20735 } ], "seasons": [ { "season": "halloween", "year": 2026, "days": [20727, 20738] } ] }`.
 
 ## 7. Model wątków i współbieżności
 
