@@ -7,7 +7,7 @@ Teams „Nie przeszkadzać” (Graph; nie rusza „offline” ani własnego DND 
 nieusypianie ekranu, zamknięcie launcherów gier. W przerwie osłony schodzą, a muzyka gra dalej; przerwa pokazuje poradę i przypomnienie użytkownika.
 Opcjonalnie ciepłe kolory ekranu według pory dnia (Oświetlenie nocne Windows albo gamma). Motywy i pakiety dzwonków (także własny plik).
 Maskotka: aksolotl w słuchawkach z arkuszy klatek właściciela (mruga, reaguje na sesję, „mówi” porady ruchem ust, wygląda zza krawędzi okienek; ADR-018).
-Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014…022**;
+Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014…023**;
 wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
 Architektura multiplatformowa, **odbiór i gwarancje UX tylko na Windows** (ADR-008).
 Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), prowadzony z pomocą AI.
@@ -40,13 +40,17 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `rewards.rs` (beta, ADR-022: iskierki, cel dnia, poziomy, seria z dniami wolnymi i dniami oddechu, niespodzianki z jawnymi szansami,
   odroczenie świętowania do przerwy; księga bez zegara i plików, wejście z powłoki), w `session.rs` małe kroki (`MicroStep`) i `Effect::Progress`;
   `privacy.rs` (czyste części panelu prywatności: plan usuwania, rozmiar w KiB, config i dokument eksportu bez sekretów; ADR-020).
+  ADR-023: `sun.rs` (wschód i zachód słońca offline algorytmem NOAA, wbudowana lista 43 miast, przesunięcie strefy z dwóch zegarów), w `tint.rs`
+  okno dnia `tint_window` i wyjątki odcienia (`pause_reason`, histereza `TintExceptions`), w `stats.rs` tydzień i heatmapy (`WeekAggregator`),
+  w `calendar.rs` inteligentne przerwy (`fit_break`, `plan_smart_breaks`; w `session.rs` `Input::SetSmartMeetings`), w `config.rs` `Config::first_run()`.
   `src/api.rs` = kontrakt IPC. `assets/websiteblacklist.txt` = domyślna lista stron wbudowana w aplikację (ADR-013 pkt 4).
 - `crates/focus-audio/` — dedykowany wątek rodio, dzwonki (`ChimePlayer`): syntetyczne pakiety `ChimeSound` i własny plik użytkownika. Muzyka nie gra w Ruście.
 - `crates/focus-platform/` — integracje OS za traitami z `Noop`: `foreground` (aktywne okno z klasą okna + bezczynność),
   `notifications` (DND Windows przez nieudokumentowany COM `IQuietHoursSettings`, stan sprzed focusa awaryjnie z WNF),
   `power` (keep-awake), `teams` (Graph, device code, token DPAPI, odczyt statusu przed DND),
   `processes` (zamykanie procesów po dokładnej nazwie exe w bieżącej sesji: Toolhelp + `TerminateProcess`),
-  `locale` (język wyświetlania systemu), `clock` (minuta doby czasu lokalnego dla odcienia, `GetLocalTime`),
+  `locale` (język wyświetlania systemu), `clock` (minuta doby czasu lokalnego dla odcienia, `GetLocalTime`; przesunięcie strefy w danej chwili
+  `utc_offset_minutes_at` dla statystyk tygodnia),
   `night_light` (Oświetlenie nocne bieżącego użytkownika: nieudokumentowany zapis w rejestrze), `gamma` (rampa gamma każdego monitora z kopią bazowej rampy),
   `calendar/` (`google.rs`: OAuth loopback + PKCE i Calendar API; `ics.rs` + `rrule.rs`: iCalendar ze spotkaniami cyklicznymi), `secrets.rs` (pliki DPAPI),
   `teams` także z kalendarzem Microsoft (`Calendars.Read`, tylko gdy kalendarz włączony), `work/` (klienci GitHub, GitLab, Jira, Azure DevOps, Linear; tylko odczyt),
@@ -67,12 +71,14 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `youtube_account.rs` (okno `youtube-login` ze stroną Google, zalogowanie tylko po nazwach ciasteczek youtube.com, wylogowanie bez `SOCS`/`CONSENT`,
   `youtube://account`; ADR-021),
   `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`; czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie, poza próbkami trybu dewelopera, ADR-019), `tint.rs` (ciepło ekranu przez Oświetlenie nocne albo gammę, harmonogram, podgląd,
-  `tint-restore.json`, `tint://changed`; ADR-015), `safety_net.rs` (jeden wpis RunOnce `FocusModeRestore` dla osłon i kolorów ekranu),
+  `tint-restore.json`, `tint://changed`; ADR-015; wyjątki ADR-023: okno na pierwszym planie próbkowane w wątku odcienia ≤ 1 Hz, zostaje sama nazwa exe;
+  harmonogram słońca), `weekly.rs` (`get_weekly_stats`, `history://changed`; historia czytana strumieniowo z limitem; ADR-023), `safety_net.rs` (jeden wpis RunOnce `FocusModeRestore` dla osłon i kolorów ekranu),
   `close.rs` (X na oknie głównym: zasobnik, wyjście albo pytanie `app://close-requested`), `window_util.rs` (opcje WebView2 okna głównego dla
   pozostałych okien, pozycja w rogu ekranu), `teams.rs`, `tray.rs`, `texts.rs` (wszystkie teksty powłoki: toasty, tray, okienka),
-  `calendar.rs` + `calendar/` (synchronizacja kalendarzy, wybory w `meeting-choices.json`, okienka `meetingReminder`, `Input::SetMeetingHolds`, `calendar://changed`),
+  `calendar.rs` + `calendar/` (synchronizacja kalendarzy, wybory w `meeting-choices.json`, okienka `meetingReminder`, `Input::SetMeetingHolds`, `calendar://changed`;
+  inteligentne przerwy: spotkania do aktora `ActorCmd::SetSmartMeetings`, plan `SessionPlan::smart_plan`, „Zapytaj mnie” jako `optOuts`; ADR-023),
   `work.rs` + `work/` (synchronizacja co 5 min, `work-seen.json`, wstrzymywanie nowych pozycji w focusie, okienko `workDigest`, `work://changed`);
-  `persistence.rs` także `mark_goal_done`. `lib.rs`: argumenty startu (`--demo`, `--autostart`, `--restore-shields`); drugie uruchomienie z `--demo`
+  `persistence.rs` także `mark_goal_done`, `scan_history` (statystyki tygodnia) i `Config::first_run()` tylko przy braku `config.json` (kreator, ADR-023). `lib.rs`: argumenty startu (`--demo`, `--autostart`, `--restore-shields`); drugie uruchomienie z `--demo`
   przełącza aplikację w Idle na profil demo; przy starcie odświeża wpis autostartu (ADR-018).
   `src-tauri/capabilities/`: `default.json` (okno `main`), `overlays.json` (okno `popup`: tylko eventy).
   `src-tauri/resources/music/open-lofi/` = muzyka w zestawie (Open Lo-Fi, CC0, opis w `library.json`, licencja w `CREDITS.md`).
@@ -85,6 +91,9 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `src/lib/rewards/` (choreografia, odtwarzacz momentów), `state/rewards.svelte.ts`; pozy maskotki z `static/mascot/poses-atlas.webp` (ładowane leniwie).
   Muzyka bez sesji: `state/music.svelte.ts` (kto włączył muzykę: użytkownik czy sesja; pauza użytkownika wygrywa).
   Prywatność: `PrivacySettings.svelte` + `state/privacy.svelte.ts`; konto YouTube: `YoutubeAccountSettings.svelte` + `state/youtubeAccount.svelte.ts`.
+  ADR-023: kreator pierwszego uruchomienia `src/lib/components/onboarding/` + `state/onboarding.svelte.ts` (wybór przycisku X wspólny z Ustawieniami:
+  `CloseButtonSetting.svelte`); statystyki tygodnia na Podsumowaniu `src/lib/components/week/` + `state/weekly.svelte.ts` + `src/lib/week.ts`;
+  inteligentne przerwy: przełącznik w `TimingEditor.svelte`, linia pod zegarem `SmartBreakNote.svelte`; wyjątki odcienia i harmonogram słońca w `TintSettings.svelte`.
   Tryb dewelopera (ADR-019, `Config.developerMode`): trasa `src/routes/(app)/dev/` (tylko po angielsku: `src/lib/i18n/dev.ts`), stan `src/lib/state/dev.svelte.ts`, próbki danych tylko w pamięci `src/lib/state/samples.ts` (id `dev-sample-…`, linki `https://dev-sample.invalid/`), komenda `dev_trigger` w `commands.rs` (próbki okienek i toastów w `src-tauri/src/dev.rs`, skrócenie fazy `Input::DevSetRemaining`).
   Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w trybie dewelopera też Deweloper; w layoucie odtwarzacz i animowana nawigacja),
   `src/routes/(overlay)/` = lekka strona okna `popup`, **bez odtwarzacza** (inaczej muzyka grałaby w kilku oknach).
@@ -165,6 +174,8 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
     Eksport danych (panel prywatności) nigdy nie zawiera tokenów, linków ICS ani ciasteczek (ADR-020). Logowanie do YouTube tylko na stronie Google
     w oknie aplikacji: aplikacja nie widzi hasła i nie czyta wartości ciasteczek, tylko ich nazwy (ADR-021).
     Nagrody (beta) tylko lokalnie w `rewards.json` (liczby, daty, id); teksty małych kroków jak tytuły celów sesji: nigdy w logach ani w sieci (ADR-022).
+    Harmonogram słońca bez usług lokalizacji i bez sieci: współrzędne tylko w `config.json`; nazwa programu wstrzymującego odcień tylko lokalnie w `TintStatus`
+    (nigdy w logach); etykiety aplikacji tylko w configu (ADR-023).
     Launchery gier zamykamy tylko po dokładnych nazwach exe z `focus-core/src/launchers.rs`, tylko w bieżącej sesji,
     nigdy usług, procesów gier ani niczego, co wymaga praw administratora (ADR-014).
 

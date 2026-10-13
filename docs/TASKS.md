@@ -239,6 +239,47 @@ na pełnym ekranie; `--demo` przy działającej aplikacji; zgłoszenie wzorców,
     w 7 motywach, teksty w 10 językach, sekcja Deweloper; P1: album naklejek, nastrój „razem”, plakietka w nawigacji (równoległa runda).
   - [~] **R-14…R-15** (B) Atlas póz (`tools/mascot/poses-atlas.*`, `static/mascot/poses-*`, tylko skalowanie) i wyświetlanie póz (równoległa runda).
 
+- Statystyki tygodnia i heatmapy ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 3, 2026-10-13):
+  - [x] **W-01** (B) Rdzeń: `focusSpans` w `Session` / `SessionTotals` / `summarize` (zegar kalendarzowy, bez pauz i luk, najwyżej 256),
+    `stats::WeekAggregator` (tygodnie ISO, czas lokalny z przesunięciem dla każdej godziny, heatmapa tygodnia i 8 tygodni, top aplikacji, kategorie)
+    + testy (zmiana czasu, stare linie bez przedziałów, uszkodzone dane, remisy).
+  - [x] **W-02** (B) Powłoka: `weekly.rs` (`get_weekly_stats`, `history://changed`), `Persistence::scan_history` (strumieniowo, ostatnie 64 MB),
+    `clock::utc_offset_minutes_at` (Windows), zdarzenie po zapisie sesji, „Zrobione?”, usunięciu historii (też w panelu prywatności) i zmianie etykiet / `keepHistory`.
+  - [x] **W-03** (B) UI: sekcja „Ten tydzień” na Podsumowaniu (`src/lib/components/week/`, `state/weekly.svelte.ts`, `src/lib/week.ts`), chipy etykiet,
+    teksty w 10 językach (`week`, `errors.codes["stats.week"]`, `errors.areas.stats`, `fields.appCategories`), „Sample week” na stronie Deweloper, ADR-023 i §6.15.
+
+- Wyjątki odcienia i harmonogram słońca ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 1, 2026-10-13):
+  - [x] **TX-01** (B) Rdzeń: `sun.rs` (NOAA, `CITIES` 43, `utc_offset_minutes`, `utc_date`), w `tint.rs` `tint_window` / `window_level`,
+    `is_pause_app` / `pause_reason`, `TintExceptions` (`PAUSE_RELEASE_MS`, `PAUSE_FADE_MS`) + testy (znane wschody i zachody ±2 min, polarne, histereza, przejścia).
+  - [x] **TX-02** (B) Powłoka: `tint.rs` (okno dnia z daty lokalnej i przesunięcia, `Watch`: próbkowanie okna na pierwszym planie ≤ 1 Hz w wątku odcienia
+    tylko w ciepłym oknie, pełny ekran z `notification_state`, przejście co 100 ms, ten sam poziom ponownie co 30 s) + testy na fałszywej sondzie;
+    `list_sun_cities` działa.
+  - [x] **TX-03** (B) UI: karta odcienia (harmonogram, miejsce, współrzędne, dzisiejszy zachód i wschód, wyjątki, status wstrzymania), walidacja lokalna,
+    teksty w 10 językach, próbka na stronie Deweloper, ADR-023 i §6.15.
+
+- Kreator pierwszego uruchomienia ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 4, 2026-10-13):
+  - [x] **FR-01** (B) Rdzeń i powłoka: `Config::first_run()` (`onboardingDone: false`) tylko przy braku `config.json` (`Persistence::load_config`; także po resecie
+    fabrycznym), uszkodzony plik i „Usuń wszystko” bez kreatora; testy w `config.rs` i `persistence.rs`.
+  - [x] **FR-02** (B) UI: `state/onboarding.svelte.ts` + `components/onboarding/` (4 kroki na istniejących komponentach Ustawień, poza z „boing” i dymek
+    litera po literze, Enter / Esc z potwierdzeniem / Tab uwięziony, sesja z zasobnika widoczna ze Stop), `CloseButtonSetting` wspólny z Ustawieniami,
+    `mascot-boing` w `app.css`, teksty w 10 językach, „Show first-run wizard” na stronie Deweloper, §6.15. Sprawdzone w przeglądarce z atrapą IPC
+    (960 × 640, 7 motywów); DoD na fizycznym Windows: świeża instalacja (albo reset fabryczny) → kreator; istniejący config → brak kreatora.
+
+- Inteligentne planowanie przerw ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 2, 2026-10-13):
+  - [x] **SB-01** (B) Rdzeń: `calendar::fit_break` / `plan_smart_breaks` / `FirstBreak` / `smart_break_view`, granice w `timing.rs`,
+    `Input::SetSmartMeetings` i dopasowanie bieżącego bloku w `session.rs` + testy (bez spotkania, w środku focusu, w środku przerwy, jedno po drugim,
+    całodniowe, z wyborem, zmiana czasu, profil demo, pauza i luka snu, Pomiń / Stop, blok stały).
+  - [x] **SB-02** (B) Powłoka: lista spotkań do aktora (`ActorCmd::SetSmartMeetings`), plan kolejnych bloków (`SessionPlan::smart_plan`),
+    `CalendarStatus.smartBreaks` / `smartOptOuts`, `set_smart_break_opt_out` (`optOuts` w `meeting-choices.json`) + testy w `calendar/model.rs`.
+  - [x] **SB-03** (B) UI: przełącznik w karcie „Czas”, linia pod zegarem z „Zapytaj mnie”, przesunięte przerwy w karcie spotkań, teksty w 10 językach,
+    próbka na stronie Deweloper, ADR-023 i §6.15. DoD na fizycznym Windows z połączonym kalendarzem: spotkanie w przerwie → przerwa przesunięta,
+    „Zapytaj mnie” → zwykłe pytanie.
+
+- [x] **INT-23** (B) Runda integracji ADR-023 (2026-10-13): wszystkie bramki na połączonym drzewie (fmt, clippy, testy, `npm run check`, `npm run build`),
+  rejestracja komend i `names.ts` zgodne, układ Skupienia w 960 × 640 (przełącznik inteligentnych przerw przy czasach, maskotka, pasek „Dziś”);
+  panel prywatności liczy też wpisy „Zapytaj mnie” (`optOuts`) w „Odpowiedziach o spotkania”; karta świętowania po bloku, który nic nie dał,
+  pokazuje sam podpis bez „+0” (`recapPlain` / `sessionPlain` w 10 językach); dokumentacja: status ADR-023, §6 / §6.15, CLAUDE.md (zakres i Struktura).
+
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
 - [ ] `--demo`: Start → 40 s → dzwonek + toast, osłony w dół, muzyka gra dalej → 20 s → dzwonek, osłony w górę → Stop → podsumowanie z wykresem
@@ -555,3 +596,35 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   seria, niespodzianki, „skupienie jest święte”), małe kroki w `session.rs`, `src-tauri/src/rewards.rs` (usługa, `rewards.json`, wątek zapisu, podgląd demo),
   `src/lib/components/rewards/`, `src/lib/rewards/`, `src/lib/state/rewards.svelte.ts`, `static/mascot/poses-*`, `tools/mascot/poses-atlas.*`;
   zasada 11: `rewards.json` tylko liczby, numery dni i id sesji (także przy wyłączonym `keepHistory`), teksty kroków jak tytuły celów sesji.
+- [2026-10-13 16:43] (B→A) Kontrakt ADR-023 (wyjątki odcienia, inteligentne przerwy, statystyki tygodnia, kreator pierwszego uruchomienia; sam kontrakt,
+  szczegóły w ARCHITECTURE §6.15): komendy-zaślepki (`notImplemented`) `list_sun_cities -> SunCity[]`, `set_smart_break_opt_out { meetingId, optOut } -> CalendarStatus`,
+  `get_weekly_stats { weekStart } -> WeeklyStats`; event `history://changed` (`HistoryChanged { revision }`, jeszcze nie wysyłany). Config: `smartBreaks` (false),
+  `appCategories` (`BTreeMap<String, AppCategory>`, klucze małymi literami), `onboardingDone` (domyślnie **true**, także przy braku pola; nowe
+  `Config::first_run()` z `false` — powłoka ma go użyć tylko, gdy `config.json` nie istnieje: to jeszcze do zrobienia w `persistence.rs` przy kreatorze).
+  `TintConfig`: `schedule` (`fixed | sun`), `location: Option<TintLocation>` (`f64`, więc `TintConfig` nie ma już `Eq`), `pauseForApps` (true), `pauseApps`
+  (`tint::DEFAULT_PAUSE_APPS`, 17 nazw; „lightroom.exe (Classic)” to ten sam wpis co `Lightroom.exe`, bo porównanie jest bez wielkości liter), `pauseForFullscreen` (false);
+  walidacja w `config.rs` (`tint.pauseApps`, `tint.location.latitude` / `longitude` / `city`, `appCategories`). `TintStatus`: `pausedBy`, `schedule`
+  (`TintScheduleState`), `windowStartMinutes` / `windowEndMinutes` (na razie stałe godziny). `CalendarStatus.smartBreaks` / `smartOptOuts` (puste),
+  `SessionSnapshot.smartBreak` (`None`; literały `SessionSnapshot { .. }` potrzebują tego pola), `SessionSummary.focusSpans` (`skip_serializing_if`, w TS opcjonalne;
+  `stats::summarize` na razie zostawia puste). Stałe: `stats::RECENT_WEEKS` (8), `stats::TOP_APPS_PER_WEEK` (10), `config::MAX_PAUSE_APPS` / `MAX_PROCESS_NAME_CHARS` /
+  `MAX_CITY_ID_CHARS` / `MAX_APP_CATEGORIES` / `LATITUDE_RANGE` / `LONGITUDE_RANGE`. TS: `api.ts` ma `listSunCities`, `setSmartBreakOptOut`, `getWeeklyStats`,
+  `onHistoryChanged` i `watchWeeklyStats` (protokół ADR-012 dla gettera z parametrem); `IDLE_SNAPSHOT` i próbka kalendarza dostały nowe pola. Szkielet ADR-023 w DECISIONS.
+- [2026-10-13] (B→A) Statystyki tygodnia (ADR-023 cz. 3) wdrożone: `get_weekly_stats` działa, `history://changed` jest wysyłany. Rdzeń: `SessionTotals.focus_spans`
+  (literały `SessionTotals { .. }` potrzebują pola), `stats::WeekAggregator` / `weekly_stats` / `parse_local_date` / `iso_week`, `stats::MAX_FOCUS_SPANS`;
+  `rewards::days_from_civil` / `civil_from_days` / `days_in_month` są teraz `pub(crate)`. Platforma: `clock::utc_offset_minutes_at` (nowa cecha crate'u
+  `windows`: `Win32_System_Time`, bez nowej zależności). Proszę o review `stats.rs` (część tygodniowa) i `record_focus_span` w `session.rs`.
+- [2026-10-13] (B→A) Wyjątki odcienia i harmonogram słońca (ADR-023 cz. 1) wdrożone. Rdzeń: nowy moduł `focus_core::sun` (NOAA, `CITIES`, `utc_offset_minutes`,
+  `utc_date`); w `tint.rs` `tint_window` / `window_level` (`tint_level` zostaje dla stałych godzin), `pause_reason`, `TintExceptions`, stałe `PAUSE_RELEASE_MS` /
+  `PAUSE_FADE_MS`. Powłoka: wątek odcienia sam próbkuje okno na pierwszym planie (≤ 1 Hz, tylko w ciepłym oknie z włączonym wyjątkiem; tracker próbkuje tylko
+  w focusie) i woła `Engine::set` ponownie przy tym samym poziomie najwyżej co 30 s. `list_sun_cities` zwraca listę. Proszę o review `sun.rs` i `Watch` w `src-tauri/src/tint.rs`.
+- [2026-10-13] (B→A) Kreator pierwszego uruchomienia (ADR-023 cz. 4) wdrożony, bez nowych komend: `Persistence::load_config` zwraca `Config::first_run()`
+  tylko przy braku `config.json`, flaga trafia na dysk z pierwszym zapisem configu. UI: `src/lib/state/onboarding.svelte.ts`, `src/lib/components/onboarding/`,
+  wspólny `CloseButtonSetting.svelte` (Ustawienia → Okno używa go teraz też), animacja `mascot-boing` przeniesiona z `FocusMascot.svelte` do `app.css`,
+  `data-session-controls` na grupie przycisków Skupienia (kreator ustawia tam fokus). Propozycja do CLAUDE.md (do zatwierdzenia przez właściciela):
+  w Strukturze `src/lib/components/onboarding/` i `src/lib/state/onboarding.svelte.ts` (kreator pierwszego uruchomienia, ADR-023).
+- [2026-10-13] (B→A) Inteligentne przerwy (ADR-023 cz. 2) wdrożone. Rdzeń: `calendar::fit_break` liczy dolną granicę jako `min(smart_min_focus_ms, focus)`
+  (focus krótszy niż 10 min może się tylko wydłużyć); nowe `Input::SetSmartMeetings(Vec<SmartMeeting>)` i pola `Active::smart_delta_ms` / `smart_view` /
+  `smart_fixed` w `session.rs` (dopasowanie przesuwa tylko termin bieżącego bloku, efekty bez zmian). Powłoka: `SessionPlan` ma pole `smart` i nie jest już
+  `Copy`; `PlanKey` w aktorze też nie; nowe `ActorCmd::SetSmartMeetings`, `CalendarCmd::SetSmartOptOut`; `StoredChoices.optOuts` (serde default, pomijane,
+  gdy puste); `SessionPlan::breaks` jest teraz tylko testowe (plan idzie przez `smart_plan`). Usunięty pomocnik `not_implemented` w `commands.rs`
+  (żadna komenda ADR-023 już go nie używa). Proszę o review `fit_break` i `Active::refit_smart`.

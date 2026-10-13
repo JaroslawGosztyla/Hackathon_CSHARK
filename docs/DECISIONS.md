@@ -1683,3 +1683,148 @@ nagradzanie przepracowania. Funkcja ma więc być opcjonalna, w pełni lokalna i
 - ADR-020: nowa pozycja `rewards` (`PrivacyItemKind::ALL` ma 19 rodzajów).
 - Zasada 11: `rewards.json` (tylko liczby); teksty kroków traktowane jak tytuły celów sesji.
 - CLAUDE.md: zakres „ADR-013 … ADR-022”, Struktura (nowe moduły wyżej), zasada 11 (`rewards.json`).
+
+## ADR-023: Wyjątki odcienia, inteligentne przerwy, statystyki tygodnia i kreator pierwszego uruchomienia
+**Status:** Przyjęta i wdrożona (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`).
+Najpierw kontrakt IPC (`/sync-contract`: typy, pola configu z wartościami domyślnymi i walidacją, stałe, `Config::first_run()`, komendy-zaślepki
+`notImplemented`, wrappery w `api.ts`), potem cztery części w osobnych rundach i wspólna runda integracji; żadna komenda nie jest już zaślepką.
+Szczegóły kontraktu i przykłady JSON: ARCHITECTURE §6.15.
+
+**Kontekst:** cztery prośby z użytkowania. (1) Ciepły odcień (ADR-015) przeszkadza w pracy z kolorem i w grach na pełnym ekranie, a stałe godziny
+nie nadążają za porami roku. (2) Pytanie o każde spotkanie kolidujące z przerwą (ADR-016) jest uciążliwe, gdy wystarczyłoby przesunąć przerwę
+o kilka minut. (3) Podsumowanie pokazuje tylko jedną sesję; brakuje obrazu tygodnia (kiedy i ile się skupiam, na czym). (4) Nowy użytkownik trafia
+od razu na pełną stronę Skupienie bez wyjaśnienia muzyki, osłon i rozszerzenia.
+
+### Część 1: Wyjątki odcienia
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Lista aplikacji (dokładne nazwy exe) + przełącznik pełnego ekranu + harmonogram zachód → wschód liczony lokalnie ze współrzędnych** | przewidywalne, offline, bez nowych uprawnień | użytkownik sam wpisuje miasto albo współrzędne |
+| Lokalizacja z usług systemu albo z IP | bez wpisywania | dane o położeniu poza kontrolą użytkownika, sieć (zasada 11); odrzucone |
+| Wykrywanie „aplikacji graficznych” heurystyką (np. profil ICC, tytuł okna) | bez listy | zgadywanie, tytuły okien (zasada 11); odrzucone |
+
+**Decyzja:**
+1. `TintConfig.pauseForApps` (domyślnie włączone) i `pauseApps`: lista nazw exe porównywanych bez rozróżniania wielkości liter, domyślnie
+   `tint::DEFAULT_PAUSE_APPS` (17 programów do zdjęć, grafiki, wideo, 3D i składu; `Lightroom.exe` obejmuje obie edycje). Gdy któraś jest na pierwszym
+   planie, ciepło płynnie schodzi do 0, a wraca po utracie fokusu z histerezą ok. 2 s (Alt+Tab nie miga). Dopasowanie jest czystą funkcją w `focus-core`,
+   okno na pierwszym planie z istniejącego API `foreground` (bez nowego wątku, jeśli tracker już próbkuje; inaczej co najwyżej 1 Hz).
+2. `TintConfig.pauseForFullscreen` (domyślnie wyłączone): to samo, gdy na pierwszym planie jest aplikacja albo gra na pełnym ekranie
+   (`notification_state`). Domyślnie wyłączone, bo gamma celowo działa też w grach (ADR-015) i zachowanie sprzed ADR-023 zostaje.
+3. `TintConfig.schedule = sun`: okno ciepła od zachodu do wschodu słońca, liczone offline w `focus-core` algorytmem NOAA ze współrzędnych z configu
+   (`location`: wpisane albo wybrane z wbudowanej listy ok. 40 miast, w tym wszystkich miast wojewódzkich, komenda `list_sun_cities`). Bez usług lokalizacji
+   i bez sieci. Brak lokalizacji, dzień polarny i noc polarna → stałe godziny, a `TintStatus.schedule` mówi dlaczego. Testy na znanych godzinach (±2 min).
+4. Status w karcie odcienia: „Wstrzymane: Photoshop na pierwszym planie” (`TintStatus.pausedBy`, tylko nazwa procesu, nigdy tytuł okna ani log).
+   Podgląd w Ustawieniach ignoruje wyjątki. Gwarancje przywrócenia (zasada 6) bez zmian: poziom 0 przywraca mechanizm jak dziś.
+
+**Wdrożenie części 1 (2026-10-13):** rdzeń `tint.rs` (`pause_reason`, `TintExceptions` z `PAUSE_RELEASE_MS` = 2 s i `PAUSE_FADE_MS` = 1,2 s,
+`tint_window` / `window_level`) i nowy moduł `sun.rs` (NOAA, 43 wbudowane miasta, przesunięcie strefy z dwóch zegarów). Tracker próbkuje tylko w czasie
+focusu, więc okno na pierwszym planie próbkuje istniejący wątek odcienia, najwyżej 1 Hz i tylko wtedy, gdy okno jest ciepłe, a któryś wyjątek włączony
+(bez nowego wątku). Lista miast jest pogrupowana w UI według kraju (kraj z co najmniej 3 miastami osobno), z nazwami krajów z `Intl.DisplayNames`.
+Wpisana nazwa bez `.exe` dostaje rozszerzenie. Szczegóły: ARCHITECTURE §6.15.
+
+### Część 2: Inteligentne planowanie przerw
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Zostawić pytanie dla każdego spotkania (ADR-016) | pełna kontrola | uciążliwe przy częstych spotkaniach |
+| **Przełącznik „Inteligentne przerwy”: plan sam skraca albo wydłuża blok focusu w granicach, a bez dopasowania pyta jak dotąd; cofnięcie dla każdego spotkania** | mniej pytań, przewidywalne granice | logika planowania w core i nowe wejście aktora |
+| Przesuwać spotkania albo pisać do organizatora | – | zapis w kalendarzu (kalendarze tylko do odczytu, zasada 11); odrzucone |
+
+**Decyzja:**
+1. `Config.smartBreaks` (domyślnie wyłączone), przełącznik na stronie Skupienie obok wyboru czasów; aktywny tylko z połączonym kalendarzem
+   (inaczej wyłączony, z podpowiedzią i linkiem do Ustawień kalendarza).
+2. Dla spotkania kolidującego z przerwą plan zmienia długość poprzedzającego bloku focusu tak, by przerwa skończyła się tuż przed spotkaniem albo zaczęła
+   razem z nim (wariant z mniejszą zmianą). Granice: skrócenie do ≥ 60 % długości focusu i nigdy poniżej 10 min (profil demo przeskalowany), wydłużenie
+   o ≤ 25 %; nazwane stałe w `timing.rs` (zasada 2). Bez dopasowania → zwykłe pytanie z ADR-016 dla tego spotkania. Spotkania z wyborem użytkownika
+   albo z „Zapytaj mnie” nie są dopasowywane; całodniowe, wolne i wstępne pomijane jak dziś.
+3. Planowanie to czysta funkcja w `focus-core` (`calendar.rs` / `session.rs`) z testami (bez spotkania, spotkanie w środku focusu, w środku przerwy,
+   spotkania jedno po drugim, całodniowe, wolne i wstępne, dzień zmiany czasu, profil demo). Sesja dostaje nowy koniec fazy istniejącą ścieżką wejść
+   aktora, bez sztuczek z zegarem monotonicznym; kolejność efektów ADR-013 bez zmian. Nigdy nie blokuje Stop, Pomiń fazę ani Pauzy (zasada 7).
+4. Pod zegarem jedna linia: „Przerwa przesunięta na 13:50 · spotkanie o 14:00” (`SessionSnapshot.smartBreak`) z „Zapytaj mnie” (`set_smart_break_opt_out`,
+   zapis przy wyborach spotkań, same id). Tematy spotkań tylko tam, gdzie pozwala ADR-016; nigdy w logach, historii ani w nowych okienkach.
+5. **Wdrożone (2026-10-13):** `calendar::fit_break` / `plan_smart_breaks` w `focus-core` i `Input::SetSmartMeetings` w sesji (bieżący blok dopasowuje
+   sama sesja przy Start, nowym bloku, Wznów i zmianie spotkań; zmienia się tylko termin końca), plan kolejnych bloków w module kalendarzy, „Zapytaj mnie”
+   w `meeting-choices.json` (`optOuts`), przełącznik, linia pod zegarem i lista w karcie spotkań, próbka na stronie Deweloper. Doprecyzowania:
+   spotkanie musi skończyć się przed następną przerwą (dłuższe dostaje pytanie); przesunięta przerwa nie może trafić na żadne inne spotkanie; focus
+   krótszy niż 10 min tylko się wydłuża; `optOut: false` usuwa też wybór podany w międzyczasie. „Jak dziś” dla rodzajów wydarzeń znaczy: całodniowe
+   i wolne odrzuca platforma, wstępne liczą się jak zajęte (tak samo jak przy pytaniu z ADR-016). Szczegóły: ARCHITECTURE §6.15.
+
+### Część 3: Statystyki tygodnia
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Sekcja „Ten tydzień” na Podsumowaniu z lokalnej historii: słupki dni, liczby, heatmapy dzień × godzina (tydzień i 8 tygodni), top aplikacji z etykietami użytkownika** | wszystko lokalnie, bez nowych danych poza czasami focusu | odczyt historii przy każdej zmianie tygodnia |
+| Automatyczna ocena „produktywności” aplikacji | bez etykietowania | ocenianie za użytkownika, presja (ADR-022 pkt 9); odrzucone |
+| Osobna baza statystyk | szybkie zapytania | drugi magazyn danych do usuwania i eksportu; zbędne przy tej skali |
+
+**Decyzja:**
+1. Strona Podsumowanie, sekcja „Ten tydzień” z wyborem tygodnia ‹ › (tygodnie ISO, poniedziałek pierwszy, czas lokalny): minuty focusu na dzień,
+   suma focusu, wzięte przerwy, sesje, najlepszy dzień, heatmapa dzień × godzina wybranego tygodnia i heatmapa 8 tygodni, top aplikacji tygodnia
+   z etykietami i udział czasu w kategoriach.
+2. Kategorie nadaje tylko użytkownik, kliknięciem w chip: `Config.appCategories` (nazwa exe małymi literami → `productive | neutral | distracting`),
+   domyślnie nic nie jest oznaczone.
+3. Dane tylko z `history.jsonl`; sesje demo pominięte. Czysta agregacja w `focus-core/src/stats.rs` (wejście: sparsowane linie, zakres tygodnia,
+   przesunięcie strefy z powłoki). Powłoka czyta plik strumieniowo i z limitem. Nowe pole historii `SessionSummary.focusSpans` (przedziały, w których
+   focus faktycznie płynął; same znaczniki czasu, pomijane w JSON, gdy puste) daje dokładne godziny; dla starszych linii czas jest rozkładany równo
+   od startu do końca sesji (`WeeklyStats.estimated`). `keepHistory` wyłączone → sekcja wyjaśnia, że historii nie ma. Tytuły okien nie są potrzebne.
+4. Kontrakt: `get_weekly_stats { weekStart } -> WeeklyStats` z rewizją i event `history://changed` (sama rewizja, bo getter ma parametr; UI pyta znowu
+   o swój tydzień, `api.watchWeeklyStats`). Dostępność: `aria-label` albo tabela zastępcza dla heatmap, kolory z tokenów motywu (także 8-bit), przyjazny
+   stan pusty bez poczucia winy. Strona Deweloper: „Sample week” (próbka w pamięci UI).
+
+**Wdrożenie części 3 (2026-10-13):** zrobione end-to-end. `Session` zapisuje `focusSpans` (zegar kalendarzowy, bez pauz i luk, najwyżej 256),
+`stats::WeekAggregator` liczy tydzień i 8 tygodni z przesunięciem strefy podawanym przez powłokę dla każdej godziny (zmiana czasu), powłoka czyta
+historię strumieniowo z limitem 64 MB i wysyła `history://changed` po każdej zmianie historii, etykiet albo `keepHistory`. Przy wyłączonym
+`keepHistory` wcześniej zapisane sesje dalej się liczą (jak lista historii), a sekcja mówi, że nowe nie dojdą. Heatmapa to prawdziwa tabela
+(tekst w każdej komórce dla czytników ekranu), więc osobna tabela zastępcza nie jest potrzebna. Szczegóły: ARCHITECTURE §6.15.
+
+### Część 4: Kreator pierwszego uruchomienia
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Bez kreatora (dziś) | zero kodu | nowy użytkownik nie wie o osłonach i rozszerzeniu |
+| **Czterokrokowy kreator w oknie głównym, tylko przy świeżej instalacji, do pominięcia na każdym kroku, na istniejących ustawieniach** | jedno spokojne wprowadzenie; nic nie startuje samo | teksty w 10 językach |
+| Samouczek z dymkami na stronach | kontekst na miejscu | trudny w 960 × 640 i z czytnikiem ekranu |
+
+**Decyzja:**
+1. `Config.onboardingDone`: domyślnie `true` (także gdy pola brak, więc istniejący użytkownicy nigdy kreatora nie widzą); `false` tylko w configu, który
+   powłoka tworzy przy świeżej instalacji (`Config::first_run()`, gdy `config.json` nie istnieje; także po resecie fabrycznym). „Usuń wszystko” przywraca
+   ustawienia domyślne, więc kreatora nie pokazuje.
+2. Kroki: (1) powitanie i język (domyślnie język systemu), poza `poses:02-clasped-hands-heart`; (2) muzyka: Open Lo-Fi w zestawie (domyślnie), stream, linki,
+   folder, szum albo cisza, poza `poses:05-look-up`; (3) osłony: wyciszenie powiadomień Windows, Teams (połączenie później), blokada stron (przycisk otwierający
+   folder rozszerzenia i trzy linijki instrukcji dla Chrome / Edge), nieusypianie ekranu, zamykanie launcherów, poza `poses:03-thinking`; (4) dodatki: okienka
+   i zasobnik, ciepły odcień (wyłączony), kalendarz i narzędzia pracy („później w Ustawieniach”), funkcje beta, poza `poses:11-point-happy`, potem
+   „Zacznij pierwsze skupienie”, które nic nie uruchamia: zamyka kreatora na stronie Skupienie z fokusem na Start.
+3. Każdy krok: poza z małym „boing” (to samo co przy łaskotaniu), dymek z tekstem odsłanianym litera po literze jak u głównej maskotki; tylko istniejące
+   klatki (zasada 10). Pominięcie na każdym kroku (Esc z potwierdzeniem), Enter = dalej, fokus uwięziony w kreatorze, etykiety ARIA, 960 × 640 we wszystkich
+   7 motywach, ograniczony ruch respektowany. Kroki używają istniejących komponentów i sklepów ustawień (bez powielania logiki) i nie blokują powłoki.
+4. Strona Deweloper: „Show first-run wizard” pokazuje kreatora bez zmiany `onboardingDone` (chyba że zostanie ukończony).
+
+**Wdrożenie części 4 (2026-10-13):** bez nowych komend. `Persistence::load_config` daje `Config::first_run()` tylko przy braku `config.json`
+(także po resecie fabrycznym), a flaga trafia na dysk z pierwszym zapisem configu. UI: sklep `state/onboarding.svelte.ts` i `components/onboarding/`
+(kreator zakrywa okno główne, strona pod nim nie jest renderowana, nagłówek i pasek muzyki są `inert`, muzyka gra dalej; sesja z zasobnika widoczna
+w kreatorze ze Stop). Wybór przycisku X to wspólny komponent `CloseButtonSetting.svelte` (Ustawienia i krok „Dodatki”). Odstępstwo: konfiguracja
+z nieprawidłowym polem (np. link streamu ze spacją) nie zapisze się przy „Pomiń” ani przy ukończeniu, więc kreator wróci przy następnym starcie;
+użytkownik widzi błąd pola (tak działa każdy zapis configu). Szczegóły: ARCHITECTURE §6.15.
+
+**Kontrakt (wszystkie części):** komendy `list_sun_cities -> SunCity[]`, `set_smart_break_opt_out { meetingId, optOut } -> CalendarStatus`,
+`get_weekly_stats { weekStart } -> WeeklyStats`; event `history://changed` (`HistoryChanged { revision }`). DTO: `TintSchedule`, `TintLocation`, `SunCity`,
+`TintPause`, `TintPauseReason`, `TintScheduleState`, `SmartBreak`, `SmartBreakKind`, `TimeSpan`, `AppCategory`, `HistoryChanged`, `WeeklyStats`, `DayStats`,
+`WeekApp`, `CategoryTotals`. Pola: `Config.smartBreaks` / `appCategories` / `onboardingDone`; `TintConfig.schedule` / `location` / `pauseForApps` / `pauseApps` /
+`pauseForFullscreen`; `TintStatus.pausedBy` / `schedule` / `windowStartMinutes` / `windowEndMinutes`; `CalendarStatus.smartBreaks` / `smartOptOuts`;
+`SessionSnapshot.smartBreak`; `SessionSummary.focusSpans`. Wszystkie z `serde(default)`, więc stary `config.json`, `history.jsonl` i stany się wczytują.
+
+**Konsekwencje:**
+- Stary config wczytuje się bez zmian zachowania (stałe godziny, inteligentne przerwy wyłączone, brak etykiet, bez kreatora); jedyna nowość działająca
+  od razu po wdrożeniu to wstrzymanie odcienia dla domyślnej listy aplikacji graficznych (`pauseForApps` domyślnie włączone).
+- `TintConfig` ma pola `f64` (współrzędne), więc traci `Eq` (zostaje `PartialEq`).
+- `history.jsonl` dostaje opcjonalne `focusSpans` (same znaczniki czasu); linie bez nich wyglądają jak wcześniej. Eksport prywatności obejmuje je razem z historią.
+- Nowe teksty w 10 językach (UI w `strings.ts`, powłoka w `texts/*.rs`).
+
+**Co zmienia:**
+- ADR-015 (odcień): wyjątki dla aplikacji i pełnego ekranu, harmonogram słońca obok stałych godzin.
+- ADR-016 (kalendarze): automatyczne dopasowanie przerw zamiast pytania, gdy `smartBreaks`; pytanie zostaje jako zapas i po „Zapytaj mnie”.
+- ADR-012: pierwszy getter z parametrem (`get_weekly_stats`) z eventem niosącym samą rewizję.
+- Zasada 2: nowe nazwane stałe granic inteligentnych przerw i histerezy wyjątków odcienia. Zasada 11: współrzędne tylko w `config.json`, nazwa procesu
+  w `TintStatus` tylko lokalnie, etykiety aplikacji tylko w configu.
+- CLAUDE.md (zastosowane w rundzie integracji): zakres „ADR-013 + ADR-014…023”; w Strukturze moduł słońca w `focus-core`, statystyki tygodnia
+  w `stats.rs` i `weekly.rs`, inteligentne przerwy, kreator w `src/lib/components/onboarding/`, sekcja tygodnia w `src/lib/components/week/`.

@@ -261,13 +261,17 @@ config spoza zakresów → błąd walidacji.
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
 > Stan na 2026-10-13 (z ADR-020, panel prywatności, i ADR-021, logowanie do YouTube, oba wdrożone; ADR-022, funkcje beta: kontrakt z R-00,
-> rdzeń i usługa nagród w powłoce z R-01…R-05), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> rdzeń i usługa nagród w powłoce z R-01…R-05; ADR-023, wyjątki odcienia, inteligentne przerwy, statystyki tygodnia i kreator: wszystkie cztery
+> części wdrożone, §6.15),
+> zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
 `#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu w ms od epoki Unix
 (`i64` eksportowane jako `number` przez `#[ts(type = "number")]`): `startedAtMs` / `endedAtMs` w `SessionSummary` oraz czasy spotkań i przerw z ADR-016
 (`Meeting.startMs` / `endMs`, `MeetingConflict.breakStartMs` / `breakEndMs` / `nextReminderMs`, `CalendarStatus.lastSyncMs`, `MeetingHoldView.untilMs`),
-z ADR-017 (`WorkItem.dueMs` / `updatedMs`, `WorkStatus.lastSyncMs`) i z ADR-022 (`RewardMoment.atMs`). `SurpriseOdds` ma pola `u16` (promile).
+z ADR-017 (`WorkItem.dueMs` / `updatedMs`, `WorkStatus.lastSyncMs`), z ADR-022 (`RewardMoment.atMs`) i z ADR-023 (`SmartBreak.meetingStartMs` /
+`meetingEndMs` / `breakStartMs` / `breakEndMs`, `TimeSpan.startMs` / `endMs`). `SurpriseOdds` ma pola `u16` (promile). ADR-023 dokłada jedyną liczbę
+ze znakiem, `SmartBreak.focusDeltaSecs: i32` (skrócenie < 0), i współrzędne `f64` (`TintLocation`, `SunCity`), przez które `TintConfig` nie ma już `Eq`.
 Eksport: `cargo test -p focus-core` zapisuje do `TS_RS_EXPORT_DIR` (ustawione w `.cargo/config.toml` względem workspace).
 **CI sprawdza, czy po regeneracji `src/lib/bindings/` nie ma zmian** (`git diff --exit-code`).
 Nazwy komend i eventów są stałymi w `api.rs` (`commands::*`, `events::*`), które test `export_names` zapisuje do `src/lib/bindings/names.ts`
@@ -344,6 +348,9 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `play_reward_sound` | `sound: RewardSound` | `()` | krótki dźwięk nagrody (`pop` / `sparkle` / `fanfare`); no-op, gdy nagrody są nieaktywne, dźwięki nagród wyłączone, `celebrations: numbersOnly` albo użytkownik prezentuje; czeka, aż skończy się dzwonek fazy |
 | `set_session_steps` | `steps: StepDraft[]` | `()` | zastępuje małe kroki nadchodzącej albo trwającej sesji (każda faza); `id` = istniejący krok (zachowuje `done`), `null` = nowy. Błędy: `stepsOff` (małe kroki wyłączone), `tooManySteps` (pole `steps`, więcej niż 5). Nowy plan przychodzi w `session://snapshot`. Tekstów kroków nikt nie loguje |
 | `set_step_done` | `id: number, done: boolean` | `()` | odhacza / odznacza krok (Focus albo Przerwa, także w pauzie); w Idle albo dla nieznanego `id` no-op; `stepsOff` przy wyłączonych krokach |
+| `list_sun_cities` | – | `SunCity[]` | wbudowana lista miast (ok. 40, w tym wszystkie miasta wojewódzkie) dla harmonogramu „zachód → wschód słońca” (ADR-023, §6.15); dane w aplikacji (`focus_core::sun::CITIES`, 43 miasta), bez usług lokalizacji i bez sieci. Wdrożone |
+| `set_smart_break_opt_out` | `meetingId: string, optOut: boolean` | `CalendarStatus` | „Zapytaj mnie” dla jednego spotkania dopasowanego przez inteligentne przerwy (ADR-023): `true` cofa dopasowanie (sesja dostaje z powrotem niezmieniony koniec fazy przez aktora, spotkanie dostaje zwykłe pytanie), `false` pozwala dopasować je znowu (i zapomina wybór podany w międzyczasie, bo spotkanie z wyborem nie jest dopasowywane). Zapis w `meeting-choices.json` (`optOuts`: id i koniec spotkania). Nigdy nie blokuje Stop / Pomiń / Pauzy. Próbka ze strony Deweloper (`dev-sample-…`) to no-op. Nieznane spotkanie przy `true` → `calendar.unknownMeeting`. Wdrożone |
+| `get_weekly_stats` | `weekStart: string` | `WeeklyStats` | tydzień ISO (od poniedziałku, czas lokalny) zawierający dzień `weekStart` (`RRRR-MM-DD`) z `history.jsonl` (ADR-023, §6.15); zła data → `stats.week` (pole `weekStart`), błąd odczytu → `persistence.history`. Wdrożone (`src-tauri/src/weekly.rs`) |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -377,6 +384,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `privacy://changed` | `PrivacyReport` | po każdej zmianie zapisanych danych (ponowny skan z opóźnieniem, wysyłany tylko przy innym wyniku) oraz na początku i końcu usuwania albo eksportu (`busy`) (ADR-020) |
 | `youtube://account` | `YoutubeAccount` | po pierwszym sprawdzeniu ciasteczek, przy otwarciu i zamknięciu okna logowania, po zalogowaniu, wylogowaniu, odmowie Google (`browserRejected`) i po usunięciu danych przeglądarki (ADR-021) |
 | `rewards://changed` | `RewardsStatus` | po każdym zastosowanym fakcie sesji, potwierdzeniu, resecie, zmianie configu, zmianie dnia nagród i po wczytaniu (ADR-022); przy wyłączonych funkcjach beta nigdy z `active: true` |
+| `history://changed` | `HistoryChanged { revision }` | zmieniła się zapisana historia (zapis sesji, „Zrobione?”, „Usuń historię”, usunięcie w panelu prywatności) albo `Config.appCategories` (ADR-023); UI pyta `get_weekly_stats` jeszcze raz o pokazywany tydzień |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -394,11 +402,16 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `PrivacyReport` | `get_privacy_report` | `privacy://changed` |
 | `YoutubeAccount` | `get_youtube_account` | `youtube://account` |
 | `RewardsStatus` | `get_rewards` (także wynik `reset_rewards`) | `rewards://changed` |
+| `WeeklyStats` | `get_weekly_stats { weekStart }` | `history://changed` (sama rewizja: UI pyta znowu o swój tydzień) |
 
 Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
 1. **najpierw** rejestruje `listen(...)`,
 2. potem wywołuje getter,
 3. stosuje dane tylko wtedy, gdy `revision` jest większa od już posiadanej (chroni przed starszą odpowiedzią gettera).
+
+`WeeklyStats` to jedyny getter z parametrem (ADR-023): event niesie tylko rewizję historii, a `api.watchWeeklyStats` nasłuchuje go najpierw,
+potem czyta wybrany tydzień i czyta go znowu po każdej zmianie. Stosuje tylko odpowiedź na najnowsze pytanie i dla tego samego tygodnia
+nigdy odpowiedzi ze starszą `revision` (wolna odpowiedź o poprzedni tydzień ani starsza nie cofną widoku).
 
 `session://phase-changed`, `session://summary`, `focus://nudge`, `app://error` i `app://close-requested` to zdarzenia jednorazowe, bez rewizji
 (ostatnie podsumowanie da się też pobrać przez `get_last_summary`).
@@ -426,6 +439,9 @@ pub struct SessionSnapshot {
     pub goal: Option<SessionGoal>,  // cel sesji z „Co dalej?” (ADR-017); widoczny w Idle i w trakcie sesji, czyszczony na Stop
     #[serde(default)]
     pub steps: Vec<MicroStep>,      // małe kroki nadchodzącej (Idle) albo trwającej sesji (funkcje beta, ADR-022); puste przy wyłączonych krokach
+    #[serde(default)]
+    pub smart_break: Option<SmartBreak>, // przerwa po bieżącym bloku focusu (albo trwająca) przesunięta przez inteligentne przerwy (ADR-023):
+                                    // linia pod zegarem i jej cofnięcie; bez tematu spotkania; `None` w Idle i przy wyłączonych `smartBreaks`
 }
 ```
 
@@ -723,6 +739,26 @@ Argumenty: `export_privacy_data` → `{ "path": "C:\\Users\\ola\\Documents\\focu
 Argumenty komend funkcji beta: `ack_reward_moments` → `{ "upTo": 4 }`, `play_reward_sound` → `{ "sound": "sparkle" }`,
 `set_session_steps` → `{ "steps": [ { "id": 1, "text": "Napisz tytuł" }, { "id": null, "text": "Otwórz plik" } ] }`, `set_step_done` → `{ "id": 1, "done": true }`.
 
+`Config`, tylko pola dodane przez ADR-023 (wartości domyślne; `onboardingDone: true` także, gdy pola brak: kreator widzi tylko świeża instalacja,
+dla której powłoka tworzy `Config::first_run()` z `false`; lista `pauseApps` skrócona, pełna to `tint::DEFAULT_PAUSE_APPS`, 17 nazw):
+
+```json
+{ "smartBreaks": false, "appCategories": {}, "onboardingDone": true,
+  "tint": { "schedule": "fixed", "location": null, "pauseForApps": true,
+            "pauseApps": ["Photoshop.exe", "Illustrator.exe", "Lightroom.exe", "…", "CaptureOne.exe"], "pauseForFullscreen": false } }
+```
+
+Te same pola po zmianach użytkownika (zachód → wschód słońca w Warszawie z listy, etykiety dwóch aplikacji):
+
+```json
+{ "smartBreaks": true, "appCategories": { "code.exe": "productive", "discord.exe": "distracting" }, "onboardingDone": true,
+  "tint": { "schedule": "sun", "location": { "latitude": 52.2297, "longitude": 21.0122, "city": "pl-warszawa" },
+            "pauseForApps": true, "pauseApps": ["Photoshop.exe", "Figma.exe"], "pauseForFullscreen": true } }
+```
+
+Argumenty komend ADR-023: `set_smart_break_opt_out` → `{ "meetingId": "…", "optOut": true }`, `get_weekly_stats` → `{ "weekStart": "2026-10-14" }`
+(odpowiedź ma `"weekStart": "2026-10-12"`, poniedziałek tego tygodnia). Odpowiedzi: §6.15.
+
 ### 6.5 Lista blokowanych stron (`websiteblacklist.txt`, ADR-013 pkt 4)
 
 Lista stron do blokowania nie jest częścią `Config`: **jedynym źródłem jest plik `websiteblacklist.txt`** w katalogu konfiguracji
@@ -895,7 +931,7 @@ jak nowe połączenie i od razu czyta kalendarz),
 wymiany kodu i odświeżania, gdy niepusty), `focus-platform/src/calendar/ics.rs`
 (pobieranie i parser iCalendar z `RRULE` / `EXDATE` / `RECURRENCE-ID` i strefami), `focus-platform/src/secrets.rs` (pliki szyfrowane DPAPI: `google-token.bin`,
 `ics-links.bin`; poza Windows niedostępne). Powłoka (`src-tauri/src/calendar/`, czysta część w `model.rs`) synchronizuje źródła poza aktorem sesji
-(aktor nie czeka na sieć, zasada 3), zapisuje wybory w `meeting-choices.json` (tylko id spotkania i wybór, bez tematu), liczy kolizje, planuje okienka `meetingReminder`, wysyła
+(aktor nie czeka na sieć, zasada 3), zapisuje wybory w `meeting-choices.json` (tylko id spotkania i wybór, bez tematu; od ADR-023 także „Zapytaj mnie” inteligentnych przerw w `optOuts`), liczy kolizje, planuje okienka `meetingReminder`, wysyła
 `Input::SetMeetingHolds` do aktora i emituje `calendar://changed`. Okno `popup` wysyła wybór z przypomnienia przez `set_meeting_choice`.
 Tokenów, linków ICS ani tematów spotkań nie loguje: szczegół błędu zamienia każdy adres na `<link>`, a błąd linku ICS podaje jego numer, nie treść.
 Czysta część (`model.rs`): łączenie źródeł (kopie spotkania z kilku źródeł: to samo id albo ten sam temat z początkiem w odstępie do minuty; wybór kopii przechodzi
@@ -1431,6 +1467,199 @@ księga i `rewards.load`. Przy wyłączonych nagrodach ta naprawa i komunikat cz
 Plik zablokowany albo bez dostępu: dwie ponowne próby (200 ms), potem widać `.bak` (albo nową księgę), `rewards.load` i w tym uruchomieniu nic
 się nie zapisuje (plik może być dobry, więc nigdy nie jest nadpisany ani odłożony). Sesja działa dalej (zasada 8). `Ledger::normalize`
 po wczytaniu (dni ≤ 42, zakresy ≤ 20, id celów ≤ 50, bank ≤ 3). Bez bety plik nie powstaje i nie zmienia się.
+
+### 6.15 Wyjątki odcienia, inteligentne przerwy, statystyki tygodnia i kreator (ADR-023)
+
+**Wdrożone wszystkie cztery części.** Najpierw kontrakt (`/sync-contract`): typy w `api.rs`, pola configu z wartościami domyślnymi i walidacją
+(`config.rs`), stałe (`tint::DEFAULT_PAUSE_APPS`, `stats::RECENT_WEEKS`, `stats::TOP_APPS_PER_WEEK`, `config::MAX_PAUSE_APPS` / `MAX_PROCESS_NAME_CHARS` /
+`MAX_CITY_ID_CHARS` / `MAX_APP_CATEGORIES` / `LATITUDE_RANGE` / `LONGITUDE_RANGE`), `Config::first_run()`, trzy komendy (wtedy zaślepki `notImplemented`)
+i wrappery w `api.ts` (`listSunCities`, `setSmartBreakOptOut`, `getWeeklyStats`, `onHistoryChanged`, `watchWeeklyStats`); potem funkcje (niżej). Dziś
+żadna komenda nie jest zaślepką: `list_sun_cities` zwraca wbudowaną listę, `TintStatus` ma prawdziwe `pausedBy`, `schedule` i dzisiejsze okno,
+`CalendarStatus.smartBreaks` / `smartOptOuts` i `SessionSnapshot.smartBreak` mają prawdziwe wartości, `get_weekly_stats` czyta historię,
+a `history://changed` jest wysyłany.
+
+```rust
+// Config (nowe pola; serde default, więc stary config.json się wczytuje)
+pub smart_breaks: bool,                                // domyślnie false
+pub app_categories: BTreeMap<String, AppCategory>,     // exe małymi literami → kategoria; domyślnie puste; najwyżej 500
+pub onboarding_done: bool,                             // domyślnie true (brak pola = istniejący użytkownik); Config::first_run() → false
+// TintConfig (nowe pola)
+pub schedule: TintSchedule,                            // fixed (domyślnie) | sun
+pub location: Option<TintLocation>,                    // domyślnie None
+pub pause_for_apps: bool,                              // domyślnie true
+pub pause_apps: Vec<String>,                           // domyślnie tint::DEFAULT_PAUSE_APPS (17 nazw exe)
+pub pause_for_fullscreen: bool,                        // domyślnie false
+pub struct TintLocation { pub latitude: f64 /* -90..=90 */, pub longitude: f64 /* -180..=180 */, pub city: Option<String> /* SunCity.id */ }
+pub struct SunCity { pub id: String, pub name: String, pub country: String /* ISO 3166-1 alfa-2 */, pub latitude: f64, pub longitude: f64 }
+// TintStatus (nowe pola, #[serde(default)])
+pub paused_by: Option<TintPause>,                      // TintPause { reason: TintPauseReason (app | fullscreen), app: Option<String> /* nazwa exe */ }
+pub schedule: TintScheduleState,                       // fixed | sun | polarDay | polarNight | noLocation
+pub window_start_minutes: u32, pub window_end_minutes: u32, // dzisiejsze okno (zachód / wschód albo stałe godziny)
+// Inteligentne przerwy
+pub struct SmartBreak { pub meeting_id: String, pub meeting_start_ms: i64, pub meeting_end_ms: i64, pub break_number: u32,
+    pub kind: SmartBreakKind /* endsBeforeMeeting | startsAtMeeting */, pub focus_delta_secs: i32, pub break_start_ms: i64, pub break_end_ms: i64 }
+// CalendarStatus: #[serde(default)] smart_breaks: Vec<SmartBreak>, smart_opt_outs: Vec<String>
+// SessionSnapshot: #[serde(default)] smart_break: Option<SmartBreak>
+// Statystyki tygodnia
+// SessionSummary: #[serde(default, skip_serializing_if = "Vec::is_empty")] focus_spans: Vec<TimeSpan>   (TS: focusSpans?)
+pub struct TimeSpan { pub start_ms: i64, pub end_ms: i64 }
+pub enum AppCategory { Productive, Neutral, Distracting }
+pub struct HistoryChanged { pub revision: u32 }
+pub struct WeeklyStats {
+    pub revision: u32, pub week_start: String /* poniedziałek RRRR-MM-DD */, pub iso_year: u32, pub iso_week: u32,
+    pub current_week: bool, pub first_week_start: Option<String>, pub history_off: bool,
+    pub days: Vec<DayStats> /* 7, pon..niedz */, pub focus_secs: u32, pub break_secs: u32, pub breaks_taken: u32, pub sessions: u32,
+    pub best_day: Option<Weekday>, pub heatmap: Vec<Vec<u32>> /* 7 × 24, sekundy focusu */, pub recent_heatmap: Vec<Vec<u32>>,
+    pub recent_weeks: u32 /* 8 */, pub top_apps: Vec<WeekApp> /* najwyżej 10 */, pub categories: CategoryTotals, pub estimated: bool,
+}
+pub struct DayStats { pub date: String, pub weekday: Weekday, pub focus_secs: u32, pub break_secs: u32, pub sessions: u32 }
+pub struct WeekApp { pub process: String, pub secs: u32, pub category: Option<AppCategory> }
+pub struct CategoryTotals { pub productive_secs: u32, pub neutral_secs: u32, pub distracting_secs: u32, pub unlabelled_secs: u32 }
+```
+
+**Walidacja configu** (`Config::normalized`, błędy `config.invalid` z polem): `tint.pauseApps` przycięte, puste usunięte, duplikaty bez względu na wielkość
+liter usunięte (zostaje pierwsza pisownia), najwyżej 64 nazwy po najwyżej 128 znaków, bez `\`, `/`, `:` i znaków sterujących; `tint.location.latitude` /
+`longitude` skończone i w zakresie; `tint.location.city` przycięte (puste → `null`), najwyżej 64 znaki, nie jest sprawdzane z listą miast;
+`appCategories`: klucze przycięte i małymi literami (puste usunięte), te same reguły nazwy co `pauseApps`, najwyżej 500. Harmonogram `sun` bez lokalizacji
+jest poprawny (do czasu jej podania działają stałe godziny).
+
+**Wyjątki odcienia** (wdrożone). Rdzeń, `focus-core/src/tint.rs` (czysty, testy jednostkowe):
+- `is_pause_app` / `pause_reason(cfg, foreground, full_screen) -> Option<TintPause>`: dokładna nazwa exe z `pauseApps` bez rozróżniania wielkości liter
+  (bez ścieżek, prefiksów i tytułów okien); aplikacja ma pierwszeństwo przed pełnym ekranem; każdy przełącznik działa osobno.
+- `TintExceptions` (histereza i płynne przejście na milisekundach monotonicznych z powłoki): wstrzymanie zaczyna się od razu, kończy się
+  `PAUSE_RELEASE_MS` = 2000 ms po pierwszej próbce bez wyjątku (powrót w tym czasie liczy od nowa, więc Alt+Tab nie miga), a ciepło schodzi do 0
+  i wraca liniowo przez `PAUSE_FADE_MS` = 1200 ms, od miejsca, w którym jest (odwrócenie w połowie nie skacze). Pierwsza próbka po `reset` (poza oknem
+  ciepła, podgląd) nie ma przejścia: aplikacja do pracy z kolorem na pierwszym planie o zachodzie słońca w ogóle nie widzi ciepła.
+- `tint_window(cfg, data lokalna, przesunięcie UTC) -> TintWindow { schedule, start_minutes, end_minutes }` i `window_level` (dawne `tint_level` dla
+  dowolnego okna): `fixed` = stałe godziny; `sun` = zachód → wschód danej daty z `focus-core/src/sun.rs`, zaokrąglone do minuty; brak lokalizacji
+  (albo nieprawidłowa data) → `noLocation`, dzień / noc polarna (też zachód i wschód w tej samej minucie) → `polarDay` / `polarNight`, wszystkie ze stałymi godzinami.
+- `sun.rs`: równania NOAA Solar Calculator (Meeus): deklinacja i równanie czasu, kąt godzinny dla zenitu 90,833°, trzy przybliżenia w chwili zdarzenia,
+  zdarzenia przypisane do daty lokalnej także daleko od UTC (UTC+14), zachód po północy raportowany jako > 1440 min (Reykjavík w czerwcu);
+  `utc_offset_minutes` (zegar lokalny vs UTC, zaokrąglone do 15 min), `utc_date`, wbudowana lista `CITIES` (43: wszystkie 18 siedzib władz
+  województw i 25 dużych miast świata; id `kk-nazwa`). Testy: Warszawa w czterech porach roku, Londyn, Nowy Jork, Los Angeles, Tokio, Auckland,
+  Sydney, Singapur (±2 min od tablic USNO), Tromsø i bieguny, Kiribati, nieprawidłowe dane.
+
+Powłoka, `src-tauri/src/tint.rs`: wątek odcienia liczy datę lokalną i przesunięcie (`clock::local_date_time` + `sun::utc_offset_minutes`, bez Windows:
+data UTC) i dzisiejsze okno przy każdej ocenie. Tracker próbkuje tylko w czasie focusu, a odcień działa cały wieczór, więc ten sam wątek odcienia
+(bez nowego wątku) próbkuje `foreground::probe()` najwyżej raz na `WATCH_EVERY` = 1 s i `notification_state::user_is_presenting()` (pełny ekran,
+gra D3D, tryb prezentacji) — tylko gdy okno jest ciepłe i któryś wyjątek jest włączony; z próbki zostaje sama nazwa exe (tytuł od razu odrzucony).
+W czasie przejścia ocena co `FADE_TICK` = 100 ms. Ten sam poziom trafia do mechanizmu ponownie najwyżej co `SCHEDULE_TICK` (gamma odświeżana jak
+dotąd), zmieniony od razu. Poziom 0 przywraca mechanizm jak koniec okna (plik `tint-restore.json` i wpis RunOnce usuwane, przed powrotem ciepła zapisywane
+na nowo), więc gwarancje zasady 6 się nie zmieniają. Podgląd w Ustawieniach i uruchomienie `--restore-shields` ignorują wyjątki (`pausedBy = null`).
+Log mówi tylko „suspended by an exception” / „exception over”, nigdy nazwy aplikacji. Testy `Watch` na fałszywej sondzie (próbkowanie ≤ 1 Hz, przejście,
+histereza, pierwsza próbka w oknie, przełączniki, wyjście z okna).
+
+UI, `TintSettings.svelte`: „Kiedy ocieplać” (stałe godziny / od zachodu do wschodu słońca), miejsce z listy (grupa kraju z co najmniej 3 miastami,
+reszta „Inne miasta”, nazwy krajów z `Intl.DisplayNames`) albo własne współrzędne (pole tekstowe, przecinek i typograficzny minus akceptowane, walidacja
+lokalna jak w `config.rs`), „Dziś: zachód słońca 17:46, wschód 06:57” albo powód stałych godzin; stałe godziny opisane jako zapasowe. „Wyjątki”:
+przełącznik programów do pracy z kolorem z listą chipów (usuń, dodaj z Enter, `.exe` dopisywane, „Przywróć domyślną listę” = kopia
+`tint::DEFAULT_PAUSE_APPS` w `config.svelte.ts`), przełącznik pełnego ekranu; status „Wstrzymane: Photoshop na pierwszym planie” / „… na pełnym ekranie”
+(pusta kropka). Strona Deweloper: „Warm colours paused · Photoshop in front” (próbka `tint.sample` tylko w pamięci, czyszczona z innymi próbkami).
+
+**Inteligentne przerwy** (wdrożone). Przełącznik `smartBreaks` na stronie Skupienie przy wyborze czasów, aktywny tylko z połączonym kalendarzem (inaczej wyłączony,
+z podpowiedzią i linkiem do Ustawień kalendarza). Czysta funkcja planowania w `focus-core` (`calendar.rs` / `session.rs`): dla spotkania kolidującego
+z przerwą zmienia długość poprzedzającego bloku focusu tak, żeby przerwa skończyła się tuż przed spotkaniem (`endsBeforeMeeting`) albo zaczęła razem
+z nim (`startsAtMeeting`), w granicach: skrócenie do ≥ 60 % długości focusu i nigdy poniżej 10 min (profil demo przeskalowany), wydłużenie o ≤ 25 %
+(nazwane stałe w `timing.rs`, zasada 2). Wybiera wariant z mniejszą zmianą; bez dopasowania spotkanie dostaje zwykłe pytanie z ADR-016. Spotkania
+z wyborem użytkownika (`MeetingChoice`) albo w `smartOptOuts` nie są dopasowywane; całodniowe, wolne i wstępne są pomijane jak dziś. Sesja dostaje
+nowy koniec fazy istniejącą ścieżką wejść aktora (nowe `Input`, jak `SetMeetingHolds`), bez sztuczek z zegarem monotonicznym; kolejność efektów
+ADR-013 się nie zmienia, a Stop, Pomiń fazę i Pauza działają jak zawsze. Testy: bez spotkania, spotkanie w środku focusu, w środku przerwy, spotkania
+jedno po drugim, całodniowe, wolne i wstępne pominięte, dzień zmiany czasu, profil demo.
+
+Wdrożenie inteligentnych przerw:
+- **Rdzeń** (`focus-core/src/calendar.rs`): `SmartMeeting { id, startMs, endMs, eligible }` (bez tematu), `fit_break` dla jednej przerwy i
+  `plan_smart_breaks` dla całego planu (blok po bloku; przesunięta przerwa przesuwa kolejne). Wariant jest możliwy, gdy blok mieści się w
+  `TimingProfile::smart_min_focus_ms` … `smart_max_focus_ms` (`SMART_BREAK_MIN_FOCUS_PERCENT` = 60, `SMART_BREAK_MAX_EXTEND_PERCENT` = 25,
+  `SMART_BREAK_MIN_FOCUS_SECS` = 600, w demo `DEMO_SMART_BREAK_MIN_FOCUS_SECS` = 10; focus krótszy niż ten próg tylko się wydłuża), przerwa nie
+  zaczyna się w przeszłości, nie trafia na inne spotkanie (także z wyborem użytkownika), a spotkanie kończy się przed następną przerwą (dłuższe
+  dostaje pytanie, gdzie najlepiej pasuje „Przedłuż skupienie”). Kolidujące spotkanie z wyborem, z „Zapytaj mnie” albo dłuższe niż 4 h → bez
+  przesunięcia (pytanie). Wybór: mniejsza zmiana, przy remisie przerwa przed spotkaniem. Czas kalendarzowy w ms, więc zmiana czasu nic nie psuje.
+- **Sesja** (`session.rs`): `Input::SetSmartMeetings(Vec<SmartMeeting>)` (bez efektów). Sesja dopasowuje bieżący blok sama, tą samą funkcją, przy
+  Start, początku nowego bloku, Wznów i zmianie listy (pauza: jakby wznowić teraz): przesuwa się tylko jego termin (o różnicę dopasowań), więc
+  koniec fazy przychodzi zwykłym Tickiem z efektami w kolejności ADR-013. Blok przedłużony przez `Extend` albo skrócony na stronie Deweloper jest
+  stały. `SessionSnapshot.smartBreak` pokazuje przesuniętą przerwę bieżącego bloku i trwa przez nią (po Pomiń fazę znika); `phaseTotalSecs` ma już zmianę.
+- **Powłoka** (`src-tauri/src/calendar.rs`, `calendar/model.rs`): `model::smart_meetings` (wszystkie spotkania; `eligible` = brak wyboru i brak
+  „Zapytaj mnie”; pusta lista przy wyłączonych `smartBreaks`) idzie do aktora (`ActorCmd::SetSmartMeetings`, tylko po zmianie). Plan
+  (`SessionPlan::smart_plan`) nie dopasowuje bieżącego bloku focusu (ma już dopasowanie sesji, `SessionPlan.smart` z migawki), a kolejne tak;
+  `CalendarStatus.smartBreaks` = przerwa sesji + przesunięcia planu, a ich spotkania znikają z `conflicts`. Przypomnienia sprawdzają kolizję
+  z tym samym planem. Całodniowe i wolne wydarzenia odrzuca już platforma (`meetings_only`); wstępne (tentative) liczą się jak zajęte, tak jak przy pytaniu.
+- **UI**: przełącznik w karcie „Czas” (`TimingEditor.svelte`, wyłączony bez kalendarza, z linkiem do Ustawień kalendarzy), linia pod zegarem
+  (`SmartBreakNote.svelte`: same godziny, „Zapytaj mnie”; w Idle pierwsza przerwa planu; w przesuniętej przerwie bez cofania), lista przesuniętych
+  przerw w karcie spotkań (`MeetingConflicts.svelte`: temat jak przy pytaniu, zmiana bloku, „Zapytaj mnie”) i „Dopasuj automatycznie” przy
+  spotkaniu z „Zapytaj mnie”. Teksty `calendar.smart` w 10 językach. Strona Deweloper: „Smart break · moved break + note” (próbka w pamięci).
+
+**Statystyki tygodnia** (wdrożone). Czysta agregacja w `focus-core/src/stats.rs`: `WeekAggregator` dostaje kolejne sesje (strumieniowo,
+w dowolnej kolejności), zapytanie `WeekQuery { day, now_ms, revision, history_off }` i funkcję „przesunięcie strefy w minutach w chwili `utc_ms`”
+(pytana raz na kwadrans UTC okna, bo każda strefa i każda zmiana czasu wypada na pełny kwadrans, np. Nowa Fundlandia o 05:30 UTC; przycinana do ±18 h),
+więc godziny są dobre także w dni zmiany czasu i w tygodniach sprzed niej. Sesje demo są pomijane.
+Sesja liczy się do dnia, w którym się zaczęła (`sessions`, `breakSecs`, `breaksTaken` = suma `cyclesCompleted`, aplikacje), a sekundy focusu do dnia
+i godziny, w której płynęły: z `focusSpans` (od ADR-023 `Session` zapisuje przedziały biegnącego focusu na zegarze kalendarzowym: bez pauz, przerw
+i luk po uśpieniu; najwyżej `stats::MAX_FOCUS_SPANS` = 256, potem rozciąga ostatni), a dla starszych linii `focusedSecs` rozłożone równo od startu do
+końca (`estimated: true`, gdy taka sesja wpada w okno 8 tygodni). Najlepszy dzień = pierwszy z największym focusem; top 10 aplikacji, ale kategorie
+liczą wszystkie aplikacje tygodnia (`Config.appCategories`, klucz = nazwa exe małymi literami). Powłoka (`src-tauri/src/weekly.rs`) parsuje
+`weekStart`, czyta `history.jsonl` linia po linii poza wątkami async (`Persistence::scan_history`: najwyżej ostatnie 64 MB pliku, linia > 1 MB
+i linie nieczytelne pominięte, w logu tylko liczby), strefę bierze z `focus_platform::clock::utc_offset_minutes_at` (Windows
+`SystemTimeToTzSpecificLocalTime`; poza Windows przesunięcie 0, ADR-008). `history://changed` (globalna rewizja `AtomicU32`) idzie po zapisie sesji,
+„Zrobione?” zapisanym w pliku, „Usuń całą historię”, usunięciu historii w panelu prywatności i po zapisie configu ze zmianą `appCategories` albo
+`keepHistory`. `keepHistory` wyłączone → `historyOff: true`: wcześniej zapisane sesje dalej się liczą, a UI dopisuje, że nowe nie trafią
+do statystyk (bez historii: wyjaśnienie zamiast liczb). Tytuły okien nie są potrzebne.
+UI: `src/lib/components/week/` (`WeekSection`, `WeekHeatmap`, `WeekApps`) na Podsumowaniu, stan w `src/lib/state/weekly.svelte.ts`
+(`api.watchWeeklyStats` tylko wtedy, gdy sekcja jest na ekranie; poprzedni tydzień zostaje przyciemniony, dopóki nie przyjdzie wybrany),
+daty `RRRR-MM-DD` w `src/lib/week.ts`. Heatmapa jest prawdziwą tabelą (wiersz = dzień, kolumna = godzina, w komórce czas dla czytników ekranu
+i `title` po najechaniu), 5 stopni koloru z `--accent` (każdy motyw, także 8-bit), legenda „mniej → więcej”; słupki dni z tekstem dla czytników.
+Etykiety: chipy przy aplikacji (`aria-pressed`; ponowne kliknięcie usuwa etykietę), zapis od razu do configu, kolor zawsze z podpisem. Pusty
+tydzień = spokojny tekst bez oceniania („jeszcze nic tu nie ma”).
+„Sample week” na stronie Deweloper to próbka w pamięci UI, jak inne próbki (bez komendy).
+
+**Kreator pierwszego uruchomienia** (wdrożony). Bez nowych komend: tylko `Config.onboardingDone`. `Persistence::load_config` daje `Config::first_run()` wyłącznie wtedy,
+gdy `config.json` nie istnieje (świeża instalacja, także po resecie fabrycznym); uszkodzony plik i „Usuń wszystko” dają `Config::default()`, więc kreator się
+nie pokazuje. Flaga trafia na dysk z pierwszym zapisem configu, więc zamknięcie aplikacji w trakcie kreatora pokaże go przy następnym starcie, a zmiany
+z kroków zostają. Po „Zacznij pierwsze skupienie”, „Pomiń” (z potwierdzeniem) albo linku „później w Ustawieniach” UI zapisuje `onboardingDone: true`
+przez `update_config`. Kroki używają istniejących komend, sklepów i komponentów Ustawień (`get_system_language`, `open_extension_dir`, `update_config`;
+`MusicSourcePicker`, `ExtensionGuide`, `LauncherSettings`, `CloseButtonSetting`, `Switch`), bez własnej logiki ustawień.
+
+UI: `src/lib/state/onboarding.svelte.ts` (sklep: otwarcie raz na okno, gdy pierwszy wczytany config ma `onboardingDone: false`; kroki; zakończenie, pominięcie,
+podgląd) i `src/lib/components/onboarding/` (`FirstRunWizard` + komponent na krok + `WizardMascot`). Kreator zakrywa całe okno główne (warstwa nad
+nagłówkiem i paskiem muzyki, pod toastami; okna dialogowe są w top layer): strona pod nim nie jest renderowana (jedna kopia każdego `id`), nagłówek i pasek
+muzyki są `inert`, a odtwarzacz gra dalej. Powłoka nie czeka na kreatora: zasobnik, okienka i sesja uruchomiona z zasobnika działają, a trwająca sesja
+pokazuje się w kreatorze z przyciskiem Stop (zasada 7). Klawiatura: Enter = dalej (poza przyciskami, linkami, polami wielowierszowymi i listami), Esc = pomiń
+z potwierdzeniem, Tab zostaje w kreatorze; nagłówek nowego kroku dostaje fokus. Aksolotl pokazuje pozę kroku (`poses:<nazwa>`, atlas póz także bez bety)
+z „boing” z łaskotania (`mascot-boing` w `app.css`) i zdanie kroku w dymku (`useSpeech`, litera po literze; przy ograniczonym ruchu od razu i bez ruchu).
+„Show first-run wizard” na stronie Deweloper pokazuje go od pierwszego kroku bez zmiany `onboardingDone`; zapisuje ją tylko ukończenie.
+
+`TintStatus` (harmonogram słońca w Warszawie, ok. 18:30; na pierwszym planie Photoshop, więc ciepło zeszło do 0):
+
+```json
+{ "revision": 40, "enabled": true, "level": 0, "preview": false, "active": false, "mode": "nightLight", "capped": false, "error": null,
+  "pausedBy": { "reason": "app", "app": "Photoshop.exe" }, "schedule": "sun", "windowStartMinutes": 1067, "windowEndMinutes": 417 }
+```
+
+`SmartBreak` (w `CalendarStatus.smartBreaks` i, w trakcie 2. bloku focusu, w `SessionSnapshot.smartBreak`; spotkanie z przykładu w §6.4: profil 45/15,
+2. przerwa przesunięta o 400 s wcześniej, żeby skończyła się, gdy zaczyna się spotkanie; linia pod zegarem: „Przerwa przesunięta na 13:45 · spotkanie o 14:00”):
+
+```json
+{ "meetingId": "…", "meetingStartMs": 1760356800000, "meetingEndMs": 1760360400000, "breakNumber": 2, "kind": "endsBeforeMeeting",
+  "focusDeltaSecs": -400, "breakStartMs": 1760355900000, "breakEndMs": 1760356800000 }
+```
+
+`WeeklyStats` (tydzień 42 roku 2026, we wtorek; `days` i heatmapy skrócone):
+
+```json
+{ "revision": 12, "weekStart": "2026-10-12", "isoYear": 2026, "isoWeek": 42, "currentWeek": true, "firstWeekStart": "2026-09-07", "historyOff": false,
+  "days": [ { "date": "2026-10-12", "weekday": "mon", "focusSecs": 8100, "breakSecs": 1800, "sessions": 2 },
+            { "date": "2026-10-13", "weekday": "tue", "focusSecs": 2700, "breakSecs": 900, "sessions": 1 },
+            { "date": "2026-10-14", "weekday": "wed", "focusSecs": 0, "breakSecs": 0, "sessions": 0 } ],
+  "focusSecs": 10800, "breakSecs": 2700, "breaksTaken": 3, "sessions": 3, "bestDay": "mon",
+  "heatmap": [ [0, 0, 0, 0, 0, 0, 0, 0, 0, 2700, 3600, 1800, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ],
+  "recentHeatmap": [ [0, 0, 0, 0, 0, 0, 0, 0, 900, 9900, 12600, 7200, 0, 0, 3600, 5400, 1800, 0, 0, 0, 0, 0, 0, 0] ], "recentWeeks": 8,
+  "topApps": [ { "process": "Code.exe", "secs": 6900, "category": "productive" }, { "process": "chrome.exe", "secs": 2400, "category": null },
+               { "process": "Discord.exe", "secs": 600, "category": "distracting" } ],
+  "categories": { "productiveSecs": 6900, "neutralSecs": 0, "distractingSecs": 600, "unlabelledSecs": 2400 },
+  "estimated": true }
+```
+
+`HistoryChanged`: `{ "revision": 13 }`. `SunCity`: `{ "id": "pl-warszawa", "name": "Warszawa", "country": "PL", "latitude": 52.2297, "longitude": 21.0122 }`.
+`SessionSummary`, tylko pole dodane przez ADR-023 (znika z JSON-a, gdy puste): `{ "focusSpans": [ { "startMs": 1760342400000, "endMs": 1760345100000 } ] }`.
 
 ## 7. Model wątków i współbieżności
 
