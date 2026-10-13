@@ -2,6 +2,7 @@
 import type { GameLauncher } from "./GameLauncher";
 import type { MeetingConflict } from "./MeetingConflict";
 import type { PopupKind } from "./PopupKind";
+import type { PopupRewards } from "./PopupRewards";
 
 export type PopupInfo = { 
 /**
@@ -32,4 +33,13 @@ workCount: number,
  * Developer-mode sample that stays until closed (ADR-019): no auto-hide countdown in the popup page and no
  * timeout in the shell. Always `false` for real popups.
  */
-sticky: boolean, };
+sticky: boolean, 
+/**
+ * `BreakStarted` / `BreakHeld` / `FocusStarted` while rewards are active: the reward line (beta, ADR-022).
+ */
+rewards: PopupRewards | null, 
+/**
+ * `FocusStarted` after a break while small steps are active: the next open step ("Teraz: …"). The user's own
+ * text: local only, never logged.
+ */
+nextStep: string | null, };

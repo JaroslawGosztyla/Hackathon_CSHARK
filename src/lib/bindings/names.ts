@@ -57,6 +57,12 @@ export const COMMANDS = {
   getYoutubeAccount: "get_youtube_account",
   youtubeSignIn: "youtube_sign_in",
   youtubeSignOut: "youtube_sign_out",
+  getRewards: "get_rewards",
+  ackRewardMoments: "ack_reward_moments",
+  resetRewards: "reset_rewards",
+  playRewardSound: "play_reward_sound",
+  setSessionSteps: "set_session_steps",
+  setStepDone: "set_step_done",
 } as const;
 
 export const EVENTS = {
@@ -76,6 +82,7 @@ export const EVENTS = {
   workChanged: "work://changed",
   privacyChanged: "privacy://changed",
   youtubeAccount: "youtube://account",
+  rewardsChanged: "rewards://changed",
 } as const;
 
 export const BRIDGE_PORT = 47615;

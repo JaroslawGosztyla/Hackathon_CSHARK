@@ -26,10 +26,13 @@ import type {
   PopupInfo,
   PrivacyItemKind,
   PrivacyReport,
+  RewardSound,
+  RewardsStatus,
   SessionGoal,
   SessionSnapshot,
   SessionSummary,
   ShieldStatus,
+  StepDraft,
   TeamsStatus,
   TintStatus,
   Track,
@@ -235,6 +238,26 @@ export const youtubeSignIn = () => call<void>(COMMANDS.youtubeSignIn);
 /** Deletes the google.com / youtube.com cookies of the app's browser profile (the consent cookies stay). */
 export const youtubeSignOut = () => call<void>(COMMANDS.youtubeSignOut);
 
+// Beta: sparks, streak and small steps (ADR-022).
+/** Sparks, daily goal, level, streak, week and the moments not acknowledged yet (main window only). */
+export const getRewards = () => call<RewardsStatus>(COMMANDS.getRewards);
+/** Removes the pending moments with `id <= upTo` (played or shown). Main window only: the popup never acks. */
+export const ackRewardMoments = (upTo: number) => call<void>(COMMANDS.ackRewardMoments, { upTo });
+/** "Zacznij od nowa": a new ledger (session history stays). Confirm with the user first. */
+export const resetRewards = () => call<RewardsStatus>(COMMANDS.resetRewards);
+/**
+ * A short reward sound (pop / sparkle / fanfare). The shell skips it while rewards or reward sounds are off,
+ * celebrations are `numbersOnly` or the user is presenting, and waits for a phase chime to finish.
+ */
+export const playRewardSound = (sound: RewardSound) => call<void>(COMMANDS.playRewardSound, { sound });
+/**
+ * Replaces the small steps of the coming or running session (any phase): `id` keeps an existing step, `null` adds
+ * one. Errors: `stepsOff`, `tooManySteps` (field `steps`, more than 5). The new plan arrives in `session://snapshot`.
+ */
+export const setSessionSteps = (steps: StepDraft[]) => call<void>(COMMANDS.setSessionSteps, { steps });
+/** Ticks / unticks a step (Focus or Break, also paused; no-op when idle or for an unknown id). */
+export const setStepDone = (id: number, done: boolean) => call<void>(COMMANDS.setStepDone, { id, done });
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -299,10 +322,15 @@ export const subscribePrivacy = (apply: (r: PrivacyReport) => void, onError?: (e
   subscribe(EVENTS.privacyChanged, getPrivacyReport, apply, onError);
 export const subscribeYoutubeAccount = (apply: (a: YoutubeAccount) => void, onError?: (e: AppError) => void) =>
   subscribe(EVENTS.youtubeAccount, getYoutubeAccount, apply, onError);
+/** Rewards view state (beta, ADR-022), revision-guarded like every other view state (ADR-012). */
+export const subscribeRewards = (apply: (r: RewardsStatus) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.rewardsChanged, getRewards, apply, onError);
 
 export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
 export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);
 export const onNudge = (handler: (n: Nudge) => void) => on<Nudge>(EVENTS.focusNudge, handler);
+/** Raw `rewards://changed` (prefer `subscribeRewards`, which also reads the getter and drops stale revisions). */
+export const onRewardsChanged = (handler: (r: RewardsStatus) => void) => on<RewardsStatus>(EVENTS.rewardsChanged, handler);
 export const onAppError = (handler: (e: AppError) => void) =>
   on<unknown>(EVENTS.appError, (payload) => handler(toAppError(payload)));
 /** The user pressed X on the main window while `closeToTray` is undecided: ask, then call `resolveClose`. */

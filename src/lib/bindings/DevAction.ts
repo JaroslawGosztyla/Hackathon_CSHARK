@@ -4,7 +4,8 @@ import type { PopupKind } from "./PopupKind";
 
 /**
  * A button on the developer page (`dev_trigger`). Sample data lives only in memory: nothing is written to
- * `history.jsonl` or `meeting-choices.json` and nothing is sent over the network.
+ * `history.jsonl` or `meeting-choices.json` and nothing is sent over the network. The one exception is
+ * [`DevAction::FactoryReset`], which deletes the app's own data on purpose.
  */
 export type DevAction = { "type": "popup", kind: PopupKind, 
 /**
@@ -15,4 +16,4 @@ leadMinutes: number | null,
 /**
  * Keep the popup open until it is closed (`PopupInfo.sticky`).
  */
-sticky: boolean, } | { "type": "toast", phase: Phase, } | { "type": "setRemaining", secs: number, };
+sticky: boolean, } | { "type": "toast", phase: Phase, } | { "type": "setRemaining", secs: number, } | { "type": "presentationMode", on: boolean, } | { "type": "factoryReset" };

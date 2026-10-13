@@ -115,9 +115,10 @@ pub mod commands {
     pub const SET_SESSION_GOAL: &str = "set_session_goal";
     /// `{ sessionId: string, done: boolean } -> ()` marks the goal of a finished session as done / not done (history).
     pub const MARK_GOAL_DONE: &str = "mark_goal_done";
-    /// `{ action: DevAction } -> ()` developer page trigger (ADR-019): a sample popup, a phase toast or a shorter
-    /// running phase. Rejected with `developerModeOff` unless `Config.developer_mode` is on. Nothing is persisted
-    /// and nothing leaves the computer.
+    /// `{ action: DevAction } -> ()` developer page trigger (ADR-019): a sample popup, a phase toast, a shorter
+    /// running phase, presentation mode on / off or a factory reset (then the app restarts). Rejected with
+    /// `developerModeOff` unless `Config.developer_mode` is on. Nothing leaves the computer; only the factory reset
+    /// changes files (it deletes the app's own data).
     pub const DEV_TRIGGER: &str = "dev_trigger";
     /// `() -> PrivacyReport` what FocusMode stores on this computer, item by item (ADR-020). Presence, sizes and
     /// counts only: never the contents of a token, an ICS link or a cookie.
@@ -141,6 +142,24 @@ pub mod commands {
     pub const YOUTUBE_SIGN_IN: &str = "youtube_sign_in";
     /// `() -> ()` deletes the google.com / youtube.com cookies of the WebView2 profile (the consent cookies stay).
     pub const YOUTUBE_SIGN_OUT: &str = "youtube_sign_out";
+    /// `() -> RewardsStatus` sparks, daily goal, level, streak and pending moments (beta, ADR-022). Main window.
+    pub const GET_REWARDS: &str = "get_rewards";
+    /// `{ upTo: number } -> ()` removes the pending moments with `id <= upTo` (they were played or shown).
+    /// Main window only: the popup never acks.
+    pub const ACK_REWARD_MOMENTS: &str = "ack_reward_moments";
+    /// `() -> RewardsStatus` "Zacznij od nowa": a new ledger with a new seed; the demo preview is dropped.
+    /// The UI confirms first. Session history is not touched.
+    pub const RESET_REWARDS: &str = "reset_rewards";
+    /// `{ sound: RewardSound } -> ()` plays a reward sound. No-op while rewards are inactive, reward sounds are off,
+    /// celebrations are `numbersOnly` or the user is presenting; waits until a phase chime has finished.
+    pub const PLAY_REWARD_SOUND: &str = "play_reward_sound";
+    /// `{ steps: StepDraft[] } -> ()` replaces the small steps of the coming or running session (any phase).
+    /// Errors: `stepsOff` while small steps are off, `tooManySteps` (field `steps`) above 5. The new plan arrives in
+    /// `session://snapshot`. Step texts are never logged.
+    pub const SET_SESSION_STEPS: &str = "set_session_steps";
+    /// `{ id: number, done: boolean } -> ()` ticks / unticks a step (Focus or Break, also paused). Idle or an
+    /// unknown id: no-op. `stepsOff` while small steps are off.
+    pub const SET_STEP_DONE: &str = "set_step_done";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -178,6 +197,9 @@ pub mod events {
     pub const PRIVACY_CHANGED: &str = "privacy://changed";
     /// `YoutubeAccount`, whenever the sign-in state or the sign-in window changes.
     pub const YOUTUBE_ACCOUNT: &str = "youtube://account";
+    /// `RewardsStatus` (beta, ADR-022), after every applied fact, ack, reset, config change, reward-day rollover and
+    /// load. Never emitted with `active: true` while the rewards are off.
+    pub const REWARDS_CHANGED: &str = "rewards://changed";
 }
 
 /// Loopback port of the browser-extension bridge (`GET http://127.0.0.1:{BRIDGE_PORT}/v1/state` → `BridgeState`).
@@ -252,6 +274,60 @@ pub struct SessionSnapshot {
     /// What the user focuses on in this session (from "Co dalej?").
     #[serde(default)]
     pub goal: Option<SessionGoal>,
+    /// Small steps of the coming (Idle) or running session (beta, ADR-022). Empty while small steps are off.
+    #[serde(default)]
+    pub steps: Vec<MicroStep>,
+}
+
+/// A small step of the session plan (beta, ADR-022). `text` is the user's own text: it stays local (memory, the IPC
+/// snapshot, the popup, `history.jsonl` only with `keepHistory`) and is never logged: `Debug` prints its length only.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MicroStep {
+    /// Stable within the session plan (kept across Start and the carry-over at Stop).
+    pub id: u32,
+    /// Trimmed, at most 80 characters.
+    pub text: String,
+    pub done: bool,
+}
+
+impl std::fmt::Debug for MicroStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MicroStep")
+            .field("id", &self.id)
+            .field("text", &RedactedText(&self.text))
+            .field("done", &self.done)
+            .finish()
+    }
+}
+
+/// One step as the UI edits it (`set_session_steps`): `id` = an existing step (it keeps its `done`), `None` = a new one.
+/// `Debug` prints the text length only.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StepDraft {
+    pub id: Option<u32>,
+    pub text: String,
+}
+
+impl std::fmt::Debug for StepDraft {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StepDraft")
+            .field("id", &self.id)
+            .field("text", &RedactedText(&self.text))
+            .finish()
+    }
+}
+
+/// Prints `"<n chars>"` instead of the user's text (rule 11: step texts never reach the log).
+struct RedactedText<'a>(&'a str);
+
+impl std::fmt::Debug for RedactedText<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\"<{} chars>\"", self.0.chars().count())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -299,7 +375,8 @@ pub struct Config {
     /// `None` (default) asks once, at the first X (`app://close-requested`).
     pub close_to_tray: Option<bool>,
     /// Small FocusMode popups (bottom-right, app-styled) when focus or a break starts, instead of
-    /// Windows toasts. Default false; turned on when the user picks the tray at the first X.
+    /// Windows toasts (never both; a toast only when this is off or the popup window cannot be shown). Default true
+    /// (a missing field too, like every field); also turned on when the user picks the tray at the first X.
     pub phase_popups: bool,
     /// Warm screen tint by time of day. Off by default.
     pub tint: TintConfig,
@@ -327,6 +404,73 @@ pub struct Config {
     /// Developer page with test triggers (sample popups, toasts, mascot, a shorter phase) for screenshots (ADR-019).
     /// Default false; an older `config.json` without it loads with it off.
     pub developer_mode: bool,
+    /// Master switch for beta features (ADR-022). Default false; an older `config.json` loads with it off.
+    pub beta_features: bool,
+    /// Sparks, streak and small steps (ADR-022). Effective only while `beta_features` is on.
+    pub rewards: RewardsConfig,
+}
+
+/// Beta: sparks, levels, daily goal, streak, celebrations and small steps (ADR-022). Every switch is effective only
+/// while `Config.beta_features` is on; turning anything off hides its UI and keeps the data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct RewardsConfig {
+    /// Sparks, levels, daily goal, streak and celebrations. Default true.
+    pub enabled: bool,
+    /// Small steps in a session (works without `enabled` too). Default true.
+    pub micro_steps: bool,
+    /// Surprise rolls after full blocks. Default true.
+    pub surprises: bool,
+    /// Reward sounds (pop, sparkle, fanfare). Default true.
+    pub sounds: bool,
+    /// Default `Full`; the OS reduced-motion setting caps the visuals at `Calm`.
+    pub celebrations: CelebrationLevel,
+    /// P1: the axolotl's back-view pose while focus runs. Default false (owner decides before it is on by default).
+    pub focus_companion: bool,
+    /// UI only: hide the streak (it keeps being computed). Default true.
+    pub show_streak: bool,
+    /// Holiday / rough week: days while paused are neutral for the streak. Default false.
+    pub streak_paused: bool,
+    /// Default `Light` (30 sparks).
+    pub daily_goal: DailyGoal,
+    /// Days off (neutral for the streak). Default Sat + Sun; deduplicated and sorted Mon..Sun; at most 6.
+    pub rest_weekdays: Vec<Weekday>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Weekday {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+/// Daily goal preset in sparks (`focus_core::rewards::DAILY_GOAL_SPARKS`): 30 / 60 / 120.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DailyGoal {
+    Light,
+    Regular,
+    Strong,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CelebrationLevel {
+    /// Count-up, poses, confetti, one sound per celebration.
+    Full,
+    /// The same moments as still frames: no particles, floats, count-up or flips.
+    Calm,
+    /// Numbers and lists only: no pose changes, no sounds.
+    NumbersOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -665,6 +809,14 @@ pub struct SessionSummary {
     /// Set by the user in the summary ("Zrobione?").
     #[serde(default)]
     pub goal_done: Option<bool>,
+    /// Small steps of this session with their ticks (beta, ADR-022). Left out of the JSON when empty, so a
+    /// `history.jsonl` line without steps stays as before (the TS field is optional: `undefined` = none).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<MicroStep>,
+    /// Sparks earned by this session (beta; `None` while rewards were off). Numbers only. Left out of the JSON when
+    /// `None` (the TS field is optional: `undefined` or `null` = none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparks: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -841,6 +993,28 @@ pub struct PopupInfo {
     /// timeout in the shell. Always `false` for real popups.
     #[serde(default)]
     pub sticky: bool,
+    /// `BreakStarted` / `BreakHeld` / `FocusStarted` while rewards are active: the reward line (beta, ADR-022).
+    #[serde(default)]
+    pub rewards: Option<PopupRewards>,
+    /// `FocusStarted` after a break while small steps are active: the next open step ("Teraz: …"). The user's own
+    /// text: local only, never logged.
+    #[serde(default)]
+    pub next_step: Option<String>,
+}
+
+/// The reward line of a phase popup (beta, ADR-022): `+72 ✦ · Cel dnia ✓ · Seria 5 · Poz. 8`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PopupRewards {
+    /// Sparks of the moment (e.g. the block that just ended).
+    pub sparks: u32,
+    pub daily_goal: bool,
+    /// The streak after a +1 (shown only while `rewards.showStreak`).
+    pub streak: Option<u32>,
+    /// The new level after a level up.
+    pub level_up: Option<u32>,
+    pub surprise: Option<Rarity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1104,7 +1278,8 @@ pub struct SessionGoal {
 // ---------------------------------------------------------------------------
 
 /// A button on the developer page (`dev_trigger`). Sample data lives only in memory: nothing is written to
-/// `history.jsonl` or `meeting-choices.json` and nothing is sent over the network.
+/// `history.jsonl` or `meeting-choices.json` and nothing is sent over the network. The one exception is
+/// [`DevAction::FactoryReset`], which deletes the app's own data on purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(export)]
@@ -1128,6 +1303,18 @@ pub enum DevAction {
     /// Running session only (else `notRunning`): the current phase ends in `secs`, clamped to 1..=phase length.
     #[serde(rename_all = "camelCase")]
     SetRemaining { secs: u32 },
+    /// Presentation mode on / off: the demo `TimingProfile` (the one of `--demo` / `FOCUSMODE_DEMO=1`) or the profile
+    /// from the config, for the rest of this process (nothing is saved: a restart is normal again unless `--demo`).
+    /// Idle: at once (`SessionSnapshot.demo` follows). A running or paused session keeps its profile and phase
+    /// lengths; the next Start uses the new one.
+    #[serde(rename_all = "camelCase")]
+    PresentationMode { on: bool },
+    /// Factory reset: everything `delete_all_data` deletes (a running session is stopped first, shields and screen
+    /// colours come back), then `config.json` and the app's other files in its own folders (restore files only once
+    /// their restore is done), then the app restarts like a fresh install. Resolves just before the restart; when a
+    /// delete fails it rejects with `privacy.delete` and the app does not restart. Never touches anything outside the
+    /// app's folders (the installed app, the extension folder and music folders stay).
+    FactoryReset,
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1330,9 @@ pub enum PrivacyItemKind {
     Settings,
     /// `history.jsonl`; `count` = stored sessions, `includesTitles` = some session keeps window titles.
     History,
+    /// `rewards.json` (+ `rewards.json.bak`), beta (ADR-022): sparks, streak and surprises as numbers, day numbers and
+    /// session ids only (no step texts, titles or app names); `count` = stored days. Deleting it equals `reset_rewards`.
+    Rewards,
     /// `meeting-choices.json` (meeting ids and choices, no subjects); `count` = stored choices.
     MeetingChoices,
     /// `work-seen.json` (work item ids, no titles); `count` = stored ids.
@@ -1181,9 +1371,10 @@ pub enum PrivacyItemKind {
 
 impl PrivacyItemKind {
     /// Every kind in report order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Settings,
         Self::History,
+        Self::Rewards,
         Self::MeetingChoices,
         Self::WorkSeen,
         Self::MicrosoftToken,
@@ -1283,6 +1474,301 @@ pub struct YoutubeAccount {
 }
 
 // ---------------------------------------------------------------------------
+// Beta: sparks, streak and small steps (ADR-022)
+// ---------------------------------------------------------------------------
+
+/// Rewards view state (getter `get_rewards` + event `rewards://changed` with revision, ADR-012). Numbers, dates and
+/// ids only: never step texts, goal titles or app names. Everything stays on this computer (`rewards.json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RewardsStatus {
+    /// Set by the shell; grows with every emitted status.
+    pub revision: u32,
+    /// `betaFeatures && rewards.enabled`. When false the UI hides every reward surface.
+    pub active: bool,
+    /// The demo preview ledger is shown (nothing is saved); the UI shows a "demo" badge.
+    pub preview: bool,
+    pub total_sparks: u32,
+    /// Computed from `total_sparks` (never stored, never goes down).
+    pub level: LevelView,
+    pub today: TodayView,
+    pub streak: StreakView,
+    /// 7 cells, Monday..Sunday of the current reward week.
+    pub week: Vec<DayCell>,
+    /// The running session, or the last one until the next Start.
+    pub session: Option<SessionSparks>,
+    pub collection: Collection,
+    /// Published in the UI ("?" popover).
+    pub odds: SurpriseOdds,
+    /// P1: unlocked stickers (empty until implemented).
+    pub stickers: Vec<StickerId>,
+    /// Moments the main window has not acknowledged yet (oldest first, at most 8).
+    pub pending: Vec<RewardMoment>,
+}
+
+/// `level` from the total; `into` sparks of `span` towards the next level.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LevelView {
+    /// 1-based, no cap.
+    pub level: u32,
+    pub into: u32,
+    pub span: u32,
+}
+
+/// The current reward day (it starts at 04:00 local time).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TodayView {
+    /// `YYYY-MM-DD` of the reward day.
+    pub date: String,
+    /// Sparks of the day (the daily-goal bonus included).
+    pub sparks: u32,
+    /// The daily goal in sparks (30 / 60 / 120).
+    pub goal: u32,
+    pub goal_met: bool,
+    /// The daily cap of focus-minute sparks is reached (shown once a day).
+    pub pond_full: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StreakView {
+    pub state: StreakState,
+    /// The streak length; 0 for `first` / `waiting` (the UI never prints 0).
+    pub days: u32,
+    /// The longest streak so far (only grows).
+    pub best: u32,
+    /// Days with the daily goal met (only grows).
+    pub active_days: u32,
+    /// Today already counts for the streak.
+    pub today_counted: bool,
+    /// Rest days in the bank (they cover a work day without a goal by themselves).
+    pub rest_bank: u32,
+    pub rest_bank_max: u32,
+    /// Rest days the bank will use for the current gap.
+    pub rest_reserved: u32,
+    /// Goal days until the next rest day (1..=5).
+    pub next_rest_in: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum StreakState {
+    /// No goal day yet: "the streak starts with the first daily goal".
+    First,
+    /// Counting (`days` is the streak).
+    Alive,
+    /// A new streak starts with the next daily goal (never "lost").
+    Waiting,
+    /// Paused by the user or while the rewards are off (`days` is kept).
+    Paused,
+}
+
+/// One day of the week strip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DayCell {
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    pub mark: DayMark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DayMark {
+    /// The daily goal was met.
+    Goal,
+    /// A rest day from the bank covered it.
+    Rest,
+    /// A day off (rest weekday) or a paused day.
+    Neutral,
+    /// A work day without the goal (a grey empty dot, never red).
+    Quiet,
+    /// Today, goal not met yet.
+    Today,
+    Future,
+}
+
+/// Sparks of one session and where they came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SessionSparks {
+    pub session_id: String,
+    pub sparks: u32,
+    pub lines: Vec<RewardLine>,
+}
+
+/// `count` credits of one kind worth `sparks` together (e.g. 3 steps = `{ step, 9, 3 }`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RewardLine {
+    pub kind: RewardKind,
+    pub sparks: u32,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RewardKind {
+    Start,
+    FirstOfDay,
+    Plan,
+    FocusTime,
+    FullBlock,
+    BreakTaken,
+    BackFromBreak,
+    Step,
+    AllSteps,
+    GoalDone,
+    DailyGoal,
+    Comeback,
+    Surprise,
+}
+
+/// Surprises found so far (only grow).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct Collection {
+    pub bubbles: u32,
+    pub pearls: u32,
+    pub golden: u32,
+}
+
+/// The published surprise odds (permille, they add up to 1000) and the pity rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SurpriseOdds {
+    pub none_permille: u16,
+    pub bubble_permille: u16,
+    pub pearl_permille: u16,
+    pub golden_permille: u16,
+    /// After this many full blocks without a pearl, the next one brings at least a pearl.
+    pub pity_blocks: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Rarity {
+    Bubble,
+    Pearl,
+    GoldenPearl,
+}
+
+/// P1 sticker album: one sticker per mascot pose, unlocked deterministically (no luck required).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum StickerId {
+    FirstStep,
+    DailyGoal,
+    Planner,
+    GoodBreak,
+    Comeback,
+    Amazed,
+    RestDay,
+    Together,
+    ThreeDays,
+    GoldenPearl,
+    Level5,
+}
+
+/// Something to celebrate (or just to count). Achievements earned during focus wait for the break or for Stop
+/// ("focus is sacred"): a moment returned while focus goes on carries only its lines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RewardMoment {
+    /// Grows within an app run (`ack_reward_moments { upTo }`).
+    pub id: u32,
+    pub kind: MomentKind,
+    /// Wall clock when it happened (older than 15 min: shown static, without sound).
+    #[ts(type = "number")]
+    pub at_ms: i64,
+    /// Sum of `lines`.
+    pub sparks: u32,
+    /// For `breakStart` / `sessionEnd`: the session total so far.
+    pub session_total: u32,
+    pub lines: Vec<RewardLine>,
+    pub surprise: Option<Rarity>,
+    pub daily_goal: bool,
+    pub comeback: bool,
+    /// The streak after a +1.
+    pub streak: Option<u32>,
+    /// The streak started again at 1 ("Nowy początek!").
+    pub new_streak: bool,
+    /// The streak reached 3 / 7 / 14 / 30 / 50 / 100 / 200 / 365.
+    pub milestone: Option<u32>,
+    /// Rest days the bank used to cover a gap.
+    pub rest_days_used: u32,
+    pub rest_day_earned: bool,
+    /// The new (highest) level.
+    pub level_up: Option<u32>,
+    pub levels_gained: u32,
+    /// The daily cap of focus-minute sparks was reached.
+    pub pond_full: bool,
+    /// P1: stickers unlocked by this moment.
+    pub stickers: Vec<StickerId>,
+    /// The first step ticked in this session.
+    pub first_step: bool,
+    /// Break held by a meeting / music muted: static, no sound, no confetti.
+    pub quiet: bool,
+    /// From the demo preview ledger (badge; nothing was saved).
+    pub preview: bool,
+    /// A Developer-page sample built in the frontend (never from the shell, never acked).
+    #[serde(default)]
+    pub sample: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum MomentKind {
+    /// Idle → Focus (user's Start).
+    Start,
+    /// A step ticked.
+    Step,
+    /// The last open step ticked (at least 2 steps).
+    AllSteps,
+    /// Break → Focus.
+    BackFromBreak,
+    /// Focus → Break: the recap of the block (with the deferred achievements).
+    BreakStart,
+    /// Stop: the recap of the session (with the deferred achievements).
+    SessionEnd,
+    /// "Zrobione? → Tak" in the summary.
+    GoalDone,
+    /// A config change met today's goal (e.g. a lower daily goal).
+    Update,
+}
+
+/// Short synthetic reward sounds (`play_reward_sound`), per chime pack; no licensed audio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RewardSound {
+    /// ~0.15 s: a step ticked.
+    Pop,
+    /// ~0.7 s: daily goal, milestone, comeback, pearl.
+    Sparkle,
+    /// ~1.2 s: level up, golden pearl.
+    Fanfare,
+}
+
+// ---------------------------------------------------------------------------
 // Browser extension bridge
 // ---------------------------------------------------------------------------
 
@@ -1316,10 +1802,188 @@ pub struct BridgeState {
 #[cfg(test)]
 mod tests {
     use super::{
-        DevAction, Phase, PopupInfo, PopupKind, PrivacyItemKind, WorkSource, YoutubeAccount,
-        commands, events,
+        CelebrationLevel, Config, DailyGoal, DevAction, MicroStep, MomentKind, Phase, PopupInfo,
+        PopupKind, PopupRewards, PrivacyItemKind, Rarity, RewardKind, RewardLine, RewardMoment,
+        RewardSound, SessionSnapshot, SessionSummary, StepDraft, StickerId, Weekday, WorkSource,
+        YoutubeAccount, commands, events,
     };
     use std::fmt::Write as _;
+
+    /// A `SessionSummary` line as `history.jsonl` stored it before ADR-022.
+    const OLD_SUMMARY: &str = r#"{"sessionId":"1760342400000-4242-3","startedAtMs":1,"endedAtMs":2,"focusedSecs":60,"breakSecs":0,"cyclesCompleted":0,"usage":{"apps":[],"idleSecs":0,"unknownSecs":0,"trackedSecs":0},"demo":false,"goal":null,"goalDone":null}"#;
+
+    #[test]
+    fn config_written_before_beta_loads_with_beta_off() {
+        let old: Config = serde_json::from_str(r#"{"focusMinutes":30,"developerMode":true}"#)
+            .expect("old config");
+        assert!(!old.beta_features);
+        assert_eq!(old.rewards, Config::default().rewards);
+        assert!(old.rewards.enabled && old.rewards.micro_steps && old.rewards.surprises);
+        assert!(old.rewards.sounds && !old.rewards.focus_companion && old.rewards.show_streak);
+        assert!(!old.rewards.streak_paused);
+        assert_eq!(old.rewards.celebrations, CelebrationLevel::Full);
+        assert_eq!(old.rewards.daily_goal, DailyGoal::Light);
+        assert_eq!(old.rewards.rest_weekdays, [Weekday::Sat, Weekday::Sun]);
+
+        let json = serde_json::to_value(Config::default()).expect("serialize");
+        assert_eq!(json["betaFeatures"], false);
+        assert_eq!(
+            json["rewards"],
+            serde_json::json!({
+                "enabled": true, "microSteps": true, "surprises": true, "sounds": true,
+                "celebrations": "full", "focusCompanion": false, "showStreak": true, "streakPaused": false,
+                "dailyGoal": "light", "restWeekdays": ["sat", "sun"]
+            })
+        );
+        let partial: Config = serde_json::from_str(
+            r#"{"betaFeatures":true,"rewards":{"dailyGoal":"strong","celebrations":"numbersOnly"}}"#,
+        )
+        .expect("partial rewards");
+        assert!(partial.beta_features);
+        assert_eq!(partial.rewards.daily_goal, DailyGoal::Strong);
+        assert_eq!(partial.rewards.celebrations, CelebrationLevel::NumbersOnly);
+        assert!(partial.rewards.enabled);
+    }
+
+    #[test]
+    fn summary_written_before_steps_loads_without_steps_or_sparks() {
+        let old: SessionSummary = serde_json::from_str(OLD_SUMMARY).expect("old summary");
+        assert!(old.steps.is_empty());
+        assert_eq!(old.sparks, None);
+        // Without steps and sparks the stored line is exactly what older versions wrote.
+        assert_eq!(serde_json::to_string(&old).expect("serialize"), OLD_SUMMARY);
+
+        let with = SessionSummary {
+            steps: vec![MicroStep {
+                id: 1,
+                text: "Napisz tytuł".into(),
+                done: true,
+            }],
+            sparks: Some(72),
+            ..old
+        };
+        let json = serde_json::to_value(&with).expect("serialize");
+        assert_eq!(
+            json["steps"],
+            serde_json::json!([{ "id": 1, "text": "Napisz tytuł", "done": true }])
+        );
+        assert_eq!(json["sparks"], 72);
+    }
+
+    #[test]
+    fn snapshot_written_before_steps_has_no_steps() {
+        let snapshot: SessionSnapshot = serde_json::from_str(
+            r#"{"revision":1,"sessionId":null,"phase":"idle","paused":false,"cycle":0,"remainingSecs":0,"phaseTotalSecs":0,"focusSecs":2700,"breakSecs":900,"focusedSecs":0,"demo":false}"#,
+        )
+        .expect("old snapshot");
+        assert!(snapshot.steps.is_empty());
+    }
+
+    #[test]
+    fn step_texts_never_reach_debug_output() {
+        let step = MicroStep {
+            id: 7,
+            text: "Zadzwoń do Ani".into(),
+            done: false,
+        };
+        let draft = StepDraft {
+            id: None,
+            text: "tajny plan".into(),
+        };
+        let printed = format!("{step:?} {draft:?} {:?}", vec![step.clone()]);
+        assert!(!printed.contains("Ani") && !printed.contains("tajny"));
+        assert!(printed.contains("\"<14 chars>\"") && printed.contains("\"<10 chars>\""));
+        assert!(printed.contains("id: 7"));
+    }
+
+    #[test]
+    fn step_draft_and_reward_sound_wire_format() {
+        let draft = StepDraft {
+            id: Some(3),
+            text: "Otwórz plik".into(),
+        };
+        let json = serde_json::to_value(&draft).expect("serialize");
+        assert_eq!(json, serde_json::json!({ "id": 3, "text": "Otwórz plik" }));
+        assert_eq!(
+            serde_json::from_value::<StepDraft>(json).expect("deserialize"),
+            draft
+        );
+        let new: StepDraft =
+            serde_json::from_str(r#"{"id":null,"text":"Nowy"}"#).expect("new step");
+        assert_eq!(new.id, None);
+
+        for (sound, name) in [
+            (RewardSound::Pop, "pop"),
+            (RewardSound::Sparkle, "sparkle"),
+            (RewardSound::Fanfare, "fanfare"),
+        ] {
+            let json = serde_json::to_value(sound).expect("serialize");
+            assert_eq!(json, serde_json::json!(name));
+            assert_eq!(
+                serde_json::from_value::<RewardSound>(json).expect("deserialize"),
+                sound
+            );
+        }
+    }
+
+    #[test]
+    fn reward_moment_round_trips_in_camel_case() {
+        let moment = RewardMoment {
+            id: 4,
+            kind: MomentKind::BreakStart,
+            at_ms: 1_760_342_400_000,
+            sparks: 72,
+            session_total: 84,
+            lines: vec![RewardLine {
+                kind: RewardKind::FocusTime,
+                sparks: 45,
+                count: 45,
+            }],
+            surprise: Some(Rarity::GoldenPearl),
+            daily_goal: true,
+            comeback: false,
+            streak: Some(5),
+            new_streak: false,
+            milestone: None,
+            rest_days_used: 1,
+            rest_day_earned: false,
+            level_up: Some(8),
+            levels_gained: 1,
+            pond_full: false,
+            stickers: vec![StickerId::Level5],
+            first_step: false,
+            quiet: true,
+            preview: false,
+            sample: false,
+        };
+        let json = serde_json::to_value(&moment).expect("serialize");
+        assert_eq!(json["kind"], "breakStart");
+        assert_eq!(json["atMs"], 1_760_342_400_000_i64);
+        assert_eq!(json["sessionTotal"], 84);
+        assert_eq!(
+            json["lines"],
+            serde_json::json!([{ "kind": "focusTime", "sparks": 45, "count": 45 }])
+        );
+        assert_eq!(json["surprise"], "goldenPearl");
+        assert_eq!(json["dailyGoal"], true);
+        assert_eq!(json["restDaysUsed"], 1);
+        assert_eq!(json["levelUp"], 8);
+        assert_eq!(json["stickers"], serde_json::json!(["level5"]));
+        assert_eq!(json["firstStep"], false);
+        assert_eq!(
+            serde_json::from_value::<RewardMoment>(json.clone()).expect("deserialize"),
+            moment
+        );
+        let mut without_sample = json;
+        if let Some(object) = without_sample.as_object_mut() {
+            object.remove("sample");
+        }
+        assert!(
+            !serde_json::from_value::<RewardMoment>(without_sample)
+                .expect("sample may be left out")
+                .sample
+        );
+    }
 
     #[test]
     fn dev_action_wire_format_is_tagged_camel_case() {
@@ -1361,6 +2025,25 @@ mod tests {
         let remaining: DevAction =
             serde_json::from_str(r#"{"type":"setRemaining","secs":5}"#).expect("set remaining");
         assert_eq!(remaining, DevAction::SetRemaining { secs: 5 });
+
+        let presentation = DevAction::PresentationMode { on: true };
+        assert_eq!(
+            serde_json::to_value(presentation).expect("serialize"),
+            serde_json::json!({ "type": "presentationMode", "on": true })
+        );
+        let off: DevAction =
+            serde_json::from_str(r#"{"type":"presentationMode","on":false}"#).expect("off");
+        assert_eq!(off, DevAction::PresentationMode { on: false });
+        assert!(serde_json::from_str::<DevAction>(r#"{"type":"presentationMode"}"#).is_err());
+
+        assert_eq!(
+            serde_json::to_value(DevAction::FactoryReset).expect("serialize"),
+            serde_json::json!({ "type": "factoryReset" })
+        );
+        assert_eq!(
+            serde_json::from_str::<DevAction>(r#"{"type":"factoryReset"}"#).expect("reset"),
+            DevAction::FactoryReset
+        );
 
         assert!(serde_json::from_str::<DevAction>(r#"{"type":"wipeDisk"}"#).is_err());
     }
@@ -1429,6 +2112,23 @@ mod tests {
         )
         .expect("old popup info");
         assert!(!info.sticky);
+        assert_eq!(info.rewards, None);
+        assert_eq!(info.next_step, None);
+    }
+
+    #[test]
+    fn popup_rewards_wire_format() {
+        let rewards = PopupRewards {
+            sparks: 72,
+            daily_goal: true,
+            streak: Some(5),
+            level_up: None,
+            surprise: Some(Rarity::Pearl),
+        };
+        assert_eq!(
+            serde_json::to_value(rewards).expect("serialize"),
+            serde_json::json!({ "sparks": 72, "dailyGoal": true, "streak": 5, "levelUp": null, "surprise": "pearl" })
+        );
     }
 
     /// Writes `names.ts` with command and event names next to the ts-rs bindings.
@@ -1491,6 +2191,12 @@ mod tests {
             ("getYoutubeAccount", commands::GET_YOUTUBE_ACCOUNT),
             ("youtubeSignIn", commands::YOUTUBE_SIGN_IN),
             ("youtubeSignOut", commands::YOUTUBE_SIGN_OUT),
+            ("getRewards", commands::GET_REWARDS),
+            ("ackRewardMoments", commands::ACK_REWARD_MOMENTS),
+            ("resetRewards", commands::RESET_REWARDS),
+            ("playRewardSound", commands::PLAY_REWARD_SOUND),
+            ("setSessionSteps", commands::SET_SESSION_STEPS),
+            ("setStepDone", commands::SET_STEP_DONE),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),
@@ -1509,6 +2215,7 @@ mod tests {
             ("workChanged", events::WORK_CHANGED),
             ("privacyChanged", events::PRIVACY_CHANGED),
             ("youtubeAccount", events::YOUTUBE_ACCOUNT),
+            ("rewardsChanged", events::REWARDS_CHANGED),
         ];
         let mut out = String::from(
             "// This file was generated by `cargo test -p focus-core` (api.rs). Do not edit this file manually.\n\n",

@@ -3,4 +3,4 @@
 /**
  * One kind of data FocusMode keeps on this computer. `PrivacyReport.items` lists them in this order.
  */
-export type PrivacyItemKind = "settings" | "history" | "meetingChoices" | "workSeen" | "microsoftToken" | "googleToken" | "icsLinks" | "githubToken" | "gitlabToken" | "jiraToken" | "azureDevopsToken" | "linearToken" | "customChimes" | "blocklist" | "shieldsRestore" | "tintRestore" | "browserData" | "logs";
+export type PrivacyItemKind = "settings" | "history" | "rewards" | "meetingChoices" | "workSeen" | "microsoftToken" | "googleToken" | "icsLinks" | "githubToken" | "gitlabToken" | "jiraToken" | "azureDevopsToken" | "linearToken" | "customChimes" | "blocklist" | "shieldsRestore" | "tintRestore" | "browserData" | "logs";

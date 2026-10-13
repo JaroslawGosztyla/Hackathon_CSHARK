@@ -4,6 +4,7 @@ import type { ChimeSound } from "./ChimeSound";
 import type { CustomChimes } from "./CustomChimes";
 import type { Language } from "./Language";
 import type { MusicConfig } from "./MusicConfig";
+import type { RewardsConfig } from "./RewardsConfig";
 import type { ShieldsConfig } from "./ShieldsConfig";
 import type { Theme } from "./Theme";
 import type { TintConfig } from "./TintConfig";
@@ -41,7 +42,8 @@ language: Language,
 closeToTray: boolean | null, 
 /**
  * Small FocusMode popups (bottom-right, app-styled) when focus or a break starts, instead of
- * Windows toasts. Default false; turned on when the user picks the tray at the first X.
+ * Windows toasts (never both; a toast only when this is off or the popup window cannot be shown). Default true
+ * (a missing field too, like every field); also turned on when the user picks the tray at the first X.
  */
 phasePopups: boolean, 
 /**
@@ -93,4 +95,12 @@ showMascot: boolean,
  * Developer page with test triggers (sample popups, toasts, mascot, a shorter phase) for screenshots (ADR-019).
  * Default false; an older `config.json` without it loads with it off.
  */
-developerMode: boolean, };
+developerMode: boolean, 
+/**
+ * Master switch for beta features (ADR-022). Default false; an older `config.json` loads with it off.
+ */
+betaFeatures: boolean, 
+/**
+ * Sparks, streak and small steps (ADR-022). Effective only while `beta_features` is on.
+ */
+rewards: RewardsConfig, };
