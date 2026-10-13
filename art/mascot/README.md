@@ -7,7 +7,7 @@ Grafika wygenerowana przez AI przez Bartłomieja Szolca dla FocusMode (własnoś
 |---|---|---|
 | `axolotl-sheet.webp` (1536×745, przezroczyste tło) | usta O A E I U Y; mrugnięcie, oczko, uśmiech, smutek, złość, radość ×3 | `static/mascot/axo-atlas.webp` + `axo-manifest.json` (24 klatki 415×420) |
 | `axolotl-peek-sheet.webp` (1536×1024) | „wyglądanie” zza krawędzi: spoczynek, mrugnięcie ×4, A E I U Y, uśmiech, smutek, złość, radość | `static/mascot/peek-atlas.webp` + `peek-manifest.json` (14 klatek 495×300) |
-| `axolotl-poses-sheet.webp` (1536×1024, przezroczyste tło) | 11 póz (siatka 4×3, w 2. wierszu bez 1. kolumny): wskazywanie z „!” (oczy otwarte / zamknięte), łapki pod brodą z serduszkiem, zamyślenie z „?”, leżenie (czuwanie, sen z „zzZ”, z uniesioną głową), patrzenie w górę, zachwyt z iskierkami, widok od tyłu, serduszko w łapkach | `art/mascot/poses/*.png` + `poses.json` (×4, nie trafia jeszcze do aplikacji — do wykorzystania później) |
+| `axolotl-poses-sheet.webp` (1536×1024, przezroczyste tło) | 11 póz (siatka 4×3, w 2. wierszu bez 1. kolumny): wskazywanie z „!” (oczy otwarte / zamknięte), łapki pod brodą z serduszkiem, zamyślenie z „?”, leżenie (czuwanie, sen z „zzZ”, z uniesioną głową), patrzenie w górę, zachwyt z iskierkami, widok od tyłu, serduszko w łapkach | `art/mascot/poses/*.png` + `poses.json` (×4); w aplikacji: `static/mascot/poses-atlas.webp` + `poses-manifest.json` (nagrody beta, ADR-022; opis w `tools/mascot/README.md`) |
 
 ## Jak powstały klatki (powtarzalnie, `tools/mascot/`)
 
@@ -26,7 +26,7 @@ Uruchomienie: `node tools/mascot/server.mjs` (port 8777, folder z `tool.html` i 
 np. `window.analyze2(2).then(() => window.cutSheet({...}))` (parametry jak w historii commita).
 Odczyt pikseli rób w headless Edge — panel przeglądarki aplikacji dodaje szum do `getImageData`.
 
-## Pozy (`poses/`, jeszcze nie w aplikacji)
+## Pozy (`poses/`; atlas dla aplikacji: `tools/mascot/README.md`)
 
 Ten sam Real-ESRGAN ×4 → maska α > 40, rozszerzenie o 8 px (przy ×4) i etykietowanie → dodatki („!”, „?”, serduszko,
 iskierki, „zzZ”, czerwone kreski ruchu) dołączone do pozy z tej samej komórki siatki → wycięcie maską etykiet (nie prostokątem)

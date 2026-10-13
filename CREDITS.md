@@ -22,6 +22,10 @@ Zasoby dołączone do FocusMode (CLAUDE.md, zasada 10). Każdy nowy plik muzyki,
 - **Prawa:** własność projektu FocusMode.
 - **Pliki:** arkusze źródłowe autora `art/mascot/axolotl-sheet.webp` i `art/mascot/axolotl-peek-sheet.webp`; w aplikacji atlasy klatek
   `static/mascot/axo-atlas.webp` (24 klatki) i `static/mascot/peek-atlas.webp` (14 klatek) z manifestami `axo-manifest.json` i `peek-manifest.json`.
+- **Pozy (funkcje beta, ADR-022):** arkusz autora `art/mascot/axolotl-poses-sheet.webp` (11 póz, wycięte ×4 do `art/mascot/poses/`); w aplikacji
+  atlas `static/mascot/poses-atlas.webp` (11 klatek) z manifestem `poses-manifest.json`. Atlas tylko **skaluje** wycięte pozy (jedna wspólna skala
+  dla wszystkich, wspólna linia stóp; `tools/mascot/poses-atlas.mjs`, opis w `tools/mascot/README.md`), bez przerysowania, przekolorowania,
+  obrysu ani odbicia; kanał alfa jak w plikach PNG.
 - **Obróbka:** arkusze zostały **powiększone ×4 narzędziem [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)** (`realesrgan-ncnn-vulkan` v0.2.5.0,
   licencja BSD-3, model `realesrgan-x4plus-anime`), a potem wycięte na klatki i wyrównane (wspólna skala i kotwica, usunięta miękka poświata krawędzi;
   `tools/mascot/`, opis w `art/mascot/README.md`). Grafika **nie jest wektoryzowana, przerysowywana ani przekolorowana**: klatki to oryginalne rysunki autora.
