@@ -26,6 +26,12 @@ export const COMMANDS = {
   getBlocklist: "get_blocklist",
   openBlocklistFile: "open_blocklist_file",
   reloadBlocklist: "reload_blocklist",
+  resolveClose: "resolve_close",
+  getSystemLanguage: "get_system_language",
+  getPopup: "get_popup",
+  popupAction: "popup_action",
+  getTintStatus: "get_tint_status",
+  previewTint: "preview_tint",
 } as const;
 
 export const EVENTS = {
@@ -38,6 +44,9 @@ export const EVENTS = {
   appError: "app://error",
   mediaWindow: "media://window",
   blocklistChanged: "blocklist://changed",
+  appCloseRequested: "app://close-requested",
+  popupShow: "popup://show",
+  tintChanged: "tint://changed",
 } as const;
 
 export const BRIDGE_PORT = 47615;

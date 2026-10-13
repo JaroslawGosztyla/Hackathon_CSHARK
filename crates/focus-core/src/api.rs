@@ -63,6 +63,20 @@ pub mod commands {
     pub const OPEN_BLOCKLIST_FILE: &str = "open_blocklist_file";
     /// `() -> BlocklistInfo` re-reads the file now (it is also reloaded automatically when it changes).
     pub const RELOAD_BLOCKLIST: &str = "reload_blocklist";
+    /// `{ toTray: boolean } -> Config` answer to `app://close-requested` (the first X on the main window):
+    /// stores `closeToTray` (and turns on `phasePopups` when `toTray`), then hides the window or quits.
+    pub const RESOLVE_CLOSE: &str = "resolve_close";
+    /// `() -> Language` the supported language closest to the OS UI language (`en` when none matches).
+    pub const GET_SYSTEM_LANGUAGE: &str = "get_system_language";
+    /// `() -> PopupInfo` what the phase popup window shows now (popup window only).
+    pub const GET_POPUP: &str = "get_popup";
+    /// `{ action: PopupAction } -> ()` a button in the phase popup (or its timeout: `dismiss`).
+    pub const POPUP_ACTION: &str = "popup_action";
+    /// `() -> TintStatus`
+    pub const GET_TINT_STATUS: &str = "get_tint_status";
+    /// `{ strength: number | null } -> ()` shows the warm tint at `strength` (0..=100) for a few seconds,
+    /// ignoring the schedule (settings preview); `null` ends the preview at once.
+    pub const PREVIEW_TINT: &str = "preview_tint";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -85,6 +99,13 @@ pub mod events {
     pub const MEDIA_WINDOW: &str = "media://window";
     /// `BlocklistInfo`, whenever `websiteblacklist.txt` was (re)loaded with a different result.
     pub const BLOCKLIST_CHANGED: &str = "blocklist://changed";
+    /// `null`, sent to the main window when the user pressed X and `closeToTray` is still undecided:
+    /// the UI asks and answers with `resolve_close`.
+    pub const APP_CLOSE_REQUESTED: &str = "app://close-requested";
+    /// `PopupInfo`, the phase popup window should show (or hide, `kind: null`) a message.
+    pub const POPUP_SHOW: &str = "popup://show";
+    /// `TintStatus`, whenever the tint level, preview or overlay state changes.
+    pub const TINT_CHANGED: &str = "tint://changed";
 }
 
 /// Loopback port of the browser-extension bridge (`GET http://127.0.0.1:{BRIDGE_PORT}/v1/state` → `BridgeState`).
@@ -191,6 +212,67 @@ pub struct Config {
     pub track_apps: bool,
     /// Start FocusMode when the user logs in (autostart plugin). Default false.
     pub launch_on_login: bool,
+    /// UI, tray, popup and notification language. Default `System` (the OS UI language).
+    pub language: Language,
+    /// X on the main window: `Some(true)` hides it to the tray, `Some(false)` quits the app,
+    /// `None` (default) asks once, at the first X (`app://close-requested`).
+    pub close_to_tray: Option<bool>,
+    /// Small FocusMode popups (bottom-right, app-styled) when focus or a break starts, instead of
+    /// Windows toasts. Default false; turned on when the user picks the tray at the first X.
+    pub phase_popups: bool,
+    /// Warm screen tint by time of day. Off by default.
+    pub tint: TintConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Language {
+    /// Follow the OS UI language (`en` when it is not one of the supported languages).
+    System,
+    En,
+    Pl,
+    De,
+    Fr,
+    It,
+    Uk,
+    Ru,
+    Es,
+    Zh,
+    Ja,
+}
+
+/// Warm overlay schedule. Times are minutes after local midnight; the schedule may cross midnight.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct TintConfig {
+    /// Default false.
+    pub enabled: bool,
+    /// The tint starts fading in here, 0..1440. Default 1080 (18:00).
+    pub start_minutes: u32,
+    /// The screen is back to normal here, 0..1440, different from `start_minutes`. Default 540 (09:00).
+    pub end_minutes: u32,
+    /// Full tint strength 0..=100. Default 45.
+    pub strength: u32,
+    /// Fade length in minutes after `start_minutes` and before `end_minutes`, 0..=180. Default 30.
+    pub transition_minutes: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum GameLauncher {
+    Steam,
+    Epic,
+    Gog,
+    Ubisoft,
+    Ea,
+    BattleNet,
+    Riot,
+    Xbox,
+    Amazon,
+    Itch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -250,6 +332,10 @@ pub struct ShieldsConfig {
     pub block_sites: bool,
     /// Keep the display and system awake during focus. Default true.
     pub keep_awake: bool,
+    /// Close the selected game launchers whenever a focus phase starts. Default false.
+    pub close_launchers: bool,
+    /// Launchers to close. Default: Steam, Epic, GOG, Ubisoft, EA, Battle.net, Riot.
+    pub launchers: Vec<GameLauncher>,
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +389,10 @@ pub struct ShieldStatus {
     pub teams: IntegrationStatus,
     pub sites: IntegrationStatus,
     pub keep_awake: IntegrationStatus,
+    /// Closing game launchers at focus start.
+    pub launchers: IntegrationStatus,
+    /// Launchers closed at the last focus start (empty when none were running).
+    pub closed_launchers: Vec<GameLauncher>,
     /// The browser extension polled the bridge in the last 90 s.
     pub extension_connected: bool,
 }
@@ -437,8 +527,25 @@ pub struct BlocklistIssue {
     pub line: u32,
     /// The line as written (trimmed, shortened to 200 characters).
     pub text: String,
-    /// Polish explanation for the settings screen.
+    /// What is wrong; the UI shows a localized explanation for it.
+    pub code: BlocklistIssueCode,
+    /// Extra detail (English), e.g. the regex parser error or the suggested domain; may be empty.
     pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum BlocklistIssueCode {
+    InvalidDomain,
+    InvalidRegex,
+    RegexTooComplex,
+    MatchesEverything,
+    /// A pasted address with `?` that, read as a regex, does not match itself; `message` holds the domain.
+    PastedUrl,
+    LineTooLong,
+    TooManyDomains,
+    TooManyPatterns,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -456,6 +563,64 @@ pub struct BlocklistInfo {
     /// Skipped lines (invalid domain, invalid or too complex regex, limits exceeded).
     pub issues: Vec<BlocklistIssue>,
     /// The file could not be read; the previous list (or the bundled default) stays in use.
+    pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Phase popups and screen tint
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PopupKind {
+    BreakStarted,
+    FocusStarted,
+    /// The session was paused because the computer slept.
+    Interrupted,
+    /// Game launchers were closed at focus start (`launchers`).
+    LaunchersClosed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PopupInfo {
+    /// Set by the shell; grows with every popup.
+    pub revision: u32,
+    /// `None` = nothing to show (hide).
+    pub kind: Option<PopupKind>,
+    pub cycle: u32,
+    /// Length of the phase that just started, in seconds.
+    pub phase_secs: u32,
+    pub launchers: Vec<GameLauncher>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PopupAction {
+    /// Close the popup (also its timeout).
+    Dismiss,
+    /// Show and focus the main window.
+    ShowMain,
+    /// Same as the tray's "Pomiń fazę".
+    SkipPhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TintStatus {
+    /// Set by the shell; grows with every emitted status.
+    pub revision: u32,
+    pub enabled: bool,
+    /// Current overlay strength 0..=100 (schedule or preview); 0 = no overlay.
+    pub level: u32,
+    pub preview: bool,
+    /// Overlay windows are shown (one per monitor).
+    pub active: bool,
+    /// Overlay windows could not be created (English detail); the schedule keeps trying.
     pub error: Option<String>,
 }
 
@@ -524,6 +689,12 @@ mod tests {
             ("getBlocklist", commands::GET_BLOCKLIST),
             ("openBlocklistFile", commands::OPEN_BLOCKLIST_FILE),
             ("reloadBlocklist", commands::RELOAD_BLOCKLIST),
+            ("resolveClose", commands::RESOLVE_CLOSE),
+            ("getSystemLanguage", commands::GET_SYSTEM_LANGUAGE),
+            ("getPopup", commands::GET_POPUP),
+            ("popupAction", commands::POPUP_ACTION),
+            ("getTintStatus", commands::GET_TINT_STATUS),
+            ("previewTint", commands::PREVIEW_TINT),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),
@@ -535,6 +706,9 @@ mod tests {
             ("appError", events::APP_ERROR),
             ("mediaWindow", events::MEDIA_WINDOW),
             ("blocklistChanged", events::BLOCKLIST_CHANGED),
+            ("appCloseRequested", events::APP_CLOSE_REQUESTED),
+            ("popupShow", events::POPUP_SHOW),
+            ("tintChanged", events::TINT_CHANGED),
         ];
         let mut out = String::from(
             "// This file was generated by `cargo test -p focus-core` (api.rs). Do not edit this file manually.\n\n",
