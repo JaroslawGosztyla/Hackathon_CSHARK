@@ -316,6 +316,8 @@ pub fn summarize(totals: &SessionTotals, usage: UsageReport) -> SessionSummary {
         cycles_completed: totals.cycles_completed,
         usage,
         demo: totals.demo,
+        goal: totals.goal.clone(),
+        goal_done: None,
     }
 }
 
@@ -347,6 +349,7 @@ fn ms_to_rounded_secs(ms: u64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{SessionGoal, WorkSource};
 
     fn usage(process: &str, secs: u32) -> AppUsage {
         AppUsage {
@@ -750,6 +753,12 @@ mod tests {
 
     #[test]
     fn summarize_merges_totals_and_usage() {
+        let goal = SessionGoal {
+            source: WorkSource::Github,
+            key: "o/r#7".to_owned(),
+            title: "Fix login".to_owned(),
+            url: "https://github.com/o/r/issues/7".to_owned(),
+        };
         let totals = SessionTotals {
             session_id: "abc".to_owned(),
             started_at_ms: 1_000,
@@ -758,6 +767,7 @@ mod tests {
             break_secs: 2,
             cycles_completed: 1,
             demo: true,
+            goal: Some(goal.clone()),
         };
         let mut acc = UsageAccumulator::new();
         acc.add_sample(Some("Code.exe"), None, false, 5000);
@@ -774,7 +784,21 @@ mod tests {
                 cycles_completed: 1,
                 usage: report,
                 demo: true,
+                goal: Some(goal),
+                goal_done: None,
             }
         );
+    }
+
+    #[test]
+    fn history_written_before_goals_still_loads() {
+        let old: SessionSummary = serde_json::from_str(
+            r#"{"sessionId":"s","startedAtMs":1,"endedAtMs":2,"focusedSecs":3,"breakSecs":4,
+                "cyclesCompleted":1,"usage":{"apps":[],"idleSecs":0,"unknownSecs":0,"trackedSecs":0},
+                "demo":false}"#,
+        )
+        .expect("old history entry");
+        assert_eq!(old.goal, None);
+        assert_eq!(old.goal_done, None);
     }
 }

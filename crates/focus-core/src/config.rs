@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 
 use crate::api::{
     AppError, CalendarConfig, ChimeKind, ChimeSound, Config, CustomChimes, Language, MusicConfig,
-    MusicSourceKind, NoiseColor, ShieldsConfig, Theme, TintConfig,
+    MusicSourceKind, NoiseColor, ShieldsConfig, Theme, TintConfig, WorkConfig,
 };
 use crate::blocklist::normalize_domain;
 use crate::launchers;
@@ -51,8 +51,17 @@ pub const GOOGLE_CLIENT_ID_SUFFIX: &str = ".apps.googleusercontent.com";
 pub const MAX_GOOGLE_CLIENT_ID_LEN: usize = 255;
 /// Longest Google OAuth client secret accepted (they look like `GOCSPX-` + 28 characters).
 pub const MAX_GOOGLE_CLIENT_SECRET_LEN: usize = 100;
+/// Default GitLab instance (`work.gitlabUrl`).
+pub const DEFAULT_GITLAB_URL: &str = "https://gitlab.com";
+/// Longest GitLab / Jira address accepted (`work.gitlabUrl`, `work.jiraUrl`).
+pub const MAX_WORK_URL_LEN: usize = 512;
+/// Longest Jira account e-mail accepted (`work.jiraEmail`).
+pub const MAX_JIRA_EMAIL_LEN: usize = 254;
+/// Longest Azure DevOps organisation name accepted (`work.azureOrg`).
+pub const MAX_AZURE_ORG_LEN: usize = 64;
 
 const MAX_TENANT_LEN: usize = 253;
+const MAX_HOST_LEN: usize = 253;
 const MS_PER_HOUR: i64 = 60 * 60 * 1000;
 /// Characters Windows does not allow in file names (besides separators and control characters).
 const FORBIDDEN_FILE_NAME_CHARS: [char; 7] = ['<', '>', ':', '"', '|', '?', '*'];
@@ -86,6 +95,24 @@ impl Default for Config {
             track_titles: true,
             keep_history: true,
             calendar: CalendarConfig::default(),
+            work: WorkConfig::default(),
+        }
+    }
+}
+
+impl Default for WorkConfig {
+    fn default() -> Self {
+        Self {
+            github: false,
+            gitlab: false,
+            gitlab_url: DEFAULT_GITLAB_URL.to_owned(),
+            jira: false,
+            jira_url: String::new(),
+            jira_email: String::new(),
+            azure_devops: false,
+            azure_org: String::new(),
+            linear: false,
+            hold_during_focus: true,
         }
     }
 }
@@ -144,10 +171,12 @@ impl Config {
     /// Break reminders are trimmed (control characters become spaces); empty ones stay as
     /// "no reminder for that break" placeholders. Custom chime names are trimmed (empty → `None`)
     /// and must be plain audio file names ([`is_chime_file_name`]).
-    /// The Google client id and secret are trimmed ([`CalendarConfig::normalized`]).
+    /// The Google client id and secret are trimmed ([`CalendarConfig::normalized`]); the GitLab / Jira
+    /// addresses, the Jira e-mail and the Azure DevOps organisation too ([`WorkConfig::normalized`]).
     /// Out-of-range values are never clamped silently: they return `Err` with code
     /// `config.invalid` and `field` set to the camelCase path (`focusMinutes`, `music.volume`,
-    /// `tint.startMinutes`, `breakReminders`, `customChimes.breakFile`, `calendar.horizonHours`).
+    /// `tint.startMinutes`, `breakReminders`, `customChimes.breakFile`, `calendar.horizonHours`,
+    /// `work.jiraUrl`).
     pub fn normalized(self) -> Result<Config, AppError> {
         let Config {
             focus_minutes,
@@ -169,6 +198,7 @@ impl Config {
             track_titles,
             keep_history,
             calendar,
+            work,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -195,8 +225,199 @@ impl Config {
             track_titles,
             keep_history,
             calendar: calendar.normalized()?,
+            work: work.normalized()?,
         })
     }
+}
+
+impl WorkConfig {
+    /// Developer-tools part of [`Config::normalized`] (checked also while every tool is off); errors use
+    /// `work.*` field paths and never echo the value (a pasted address may carry credentials).
+    ///
+    /// - `gitlabUrl` / `jiraUrl`: trimmed; empty, or an `https://` address ([`normalize_work_url`]): host
+    ///   (lowercased) with an optional port and path, no credentials, query or fragment, trailing `/` removed.
+    ///   On `gitlab.com` and `*.atlassian.net` the path is dropped (their API always lives at the root), so a
+    ///   pasted browser address works.
+    /// - `jiraEmail`: trimmed; empty (Data Center personal access token) or `local@domain` without whitespace,
+    ///   control characters or `:` (it becomes the Basic auth user name), at most [`MAX_JIRA_EMAIL_LEN`].
+    /// - `azureOrg`: trimmed; a pasted `https://dev.azure.com/<org>/…` or `https://<org>.visualstudio.com`
+    ///   becomes `<org>`; then `[A-Za-z0-9._-]` (at most [`MAX_AZURE_ORG_LEN`]), not `.` or `..`, or empty.
+    pub fn normalized(self) -> Result<WorkConfig, AppError> {
+        let WorkConfig {
+            github,
+            gitlab,
+            gitlab_url,
+            jira,
+            jira_url,
+            jira_email,
+            azure_devops,
+            azure_org,
+            linear,
+            hold_during_focus,
+        } = self;
+
+        let gitlab_url = normalize_work_url("work.gitlabUrl", &gitlab_url)?;
+        let jira_url = normalize_work_url("work.jiraUrl", &jira_url)?;
+        let jira_email = normalize_jira_email(&jira_email)?;
+        let azure_org = normalize_azure_org(&azure_org)?;
+
+        Ok(WorkConfig {
+            github,
+            gitlab,
+            gitlab_url,
+            jira,
+            jira_url,
+            jira_email,
+            azure_devops,
+            azure_org,
+            linear,
+            hold_during_focus,
+        })
+    }
+}
+
+/// A GitLab / Jira base address as stored (see [`WorkConfig::normalized`]); `""` stays `""`.
+/// `field` is the config path used in the error.
+pub fn normalize_work_url(field: &str, raw: &str) -> Result<String, AppError> {
+    const SCHEME: &str = "https://";
+    let url = raw.trim();
+    if url.is_empty() {
+        return Ok(String::new());
+    }
+    let bad = |what: &str| invalid(field, format!("{field} {what}"));
+    if url.len() > MAX_WORK_URL_LEN {
+        return Err(bad(&format!(
+            "must be at most {MAX_WORK_URL_LEN} characters long"
+        )));
+    }
+    let rest = url
+        .get(..SCHEME.len())
+        .filter(|scheme| scheme.eq_ignore_ascii_case(SCHEME))
+        .and_then(|_| url.get(SCHEME.len()..))
+        .ok_or_else(|| bad("must start with https://"))?;
+    if rest.contains(['@', '?', '#']) {
+        return Err(bad(
+            "must not contain credentials, a query or a fragment (@, ?, #)",
+        ));
+    }
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    let host = host.to_ascii_lowercase();
+    if !is_host_name(&host) {
+        return Err(bad("must name a host, e.g. https://firma.atlassian.net"));
+    }
+    if let Some(port) = port
+        && (port.is_empty()
+            || !port.bytes().all(|b| b.is_ascii_digit())
+            || !port.parse::<u16>().is_ok_and(|port| port > 0))
+    {
+        return Err(bad("has an invalid port"));
+    }
+    let path = path.trim_end_matches('/');
+    let path_ok = path.split('/').skip(1).all(|segment| {
+        !segment.is_empty()
+            && segment != "."
+            && segment != ".."
+            && segment
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'%'))
+    });
+    if !path_ok {
+        return Err(bad(
+            "has an invalid path (letters, digits, '-', '.', '_', '~', '%' between '/')",
+        ));
+    }
+    let path = if host == "gitlab.com" || host.ends_with(".atlassian.net") {
+        ""
+    } else {
+        path
+    };
+    let port = port.map(|port| format!(":{port}")).unwrap_or_default();
+    Ok(format!("{SCHEME}{host}{port}{path}"))
+}
+
+/// DNS name or IPv4 address: 1..=253 characters of `[a-z0-9.-]`, labels not empty and not starting or
+/// ending with `-`.
+fn is_host_name(host: &str) -> bool {
+    host.len() <= MAX_HOST_LEN
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
+fn normalize_jira_email(raw: &str) -> Result<String, AppError> {
+    const FIELD: &str = "work.jiraEmail";
+    let email = raw.trim();
+    if email.is_empty() {
+        return Ok(String::new());
+    }
+    let valid = email.chars().count() <= MAX_JIRA_EMAIL_LEN
+        && !email
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == ':')
+        && email
+            .rsplit_once('@')
+            .is_some_and(|(local, domain)| !local.is_empty() && !domain.is_empty());
+    if valid {
+        return Ok(email.to_owned());
+    }
+    Err(invalid(
+        FIELD,
+        format!(
+            "{FIELD} must be empty or an e-mail address like name@example.com \
+             (no spaces or ':', at most {MAX_JIRA_EMAIL_LEN} characters)"
+        ),
+    ))
+}
+
+fn normalize_azure_org(raw: &str) -> Result<String, AppError> {
+    const FIELD: &str = "work.azureOrg";
+    let org = raw.trim();
+    let org = strip_prefix_ignore_case(org, "https://")
+        .or_else(|| strip_prefix_ignore_case(org, "http://"))
+        .unwrap_or(org);
+    let org = if let Some(path) = strip_prefix_ignore_case(org, "dev.azure.com/") {
+        path.split('/').next().unwrap_or_default()
+    } else {
+        let host = org.split('/').next().unwrap_or_default();
+        host.len()
+            .checked_sub(".visualstudio.com".len())
+            .and_then(|at| {
+                host.get(at..)
+                    .filter(|suffix| suffix.eq_ignore_ascii_case(".visualstudio.com"))
+                    .and_then(|_| host.get(..at))
+            })
+            .unwrap_or(org)
+    };
+    let valid = org.len() <= MAX_AZURE_ORG_LEN
+        && !(org.chars().all(|c| c == '.') && !org.is_empty())
+        && org
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    if valid {
+        return Ok(org.to_owned());
+    }
+    Err(invalid(
+        FIELD,
+        format!(
+            "{FIELD} must be the organisation name from https://dev.azure.com/<name> \
+             (letters, digits, '-', '_', '.'; at most {MAX_AZURE_ORG_LEN} characters)"
+        ),
+    ))
+}
+
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.get(..prefix.len())
+        .filter(|head| head.eq_ignore_ascii_case(prefix))
+        .and_then(|_| text.get(prefix.len()..))
 }
 
 impl CalendarConfig {
@@ -774,6 +995,255 @@ mod tests {
             }
         );
         assert_eq!(cfg.calendar.horizon_ms(), 10 * 3_600_000);
+        assert_eq!(
+            cfg.work,
+            WorkConfig {
+                github: false,
+                gitlab: false,
+                gitlab_url: "https://gitlab.com".to_owned(),
+                jira: false,
+                jira_url: String::new(),
+                jira_email: String::new(),
+                azure_devops: false,
+                azure_org: String::new(),
+                linear: false,
+                hold_during_focus: true,
+            }
+        );
+    }
+
+    #[test]
+    fn config_written_before_work_tools_loads_with_tools_off() {
+        let old: Config = serde_json::from_str(
+            r#"{"focusMinutes": 30, "calendar": {"ics": true}, "keepHistory": true}"#,
+        )
+        .expect("old config");
+        assert_eq!(old.work, WorkConfig::default());
+        assert_eq!(old.clone().normalized(), Ok(old));
+
+        let partial: Config = serde_json::from_str(
+            r#"{"work":{"jira":true,"jiraUrl":"https://firma.atlassian.net"}}"#,
+        )
+        .expect("partial work");
+        assert!(partial.work.jira);
+        assert_eq!(partial.work.jira_url, "https://firma.atlassian.net");
+        assert_eq!(partial.work.gitlab_url, DEFAULT_GITLAB_URL);
+        assert!(partial.work.hold_during_focus);
+        assert!(!partial.work.github);
+        assert_eq!(partial.clone().normalized(), Ok(partial));
+    }
+
+    fn with_work(work: WorkConfig) -> Config {
+        Config {
+            work,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn normalizes_work_urls() {
+        for (input, expected) in [
+            ("", ""),
+            ("   ", ""),
+            ("https://gitlab.com", "https://gitlab.com"),
+            (
+                "  HTTPS://GitLab.Example.COM/  ",
+                "https://gitlab.example.com",
+            ),
+            (
+                "https://git.firma.pl:8443/gitlab/",
+                "https://git.firma.pl:8443/gitlab",
+            ),
+            ("https://jira.firma.pl/jira//", "https://jira.firma.pl/jira"),
+            ("https://10.0.0.5", "https://10.0.0.5"),
+            ("https://localhost:9443", "https://localhost:9443"),
+            (
+                "https://my-host.example/a_b/c~d/e%20f",
+                "https://my-host.example/a_b/c~d/e%20f",
+            ),
+            // Their APIs always live at the root: a pasted browser address works.
+            (
+                "https://gitlab.com/group/sub/project/-/issues",
+                "https://gitlab.com",
+            ),
+            (
+                "https://firma.atlassian.net/jira/software/projects/X/boards/1",
+                "https://firma.atlassian.net",
+            ),
+        ] {
+            for field in ["work.gitlabUrl", "work.jiraUrl"] {
+                assert_eq!(
+                    normalize_work_url(field, input).as_deref(),
+                    Ok(expected),
+                    "{input}"
+                );
+            }
+        }
+        let longest = format!("https://example.com/{}", "a".repeat(MAX_WORK_URL_LEN - 20));
+        assert_eq!(longest.len(), MAX_WORK_URL_LEN);
+        assert!(normalize_work_url("work.jiraUrl", &longest).is_ok());
+        let too_long = format!("{longest}a");
+
+        for bad in [
+            "http://gitlab.example.com",
+            "gitlab.example.com",
+            "ftp://gitlab.example.com",
+            "javascript:alert(1)",
+            "https://",
+            "https:///path",
+            "https://user:secret-token@gitlab.example.com",
+            "https://user@jira.example.com",
+            "https://jira.example.com/?jql=assignee",
+            "https://jira.example.com/#x",
+            "https://jira example.com",
+            "https://jira.example.com/a b",
+            "https://jira.example.com\\evil",
+            "https://jira.example.com/../admin",
+            "https://jira.example.com/./x",
+            "https://-bad.example.com",
+            "https://bad-.example.com",
+            "https://bad..example.com",
+            "https://example.com.",
+            "https://exa_mple.com",
+            "https://żółw.pl",
+            "https://example.com:",
+            "https://example.com:0",
+            "https://example.com:65536",
+            "https://example.com:80a",
+            "https://[::1]:8443",
+            "https://example.com/a\nb",
+            too_long.as_str(),
+        ] {
+            for field in ["work.gitlabUrl", "work.jiraUrl"] {
+                let work = if field == "work.gitlabUrl" {
+                    WorkConfig {
+                        gitlab_url: bad.to_owned(),
+                        ..WorkConfig::default()
+                    }
+                } else {
+                    WorkConfig {
+                        jira_url: bad.to_owned(),
+                        ..WorkConfig::default()
+                    }
+                };
+                let err = with_work(work)
+                    .normalized()
+                    .expect_err("invalid address is rejected");
+                assert_eq!(err.code, CONFIG_INVALID);
+                assert_eq!(err.field.as_deref(), Some(field), "{bad}");
+                assert!(!err.message.contains("secret-token"), "{}", err.message);
+                if bad.len() > 10 {
+                    assert!(!err.message.contains(bad.trim()), "{bad} echoed");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn validates_jira_email() {
+        for (input, expected) in [
+            ("", ""),
+            ("  ", ""),
+            (" jan.kowalski@firma.pl ", "jan.kowalski@firma.pl"),
+            ("a@b", "a@b"),
+            ("dev+jira@sub.firma.pl", "dev+jira@sub.firma.pl"),
+            ("łukasz@firma.pl", "łukasz@firma.pl"),
+        ] {
+            let cfg = with_work(WorkConfig {
+                jira_email: input.to_owned(),
+                ..WorkConfig::default()
+            });
+            assert_eq!(
+                cfg.normalized().expect("valid").work.jira_email,
+                expected,
+                "{input}"
+            );
+        }
+        let long_ok = format!("{}@firma.pl", "a".repeat(MAX_JIRA_EMAIL_LEN - 9));
+        let too_long = format!("{}@firma.pl", "a".repeat(MAX_JIRA_EMAIL_LEN - 8));
+        assert!(
+            with_work(WorkConfig {
+                jira_email: long_ok,
+                ..WorkConfig::default()
+            })
+            .normalized()
+            .is_ok()
+        );
+        for bad in [
+            "jan.kowalski",
+            "@firma.pl",
+            "jan@",
+            "jan kowalski@firma.pl",
+            "jan:token@firma.pl",
+            "jan@firma.pl\r\nX-Evil: 1",
+            too_long.as_str(),
+        ] {
+            let cfg = with_work(WorkConfig {
+                jira_email: bad.to_owned(),
+                ..WorkConfig::default()
+            });
+            let err = cfg.normalized().expect_err("invalid e-mail is rejected");
+            assert_eq!(err.field.as_deref(), Some("work.jiraEmail"), "{bad:?}");
+            assert!(!err.message.contains(bad), "{bad:?} echoed");
+        }
+    }
+
+    #[test]
+    fn validates_azure_org() {
+        for (input, expected) in [
+            ("", ""),
+            ("  firma ", "firma"),
+            ("Firma-Dev_2.0", "Firma-Dev_2.0"),
+            ("https://dev.azure.com/firma", "firma"),
+            ("https://dev.azure.com/firma/", "firma"),
+            ("HTTPS://DEV.AZURE.COM/firma/Projekt/_workitems", "firma"),
+            ("dev.azure.com/firma", "firma"),
+            ("https://firma.visualstudio.com", "firma"),
+            ("https://firma.visualstudio.com/DefaultCollection", "firma"),
+            ("firma.VisualStudio.com", "firma"),
+        ] {
+            let cfg = with_work(WorkConfig {
+                azure_org: input.to_owned(),
+                ..WorkConfig::default()
+            });
+            assert_eq!(
+                cfg.normalized().expect("valid").work.azure_org,
+                expected,
+                "{input}"
+            );
+        }
+        let longest = "a".repeat(MAX_AZURE_ORG_LEN);
+        assert!(
+            with_work(WorkConfig {
+                azure_org: longest.clone(),
+                ..WorkConfig::default()
+            })
+            .normalized()
+            .is_ok()
+        );
+        let too_long = format!("{longest}a");
+        for bad in [
+            ".",
+            "..",
+            "fir ma",
+            "firma/projekt",
+            "firma?x=1",
+            "firma#x",
+            "firma@evil",
+            "żółw",
+            "https://dev.azure.com/../evil",
+            too_long.as_str(),
+        ] {
+            let cfg = with_work(WorkConfig {
+                azure_org: bad.to_owned(),
+                ..WorkConfig::default()
+            });
+            assert_eq!(
+                field_of(cfg.normalized()).as_deref(),
+                Some("work.azureOrg"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
@@ -1345,6 +1815,18 @@ mod tests {
                     ics: true,
                     horizon_hours: 24,
                 },
+                work: WorkConfig {
+                    github: true,
+                    gitlab: true,
+                    gitlab_url: "https://git.firma.pl/gitlab".to_owned(),
+                    jira: true,
+                    jira_url: "https://firma.atlassian.net".to_owned(),
+                    jira_email: "jan@firma.pl".to_owned(),
+                    azure_devops: true,
+                    azure_org: "firma".to_owned(),
+                    linear: true,
+                    hold_during_focus: false,
+                },
                 ..Config::default()
             };
             let json = serde_json::to_string(&cfg).expect("serialize");
@@ -1436,6 +1918,21 @@ mod tests {
                 "googleClientSecret": "",
                 "ics": false,
                 "horizonHours": 10,
+            })
+        );
+        assert_eq!(
+            json["work"],
+            serde_json::json!({
+                "github": false,
+                "gitlab": false,
+                "gitlabUrl": "https://gitlab.com",
+                "jira": false,
+                "jiraUrl": "",
+                "jiraEmail": "",
+                "azureDevops": false,
+                "azureOrg": "",
+                "linear": false,
+                "holdDuringFocus": true,
             })
         );
 
@@ -1821,6 +2318,13 @@ mod tests {
                 teams_tenant: " Organizations ".to_owned(),
                 ..ShieldsConfig::default()
             },
+            work: WorkConfig {
+                gitlab_url: " HTTPS://Git.Firma.PL/gitlab/ ".to_owned(),
+                jira_url: "https://firma.atlassian.net/browse/X/".to_owned(),
+                jira_email: " jan@firma.pl ".to_owned(),
+                azure_org: " https://dev.azure.com/firma/ ".to_owned(),
+                ..WorkConfig::default()
+            },
             ..Config::default()
         };
         let once = messy.normalized().expect("valid");
@@ -1828,5 +2332,9 @@ mod tests {
         assert_eq!(once, twice);
         assert_eq!(once.shields.teams_tenant, "organizations");
         assert_eq!(once.music.links[0], "https://youtu.be/abc");
+        assert_eq!(once.work.gitlab_url, "https://git.firma.pl/gitlab");
+        assert_eq!(once.work.jira_url, "https://firma.atlassian.net");
+        assert_eq!(once.work.jira_email, "jan@firma.pl");
+        assert_eq!(once.work.azure_org, "firma");
     }
 }

@@ -19,12 +19,18 @@
 //!   shows `meeting_hold` until Resume (or until the break ends by Skip/Stop).
 //! - Meetings longer than [`MAX_MEETING_HOLD_MS`] (4 h) are ignored: they never extend the focus, hold the
 //!   break or mute the music.
+//!
+//! The session goal ([`Input::SetGoal`], picked in "Co dalej?") is shown by every snapshot, survives Start and
+//! ends up in [`SessionTotals::goal`] on Stop (then the session has no goal until the next `SetGoal`). It
+//! never changes phases or effects.
 
 use crate::api::{
-    ChimeKind, Meeting, MeetingChoice, MeetingHoldView, Phase, PhaseChange, SessionSnapshot,
+    ChimeKind, Meeting, MeetingChoice, MeetingHoldView, Phase, PhaseChange, SessionGoal,
+    SessionSnapshot,
 };
 use crate::calendar::meeting_hold_allowed;
 use crate::timing::{MAX_MEETING_HOLD_MS, TimingProfile};
+use crate::work::normalize_goal;
 
 const MS_PER_SEC: u64 = 1000;
 
@@ -59,6 +65,10 @@ pub enum Input {
     /// Returns no effects; only the snapshot changes.
     /// A focus already extended by a hold stays extended even when that hold is removed.
     SetMeetingHolds(Vec<MeetingHold>),
+    /// Replaces the goal of the coming or running session (`None` clears it), cleaned by
+    /// [`normalize_goal`] (a goal with neither key nor title counts as `None`). Allowed in every phase;
+    /// returns no effects, only the snapshot changes.
+    SetGoal(Option<SessionGoal>),
 }
 
 /// A meeting the user chose to handle with `Extend` or `PauseAtBreak` (see the module docs).
@@ -158,6 +168,8 @@ pub struct SessionTotals {
     /// Focus phases that reached their end or were skipped into a break.
     pub cycles_completed: u32,
     pub demo: bool,
+    /// The goal the session had when it ended ([`Input::SetGoal`]).
+    pub goal: Option<SessionGoal>,
 }
 
 /// Side effects the shell executes, in the order given.
@@ -416,7 +428,7 @@ impl Active {
         }
     }
 
-    fn into_totals(self, now: Now) -> SessionTotals {
+    fn into_totals(self, now: Now, goal: Option<SessionGoal>) -> SessionTotals {
         SessionTotals {
             session_id: self.session_id,
             started_at_ms: self.started_at_ms,
@@ -425,6 +437,7 @@ impl Active {
             break_secs: ms_to_secs_floor(self.break_ms),
             cycles_completed: self.cycles_completed,
             demo: self.profile.demo,
+            goal,
         }
     }
 }
@@ -437,6 +450,8 @@ pub struct Session {
     idle_profile: TimingProfile,
     /// Meeting holds (only usable `Extend` / `PauseAtBreak` ones), independent of the running session.
     holds: Vec<MeetingHold>,
+    /// Goal of the coming (idle) or running session; moved into the totals on Stop.
+    goal: Option<SessionGoal>,
 }
 
 impl Default for Session {
@@ -452,6 +467,7 @@ impl Session {
             active: None,
             idle_profile: TimingProfile::normal(),
             holds: Vec::new(),
+            goal: None,
         }
     }
 
@@ -477,6 +493,10 @@ impl Session {
                 self.holds = holds.into_iter().filter(MeetingHold::is_usable).collect();
                 Vec::new()
             }
+            Input::SetGoal(goal) => {
+                self.goal = goal.and_then(normalize_goal);
+                Vec::new()
+            }
         }
     }
 
@@ -497,6 +517,7 @@ impl Session {
                 demo: self.idle_profile.demo,
                 music_muted: false,
                 meeting_hold: None,
+                goal: self.goal.clone(),
             },
             Some(active) => SessionSnapshot {
                 revision: 0,
@@ -512,8 +533,14 @@ impl Session {
                 demo: active.profile.demo,
                 music_muted: active.music_muted(&self.holds, now),
                 meeting_hold: active.hold.as_ref().map(MeetingHold::view),
+                goal: self.goal.clone(),
             },
         }
+    }
+
+    /// The goal of the coming or running session ([`Input::SetGoal`]).
+    pub fn goal(&self) -> Option<&SessionGoal> {
+        self.goal.as_ref()
     }
 
     /// Exact time left in the current phase at `now` (frozen while paused); `None` when idle.
@@ -647,7 +674,7 @@ impl Session {
             Effect::Tracking(false),
             Effect::Shields(false),
             Effect::PhaseChanged(change),
-            Effect::SessionEnded(active.into_totals(now)),
+            Effect::SessionEnded(active.into_totals(now, self.goal.take())),
         ]
     }
 
@@ -874,6 +901,7 @@ mod tests {
                 demo: false,
                 music_muted: false,
                 meeting_hold: None,
+                goal: None,
             }
         );
         assert_eq!(session.phase(), Phase::Idle);
@@ -994,6 +1022,7 @@ mod tests {
             break_secs: 30,
             cycles_completed: 2,
             demo: true,
+            goal: None,
         };
         assert_eq!(effects, stop_effects(Phase::Break, 2, expected));
         assert_eq!(session.phase(), Phase::Idle);
@@ -1112,6 +1141,7 @@ mod tests {
             break_secs: 0,
             cycles_completed: 0,
             demo: true,
+            goal: None,
         };
         assert_eq!(effects, stop_effects(Phase::Focus, 1, expected));
         assert_eq!(session.phase(), Phase::Idle);
@@ -2096,5 +2126,97 @@ mod tests {
         let _ = session.snapshot(far);
         let totals = only_totals(&session.handle(far, Input::Stop));
         assert_eq!(totals.ended_at_ms, i64::MAX);
+    }
+
+    fn goal(key: &str) -> SessionGoal {
+        SessionGoal {
+            source: crate::api::WorkSource::Jira,
+            key: key.to_owned(),
+            title: format!("Title of {key}"),
+            url: format!("https://firma.atlassian.net/browse/{key}"),
+        }
+    }
+
+    #[test]
+    fn goal_picked_before_start_is_shown_and_ends_in_the_totals() {
+        let mut session = Session::new();
+        assert!(
+            session
+                .handle(at(0), Input::SetGoal(Some(goal("PROJ-1"))))
+                .is_empty()
+        );
+        assert_eq!(session.snapshot(at(0)).goal, Some(goal("PROJ-1")));
+        assert_eq!(session.goal(), Some(&goal("PROJ-1")));
+
+        // Start keeps it; it is in every snapshot of the session, in Focus and in Break.
+        session.handle(at(0), start_input(TimingProfile::demo()));
+        assert_eq!(session.snapshot(at(5)).goal, Some(goal("PROJ-1")));
+        assert_eq!(tick_through(&mut session, 0, 40), break_transition(1, 20));
+        assert_eq!(session.snapshot(at(41)).goal, Some(goal("PROJ-1")));
+
+        // Stop moves it into the totals and leaves the next session without a goal.
+        let totals = only_totals(&session.handle(at(45), Input::Stop));
+        assert_eq!(totals.goal, Some(goal("PROJ-1")));
+        assert_eq!(session.snapshot(at(46)).goal, None);
+        assert_eq!(session.goal(), None);
+        session.handle(at(50), start_input(TimingProfile::demo()));
+        let totals = only_totals(&session.handle(at(60), Input::Stop));
+        assert_eq!(totals.goal, None);
+    }
+
+    #[test]
+    fn goal_changes_never_touch_phases_or_effects() {
+        let mut session = started(TimingProfile::demo());
+        let before = session.snapshot(at(10));
+        for input in [
+            Input::SetGoal(Some(goal("A-1"))),
+            Input::SetGoal(Some(goal("B-2"))),
+            Input::SetGoal(None),
+            Input::SetGoal(Some(goal("C-3"))),
+        ] {
+            assert!(session.handle(at(10), input).is_empty());
+        }
+        let after = session.snapshot(at(10));
+        assert_eq!(
+            after,
+            SessionSnapshot {
+                goal: Some(goal("C-3")),
+                ..before
+            }
+        );
+        session.handle(at(12), Input::Pause);
+        session.handle(at(13), Input::SetGoal(None));
+        assert!(session.is_paused());
+        assert_eq!(session.snapshot(at(14)).goal, None);
+        let totals = only_totals(&session.handle(at(15), Input::Stop));
+        assert_eq!(totals.goal, None);
+    }
+
+    #[test]
+    fn goal_is_cleaned() {
+        let mut session = Session::new();
+        let messy = SessionGoal {
+            key: " PROJ-9\n".to_owned(),
+            title: "  Ship\tit  ".to_owned(),
+            url: "javascript:alert(1)".to_owned(),
+            ..goal("PROJ-9")
+        };
+        session.handle(at(0), Input::SetGoal(Some(messy)));
+        assert_eq!(
+            session.goal(),
+            Some(&SessionGoal {
+                key: "PROJ-9".to_owned(),
+                title: "Ship it".to_owned(),
+                url: String::new(),
+                ..goal("PROJ-9")
+            })
+        );
+        let empty = SessionGoal {
+            key: "  ".to_owned(),
+            title: String::new(),
+            ..goal("X")
+        };
+        session.handle(at(1), Input::SetGoal(Some(empty)));
+        assert_eq!(session.goal(), None);
     }
 }
