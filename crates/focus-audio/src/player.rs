@@ -5,39 +5,39 @@
 //! that blocks idle sleep, and re-opening also follows a changed default device. After a device error the
 //! device is dropped and re-opened on the next chime. Nothing here panics: errors are logged and sent as
 //! [`AudioEvent::Error`].
+//!
+//! Chime sounds are rendered (packs) or decoded (custom files) on this thread and cached, so the device
+//! callback only copies samples.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
-use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player, Sample};
+use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
 
-use crate::chime::{self, CHIME_DURATION, Chime, PcmSource};
+use crate::chime::{self, Chime, ChimeSource, SoundPack};
+use crate::error::AudioError;
+use crate::file;
+use crate::pcm::{Pcm, PcmSource};
 
 const THREAD_NAME: &str = "focus-audio";
 
 /// At most this many chimes overlap; the oldest one is stopped when another starts (e.g. "test chime" spam).
 const MAX_VOICES: usize = 4;
 
+/// Decoded custom files kept in memory (one per chime kind).
+const MAX_CACHED_FILES: usize = 2;
+
 /// Events reported by the audio thread.
 #[derive(Debug, Clone)]
 pub enum AudioEvent {
-    /// The chime could not be played (no device, device lost, thread failure). Human-readable, for logs and
-    /// the `audio.device` error toast.
+    /// The chime could not be played as asked (no device, device lost, unreadable custom sound, thread
+    /// failure). Human-readable, for logs and the error toast. An unreadable custom sound is replaced by the
+    /// Midnight pack.
     Error(String),
-}
-
-/// Audio failures. They are reported as [`AudioEvent::Error`] and never stop the session.
-#[derive(Debug, thiserror::Error)]
-pub enum AudioError {
-    #[error("no usable audio output device: {0}")]
-    Device(String),
-    #[error("audio output device failed: {0}")]
-    DeviceLost(String),
-    #[error("could not start the audio thread: {0}")]
-    Thread(String),
 }
 
 /// Handle to the chime thread. Cheap to clone; the thread exits when the last clone is dropped.
@@ -48,7 +48,11 @@ pub struct ChimePlayer {
 
 #[derive(Debug)]
 enum Command {
-    Play { chime: Chime, volume: f32 },
+    Play {
+        chime: Chime,
+        source: ChimeSource,
+        volume: f32,
+    },
 }
 
 impl ChimePlayer {
@@ -59,10 +63,17 @@ impl ChimePlayer {
         (player, events)
     }
 
-    /// Non-blocking. `volume` 0..=1 (clamped, NaN -> 0). Volume 0 plays nothing and does not open the device.
-    pub fn play(&self, chime: Chime, volume: f32) {
+    /// Plays `chime` from `source`. Non-blocking. `volume` 0..=1 (clamped, NaN -> 0). Volume 0 plays nothing
+    /// and does not open the device. A custom file that cannot be played is replaced by
+    /// [`SoundPack::Midnight`] and reported as [`AudioEvent::Error`].
+    pub fn play(&self, chime: Chime, source: ChimeSource, volume: f32) {
         let volume = sanitize_volume(volume);
-        if self.commands.send(Command::Play { chime, volume }).is_err() {
+        let command = Command::Play {
+            chime,
+            source,
+            volume,
+        };
+        if self.commands.send(command).is_err() {
             log::warn!("audio thread is not running; chime {chime:?} dropped");
         }
     }
@@ -73,6 +84,14 @@ fn sanitize_volume(volume: f32) -> f32 {
         0.0
     } else {
         volume.clamp(0.0, 1.0)
+    }
+}
+
+/// Short label for logs (never the path of a custom file).
+fn source_label(source: &ChimeSource) -> String {
+    match source {
+        ChimeSource::Pack(pack) => format!("{pack:?}"),
+        ChimeSource::File(_) => "custom file".to_owned(),
     }
 }
 
@@ -155,8 +174,8 @@ trait Backend {
     /// Opens the current default output device. Asynchronous device errors must be sent to `faults` tagged
     /// with `generation`, without blocking.
     fn open(&mut self, generation: u64, faults: &Sender<Fault>) -> Result<Self::Sink, AudioError>;
-    /// Starts playing `pcm` (mono, [`chime::SAMPLE_RATE`]) at `volume`.
-    fn start(&mut self, sink: &Self::Sink, pcm: Arc<[Sample]>, volume: f32) -> Self::Voice;
+    /// Starts playing `pcm` at `volume`.
+    fn start(&mut self, sink: &Self::Sink, pcm: Pcm, volume: f32) -> Self::Voice;
     /// True once the voice has played everything.
     fn is_finished(&self, voice: &Self::Voice) -> bool;
     /// Stops the voice immediately.
@@ -196,10 +215,10 @@ impl Backend for RodioBackend {
         Ok(sink)
     }
 
-    fn start(&mut self, sink: &MixerDeviceSink, pcm: Arc<[Sample]>, volume: f32) -> Player {
+    fn start(&mut self, sink: &MixerDeviceSink, pcm: Pcm, volume: f32) -> Player {
         let player = Player::connect_new(sink.mixer());
         player.set_volume(volume);
-        player.append(PcmSource::new(pcm, chime::SAMPLE_RATE));
+        player.append(PcmSource::new(pcm));
         player
     }
 
@@ -215,6 +234,31 @@ impl Backend for RodioBackend {
 struct ActiveVoice<V> {
     voice: V,
     started_at: Instant,
+    /// Nominal length of the sound.
+    duration: Duration,
+}
+
+/// Identifies one version of a file: importing another sound under the same name changes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileStamp {
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl FileStamp {
+    fn of(path: &Path) -> Option<FileStamp> {
+        let metadata = std::fs::metadata(path).ok()?;
+        Some(FileStamp {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
+    }
+}
+
+struct CachedFile {
+    path: PathBuf,
+    stamp: FileStamp,
+    pcm: Pcm,
 }
 
 /// State of the audio thread. Time is passed in, so the logic is testable without a device or sleeping.
@@ -229,8 +273,10 @@ struct Engine<B: Backend> {
     voices: VecDeque<ActiveVoice<B::Voice>>,
     /// Since when the device has been open with nothing playing.
     idle_since: Option<Instant>,
-    break_pcm: Option<Arc<[Sample]>>,
-    focus_pcm: Option<Arc<[Sample]>>,
+    /// Rendered packs, by pack and chime.
+    packs: HashMap<(SoundPack, Chime), Pcm>,
+    /// Decoded custom files, oldest first.
+    files: Vec<CachedFile>,
 }
 
 impl<B: Backend> Engine<B> {
@@ -244,8 +290,8 @@ impl<B: Backend> Engine<B> {
             generation: 0,
             voices: VecDeque::new(),
             idle_since: None,
-            break_pcm: None,
-            focus_pcm: None,
+            packs: HashMap::new(),
+            files: Vec::new(),
         }
     }
 
@@ -256,11 +302,15 @@ impl<B: Backend> Engine<B> {
 
     fn handle(&mut self, command: Command, now: Instant) {
         match command {
-            Command::Play { chime, volume } => self.play(chime, volume, now),
+            Command::Play {
+                chime,
+                source,
+                volume,
+            } => self.play(chime, &source, volume, now),
         }
     }
 
-    fn play(&mut self, chime: Chime, volume: f32, now: Instant) {
+    fn play(&mut self, chime: Chime, source: &ChimeSource, volume: f32, now: Instant) {
         if volume <= 0.0 || volume.is_nan() {
             log::debug!("chime {chime:?} muted (volume 0)");
             return;
@@ -268,7 +318,7 @@ impl<B: Backend> Engine<B> {
         if self.sink.is_none() && !self.open() {
             return;
         }
-        let pcm = self.pcm(chime);
+        let pcm = self.pcm(chime, source);
         while self.voices.len() >= MAX_VOICES {
             let Some(oldest) = self.voices.pop_front() else {
                 break;
@@ -278,13 +328,18 @@ impl<B: Backend> Engine<B> {
         let Some(sink) = self.sink.as_ref() else {
             return;
         };
+        let duration = pcm.duration();
         let voice = self.backend.start(sink, pcm, volume.min(1.0));
         self.voices.push_back(ActiveVoice {
             voice,
             started_at: now,
+            duration,
         });
         self.idle_since = None;
-        log::debug!("chime {chime:?} started at volume {volume}");
+        log::debug!(
+            "chime {chime:?} ({}) started at volume {volume}",
+            source_label(source)
+        );
     }
 
     /// Opens the current default device. Returns false (and reports) on failure; the next chime retries.
@@ -304,13 +359,53 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// Rendered chime, cached after the first use.
-    fn pcm(&mut self, kind: Chime) -> Arc<[Sample]> {
-        let slot = match kind {
-            Chime::BreakStart => &mut self.break_pcm,
-            Chime::FocusStart => &mut self.focus_pcm,
-        };
-        Arc::clone(slot.get_or_insert_with(|| Arc::from(chime::render(kind))))
+    /// The sound of `chime` from `source`. A custom file that cannot be played is reported and replaced by
+    /// the Midnight pack.
+    fn pcm(&mut self, chime: Chime, source: &ChimeSource) -> Pcm {
+        match source {
+            ChimeSource::Pack(pack) => self.pack_pcm(*pack, chime),
+            ChimeSource::File(path) => match self.file_pcm(path) {
+                Ok(pcm) => pcm,
+                Err(err) => {
+                    self.report(&err);
+                    self.pack_pcm(SoundPack::Midnight, chime)
+                }
+            },
+        }
+    }
+
+    /// Rendered pack chime, cached after the first use.
+    fn pack_pcm(&mut self, pack: SoundPack, chime: Chime) -> Pcm {
+        self.packs
+            .entry((pack, chime))
+            .or_insert_with(|| Pcm::mono(Arc::from(chime::render(chime, pack)), chime::SAMPLE_RATE))
+            .clone()
+    }
+
+    /// Decoded custom file, cached until the file changes.
+    fn file_pcm(&mut self, path: &Path) -> Result<Pcm, AudioError> {
+        let stamp = FileStamp::of(path);
+        if let Some(stamp) = &stamp
+            && let Some(cached) = self
+                .files
+                .iter()
+                .find(|f| f.path == path && f.stamp == *stamp)
+        {
+            return Ok(cached.pcm.clone());
+        }
+        let pcm = file::load(path)?;
+        self.files.retain(|f| f.path != path);
+        if let Some(stamp) = stamp {
+            if self.files.len() >= MAX_CACHED_FILES {
+                self.files.remove(0);
+            }
+            self.files.push(CachedFile {
+                path: path.to_path_buf(),
+                stamp,
+                pcm: pcm.clone(),
+            });
+        }
+        Ok(pcm)
     }
 
     fn on_fault(&mut self, fault: Fault) {
@@ -328,8 +423,9 @@ impl<B: Backend> Engine<B> {
             return;
         }
         let backend = &self.backend;
-        let limit = CHIME_DURATION.saturating_add(self.timing.overrun);
+        let overrun = self.timing.overrun;
         self.voices.retain(|v| {
+            let limit = v.duration.saturating_add(overrun);
             !backend.is_finished(&v.voice) && now.saturating_duration_since(v.started_at) < limit
         });
         if !self.voices.is_empty() {
@@ -398,6 +494,7 @@ fn run<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::file::test_wav::{TempDir, sine, wav_bytes, write};
     use std::sync::Mutex;
 
     #[derive(Debug, Clone, PartialEq)]
@@ -405,6 +502,8 @@ mod tests {
         generation: u64,
         voice: u64,
         samples: usize,
+        channels: u16,
+        rate: u32,
         volume: f32,
     }
 
@@ -455,14 +554,16 @@ mod tests {
             Ok(FakeSink { generation })
         }
 
-        fn start(&mut self, sink: &FakeSink, pcm: Arc<[Sample]>, volume: f32) -> FakeVoice {
+        fn start(&mut self, sink: &FakeSink, pcm: Pcm, volume: f32) -> FakeVoice {
             let mut state = self.state();
             state.next_voice += 1;
             let id = state.next_voice;
             state.started.push(Started {
                 generation: sink.generation,
                 voice: id,
-                samples: pcm.len(),
+                samples: pcm.samples.len(),
+                channels: pcm.channels.get(),
+                rate: pcm.sample_rate.get(),
                 volume,
             });
             FakeVoice { id }
@@ -483,6 +584,8 @@ mod tests {
         idle_close: Duration::from_secs(10),
     };
 
+    const MIDNIGHT: ChimeSource = ChimeSource::Pack(SoundPack::Midnight);
+
     fn engine(fake: &FakeBackend) -> (Engine<FakeBackend>, Receiver<AudioEvent>) {
         let (events_tx, events_rx) = mpsc::channel();
         let (faults_tx, _faults_rx) = mpsc::channel();
@@ -499,6 +602,10 @@ mod tests {
                 AudioEvent::Error(message) => message,
             })
             .collect()
+    }
+
+    fn midnight_len(chime: Chime) -> usize {
+        chime::render(chime, SoundPack::Midnight).len()
     }
 
     #[test]
@@ -529,6 +636,13 @@ mod tests {
     }
 
     #[test]
+    fn source_label_never_shows_a_path() {
+        assert_eq!(source_label(&MIDNIGHT), "Midnight");
+        let file = ChimeSource::File(PathBuf::from("secret-folder").join("break.mp3"));
+        assert_eq!(source_label(&file), "custom file");
+    }
+
+    #[test]
     fn device_is_opened_lazily_and_reused() {
         let fake = FakeBackend::default();
         let (mut engine, events) = engine(&fake);
@@ -536,25 +650,33 @@ mod tests {
         assert!(!engine.is_active());
 
         let t0 = Instant::now();
-        engine.play(Chime::FocusStart, 0.7, t0);
-        engine.play(Chime::BreakStart, 0.5, t0 + Duration::from_secs(1));
+        engine.play(Chime::FocusStart, &MIDNIGHT, 0.7, t0);
+        engine.play(
+            Chime::BreakStart,
+            &MIDNIGHT,
+            0.5,
+            t0 + Duration::from_secs(1),
+        );
 
         let state = fake.state();
         assert_eq!(state.opens, vec![1]);
-        let expected = chime::sample_count(chime::SAMPLE_RATE_HZ);
         assert_eq!(
             state.started,
             vec![
                 Started {
                     generation: 1,
                     voice: 1,
-                    samples: expected,
+                    samples: midnight_len(Chime::FocusStart),
+                    channels: 1,
+                    rate: chime::SAMPLE_RATE_HZ,
                     volume: 0.7
                 },
                 Started {
                     generation: 1,
                     voice: 2,
-                    samples: expected,
+                    samples: midnight_len(Chime::BreakStart),
+                    channels: 1,
+                    rate: chime::SAMPLE_RATE_HZ,
                     volume: 0.5
                 },
             ]
@@ -564,11 +686,29 @@ mod tests {
     }
 
     #[test]
+    fn every_pack_plays_its_own_sound() {
+        let fake = FakeBackend::default();
+        let (mut engine, events) = engine(&fake);
+        let t0 = Instant::now();
+        for pack in SoundPack::ALL {
+            engine.play(Chime::BreakStart, &ChimeSource::Pack(pack), 1.0, t0);
+        }
+        let state = fake.state();
+        let lengths: Vec<usize> = state.started.iter().map(|s| s.samples).collect();
+        let expected: Vec<usize> = SoundPack::ALL
+            .iter()
+            .map(|pack| chime::render(Chime::BreakStart, *pack).len())
+            .collect();
+        assert_eq!(lengths, expected);
+        assert!(errors(&events).is_empty());
+    }
+
+    #[test]
     fn muted_chime_does_not_touch_the_device() {
         let fake = FakeBackend::default();
         let (mut engine, events) = engine(&fake);
-        engine.play(Chime::FocusStart, 0.0, Instant::now());
-        engine.play(Chime::FocusStart, f32::NAN, Instant::now());
+        engine.play(Chime::FocusStart, &MIDNIGHT, 0.0, Instant::now());
+        engine.play(Chime::FocusStart, &MIDNIGHT, f32::NAN, Instant::now());
         assert!(fake.state().opens.is_empty());
         assert!(fake.state().started.is_empty());
         assert!(!engine.is_active());
@@ -582,14 +722,14 @@ mod tests {
         let (mut engine, events) = engine(&fake);
         let t0 = Instant::now();
 
-        engine.play(Chime::BreakStart, 0.8, t0);
+        engine.play(Chime::BreakStart, &MIDNIGHT, 0.8, t0);
         assert!(!engine.is_active());
         assert!(fake.state().started.is_empty());
         let reported = errors(&events);
         assert_eq!(reported.len(), 1);
         assert!(reported[0].contains("no device"), "{reported:?}");
 
-        engine.play(Chime::BreakStart, 0.8, t0);
+        engine.play(Chime::BreakStart, &MIDNIGHT, 0.8, t0);
         assert!(engine.is_active());
         assert_eq!(fake.state().opens, vec![1, 2]);
         assert_eq!(fake.state().started.len(), 1);
@@ -601,7 +741,7 @@ mod tests {
         let fake = FakeBackend::default();
         let (mut engine, events) = engine(&fake);
         let t0 = Instant::now();
-        engine.play(Chime::FocusStart, 1.0, t0);
+        engine.play(Chime::FocusStart, &MIDNIGHT, 1.0, t0);
 
         engine.on_fault(Fault {
             generation: 1,
@@ -620,7 +760,7 @@ mod tests {
         });
         assert!(errors(&events).is_empty());
 
-        engine.play(Chime::BreakStart, 1.0, t0);
+        engine.play(Chime::BreakStart, &MIDNIGHT, 1.0, t0);
         assert!(engine.is_active());
         assert_eq!(fake.state().opens, vec![1, 2]);
     }
@@ -630,12 +770,12 @@ mod tests {
         let fake = FakeBackend::default();
         let (mut engine, events) = engine(&fake);
         let t0 = Instant::now();
-        engine.play(Chime::FocusStart, 1.0, t0);
+        engine.play(Chime::FocusStart, &MIDNIGHT, 1.0, t0);
         engine.on_fault(Fault {
             generation: 1,
             message: "lost".into(),
         });
-        engine.play(Chime::FocusStart, 1.0, t0);
+        engine.play(Chime::FocusStart, &MIDNIGHT, 1.0, t0);
         assert_eq!(errors(&events).len(), 1);
 
         engine.on_fault(Fault {
@@ -652,7 +792,7 @@ mod tests {
         let fake = FakeBackend::default();
         let (mut engine, _events) = engine(&fake);
         let t0 = Instant::now();
-        engine.play(Chime::FocusStart, 1.0, t0);
+        engine.play(Chime::FocusStart, &MIDNIGHT, 1.0, t0);
 
         engine.tick(t0 + Duration::from_secs(1));
         assert_eq!(engine.voices.len(), 1);
@@ -671,7 +811,12 @@ mod tests {
         assert!(fake.state().stopped.is_empty());
 
         // Next chime re-opens the (current default) device.
-        engine.play(Chime::BreakStart, 1.0, t1 + Duration::from_secs(60));
+        engine.play(
+            Chime::BreakStart,
+            &MIDNIGHT,
+            1.0,
+            t1 + Duration::from_secs(60),
+        );
         assert_eq!(fake.state().opens, vec![1, 2]);
     }
 
@@ -680,12 +825,12 @@ mod tests {
         let fake = FakeBackend::default();
         let (mut engine, _events) = engine(&fake);
         let t0 = Instant::now();
-        engine.play(Chime::FocusStart, 1.0, t0);
+        engine.play(Chime::FocusStart, &MIDNIGHT, 1.0, t0);
         fake.state().finished.push(1);
         engine.tick(t0 + Duration::from_secs(3));
 
         let t1 = t0 + Duration::from_secs(8);
-        engine.play(Chime::BreakStart, 1.0, t1);
+        engine.play(Chime::BreakStart, &MIDNIGHT, 1.0, t1);
         engine.tick(t0 + Duration::from_secs(3) + TEST_TIMING.idle_close);
         assert!(engine.is_active());
         assert_eq!(fake.state().opens, vec![1]);
@@ -696,8 +841,8 @@ mod tests {
         let fake = FakeBackend::default();
         let (mut engine, _events) = engine(&fake);
         let t0 = Instant::now();
-        engine.play(Chime::FocusStart, 1.0, t0);
-        let limit = CHIME_DURATION + TEST_TIMING.overrun;
+        engine.play(Chime::FocusStart, &MIDNIGHT, 1.0, t0);
+        let limit = SoundPack::Midnight.duration(Chime::FocusStart) + TEST_TIMING.overrun;
 
         engine.tick(t0 + limit - Duration::from_millis(1));
         assert_eq!(engine.voices.len(), 1);
@@ -711,7 +856,7 @@ mod tests {
         let (mut engine, _events) = engine(&fake);
         let t0 = Instant::now();
         for _ in 0..MAX_VOICES + 2 {
-            engine.play(Chime::FocusStart, 1.0, t0);
+            engine.play(Chime::FocusStart, &MIDNIGHT, 1.0, t0);
         }
         assert_eq!(engine.voices.len(), MAX_VOICES);
         assert_eq!(fake.state().stopped, vec![1, 2]);
@@ -720,14 +865,122 @@ mod tests {
     }
 
     #[test]
-    fn rendered_chimes_are_cached() {
+    fn rendered_chimes_are_cached_per_pack() {
         let fake = FakeBackend::default();
         let (mut engine, _events) = engine(&fake);
-        let a = engine.pcm(Chime::BreakStart);
-        let b = engine.pcm(Chime::BreakStart);
-        let c = engine.pcm(Chime::FocusStart);
-        assert!(Arc::ptr_eq(&a, &b));
-        assert!(!Arc::ptr_eq(&a, &c));
+        let a = engine.pack_pcm(SoundPack::Midnight, Chime::BreakStart);
+        let b = engine.pack_pcm(SoundPack::Midnight, Chime::BreakStart);
+        let c = engine.pack_pcm(SoundPack::Midnight, Chime::FocusStart);
+        let d = engine.pack_pcm(SoundPack::Lunar, Chime::BreakStart);
+        assert!(Arc::ptr_eq(&a.samples, &b.samples));
+        assert!(!Arc::ptr_eq(&a.samples, &c.samples));
+        assert!(!Arc::ptr_eq(&a.samples, &d.samples));
+        assert_eq!(engine.packs.len(), 3);
+    }
+
+    #[test]
+    fn custom_file_plays_in_its_own_format() {
+        let dir = TempDir::new();
+        let path = dir.path("break.wav");
+        let stereo: Vec<i16> = sine(8_000, 0.5).iter().flat_map(|s| [*s, *s]).collect();
+        write(&path, &wav_bytes(8_000, 2, &stereo));
+        let fake = FakeBackend::default();
+        let (mut engine, events) = engine(&fake);
+
+        engine.play(
+            Chime::BreakStart,
+            &ChimeSource::File(path),
+            0.6,
+            Instant::now(),
+        );
+        assert_eq!(
+            fake.state().started,
+            vec![Started {
+                generation: 1,
+                voice: 1,
+                samples: stereo.len(),
+                channels: 2,
+                rate: 8_000,
+                volume: 0.6,
+            }]
+        );
+        assert_eq!(engine.voices[0].duration, Duration::from_millis(500));
+        assert!(errors(&events).is_empty());
+    }
+
+    #[test]
+    fn unplayable_file_falls_back_to_midnight_and_is_reported() {
+        let dir = TempDir::new();
+        let broken = dir.path("focus.mp3");
+        write(&broken, b"not audio at all");
+        let fake = FakeBackend::default();
+        let (mut engine, events) = engine(&fake);
+        let t0 = Instant::now();
+
+        engine.play(
+            Chime::FocusStart,
+            &ChimeSource::File(dir.path("missing.wav")),
+            1.0,
+            t0,
+        );
+        engine.play(Chime::FocusStart, &ChimeSource::File(broken), 1.0, t0);
+
+        let state = fake.state();
+        assert_eq!(state.started.len(), 2);
+        for started in &state.started {
+            assert_eq!(started.samples, midnight_len(Chime::FocusStart));
+            assert_eq!(started.rate, chime::SAMPLE_RATE_HZ);
+        }
+        let reported = errors(&events);
+        assert_eq!(reported.len(), 2, "{reported:?}");
+        assert!(reported[0].contains("missing.wav"), "{reported:?}");
+        assert!(reported[1].contains("focus.mp3"), "{reported:?}");
+        assert!(engine.files.is_empty());
+    }
+
+    #[test]
+    fn custom_file_is_cached_until_it_changes() {
+        let dir = TempDir::new();
+        let path = dir.path("break.wav");
+        write(&path, &wav_bytes(8_000, 1, &sine(8_000, 0.25)));
+        let fake = FakeBackend::default();
+        let (mut engine, _events) = engine(&fake);
+
+        let a = engine.file_pcm(&path).expect("valid wav");
+        let b = engine.file_pcm(&path).expect("valid wav");
+        assert!(Arc::ptr_eq(&a.samples, &b.samples));
+
+        // Importing another sound under the same name replaces the cached one.
+        write(&path, &wav_bytes(8_000, 1, &sine(8_000, 0.5)));
+        let c = engine.file_pcm(&path).expect("valid wav");
+        assert_eq!(c.samples.len(), 4_000);
+        assert_eq!(engine.files.len(), 1);
+
+        // At most MAX_CACHED_FILES files stay decoded.
+        for name in ["a.wav", "b.wav", "c.wav"] {
+            let other = dir.path(name);
+            write(&other, &wav_bytes(8_000, 1, &sine(8_000, 0.1)));
+            engine.file_pcm(&other).expect("valid wav");
+        }
+        assert_eq!(engine.files.len(), MAX_CACHED_FILES);
+        assert!(engine.files.iter().all(|f| f.path != path));
+    }
+
+    #[test]
+    fn long_custom_chime_is_not_dropped_as_stalled() {
+        let dir = TempDir::new();
+        let path = dir.path("long.wav");
+        write(&path, &wav_bytes(2_000, 1, &sine(2_000, 9.0)));
+        let fake = FakeBackend::default();
+        let (mut engine, _events) = engine(&fake);
+        let t0 = Instant::now();
+        engine.play(Chime::BreakStart, &ChimeSource::File(path), 1.0, t0);
+
+        // Longer than a pack chime plus the overrun, still within the file's own length.
+        engine.tick(t0 + Duration::from_secs(8));
+        assert_eq!(engine.voices.len(), 1);
+        engine.tick(t0 + Duration::from_secs(9) + TEST_TIMING.overrun);
+        assert!(engine.voices.is_empty());
     }
 
     #[test]
@@ -735,8 +988,8 @@ mod tests {
         let fake = FakeBackend::default();
         let (player, events, handle) = spawn_thread(fake.clone(), TEST_TIMING);
         let second = player.clone();
-        player.play(Chime::FocusStart, 0.8);
-        second.play(Chime::BreakStart, f32::NAN); // muted -> ignored
+        player.play(Chime::FocusStart, ChimeSource::Pack(SoundPack::Lunar), 0.8);
+        second.play(Chime::BreakStart, MIDNIGHT, f32::NAN); // muted -> ignored
         drop(player);
         drop(second);
         handle
@@ -748,6 +1001,10 @@ mod tests {
         assert_eq!(state.opens, vec![1]);
         assert_eq!(state.started.len(), 1);
         assert_eq!(state.started[0].volume, 0.8);
+        assert_eq!(
+            state.started[0].samples,
+            chime::render(Chime::FocusStart, SoundPack::Lunar).len()
+        );
         // Shutting down stops the chime that was still playing.
         assert_eq!(state.stopped, vec![1]);
         assert!(events.try_recv().is_err());
@@ -757,8 +1014,8 @@ mod tests {
     fn real_player_with_muted_chimes_never_opens_a_device() {
         // Safe without audio hardware: volume 0 never reaches the device.
         let (player, events) = ChimePlayer::spawn();
-        player.play(Chime::FocusStart, 0.0);
-        player.play(Chime::BreakStart, f32::NAN);
+        player.play(Chime::FocusStart, ChimeSource::default(), 0.0);
+        player.play(Chime::BreakStart, ChimeSource::default(), f32::NAN);
         drop(player);
         assert!(!matches!(
             events.recv_timeout(Duration::from_millis(200)),
