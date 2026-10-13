@@ -1,5 +1,7 @@
 //! Separate YouTube window ("media") for links that refuse embedding (YouTube errors 101/150/153,
 //! e.g. the Lofi Girl live stream) or cannot be embedded at all (`/@handle/live`, `/channel/<id>/live`).
+//! With a signed-in YouTube account it plays every YouTube item: only here are the youtube.com cookies
+//! first-party, so Premium applies (ADR-021, `youtube_account.rs`).
 //!
 //! The link is loaded top-level, like a normal browser tab, in the default WebView2 profile (the
 //! YouTube consent cookie persists). The remote page has no IPC permissions (the default capability
@@ -21,9 +23,9 @@ use std::time::{Duration, Instant};
 use focus_core::api::{AppError, MediaAction, MediaWindowStatus, events};
 use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_opener::OpenerExt;
 
-use crate::window_util::{bottom_right, with_main_webview_options};
+use crate::window_util::{bottom_right, open_link_externally, with_main_webview_options};
+use crate::youtube_account::is_google_country_accounts_host;
 use crate::{MAIN_WINDOW, lock, texts};
 
 /// Label of the YouTube window.
@@ -36,8 +38,6 @@ const MIN_HEIGHT: f64 = 200.0;
 const FRAME_ALLOWANCE: f64 = 40.0;
 /// Volume used until the UI sends one (0..=100).
 const DEFAULT_VOLUME: u8 = 100;
-/// At most one link opened in the system browser per this interval (a page cannot spam tabs).
-const EXTERNAL_OPEN_EVERY: Duration = Duration::from_secs(2);
 /// `open` right after our own `close` waits this long for the old window to be gone (the label is
 /// only free after `Destroyed`), polling every [`CLOSE_POLL`].
 const CLOSE_WAIT: Duration = Duration::from_millis(1500);
@@ -398,6 +398,20 @@ impl MediaWindow {
         Ok(())
     }
 
+    /// Reloads the open window's page because the YouTube sign-in changed (ADR-021): the page picks up the new
+    /// cookies (Premium right after signing in). The page-load hook re-applies the wanted play state and volume.
+    pub fn reload(&self, app: &AppHandle) {
+        if lock(&self.shared.state).closing {
+            return;
+        }
+        if let Some(window) = app.get_webview_window(MEDIA_WINDOW) {
+            log::info!("media window: reloading for the new YouTube sign-in state");
+            if let Err(err) = window.reload() {
+                log::warn!("cannot reload the media window: {err}");
+            }
+        }
+    }
+
     /// After our own `close` the window keeps its label until `Destroyed`; an `open` in that gap
     /// would navigate a dying window. Waits (bounded) until it is gone, then `open` builds a new one.
     async fn wait_for_requested_close(&self, app: &AppHandle) {
@@ -573,6 +587,8 @@ fn is_allowed_navigation(url: &Url) -> bool {
         "https" => url.host_str().is_some_and(|host| {
             host == "youtu.be"
                 || GOOGLE_FLOW_HOSTS.contains(&host)
+                // A signed-in page may refresh its sign-in through `accounts.google.<country>` (ADR-021).
+                || is_google_country_accounts_host(host)
                 || NAVIGATION_DOMAINS.iter().any(|domain| {
                     host == *domain
                         || host
@@ -586,27 +602,7 @@ fn is_allowed_navigation(url: &Url) -> bool {
 
 /// Hands an http(s) link the media window must not open itself to the system browser (rate-limited).
 fn open_externally(app: &AppHandle, shared: &Shared, url: &Url) {
-    if !matches!(url.scheme(), "http" | "https") {
-        log::debug!("media window: blocked a {} link", url.scheme());
-        return;
-    }
-    {
-        let mut last = lock(&shared.last_external);
-        if last.is_some_and(|at| at.elapsed() < EXTERNAL_OPEN_EVERY) {
-            log::debug!("media window: external link ignored (rate limit)");
-            return;
-        }
-        *last = Some(Instant::now());
-    }
-    log::info!("media window: opening {} in the browser", host_of(url));
-    let app = app.clone();
-    let link = url.to_string();
-    // Off the main thread: starting the browser can take a moment.
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(err) = app.opener().open_url(link, None::<&str>) {
-            log::warn!("cannot open a link in the browser: {err}");
-        }
-    });
+    open_link_externally(app, &shared.last_external, url, "media window");
 }
 
 /// The YouTube cookie choice is already stored in the shared WebView2 profile (read through the main
@@ -780,6 +776,7 @@ mod tests {
             "https://accounts.youtube.com/accounts/SetSID",
             "https://youtu.be/x",
             "https://accounts.google.com/ServiceLogin",
+            "https://accounts.google.pl/accounts/SetSID",
             "https://consent.google.com/ml?continue=x",
             "https://www.google.com/sorry/index",
             "https://www.gstatic.com/x.js",

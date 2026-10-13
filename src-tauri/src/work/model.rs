@@ -299,6 +299,14 @@ impl Announcer {
         }
     }
 
+    /// Records `ids` as known without announcing them (the seen ids were deleted, ADR-020: what is listed now is not
+    /// news).
+    pub fn remember<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) {
+        for id in ids {
+            self.known.touch(id);
+        }
+    }
+
     /// The session phase; returns the digest to show now (the held items when focus ended, else 0).
     pub fn phase(&mut self, phase: Phase, seen: &IdSet) -> u32 {
         self.focus = phase == Phase::Focus;
@@ -781,6 +789,24 @@ mod tests {
                 new: 1,
                 announce: 1
             }
+        );
+    }
+
+    #[test]
+    fn remembered_items_are_not_news_after_the_seen_ids_go() {
+        // Seen before the privacy panel deleted work-seen.json: never announced, then forgotten.
+        let seen = IdSet::from_ids(["a".to_owned(), "b".to_owned()], 10);
+        let mut announcer = Announcer::new(true);
+        announcer.list(&items(&["a", "b"]), true, &seen);
+        announcer.remember(["a", "b"]);
+        let forgotten = IdSet::new(10);
+        assert_eq!(
+            announcer.list(&items(&["a", "b", "c"]), false, &forgotten),
+            Arrivals {
+                new: 1,
+                announce: 1
+            },
+            "only the really new item is announced"
         );
     }
 

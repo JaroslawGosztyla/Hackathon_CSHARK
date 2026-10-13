@@ -156,6 +156,18 @@ impl BlocklistService {
         Ok(self.inner.path.clone())
     }
 
+    /// Privacy panel (ADR-020): replaces the file with the bundled default list and loads it (a new revision and
+    /// `blocklist://changed` when the list changed). Blocking.
+    pub fn restore_default(&self) -> anyhow::Result<BlocklistInfo> {
+        {
+            // Under the reload lock, so the watcher never reads a half-replaced file between the write and the load.
+            let _serial = lock(&self.inner.reload);
+            write_atomic(&self.inner.path, DEFAULT_BLACKLIST.as_bytes())?;
+        }
+        log::info!("{BLACKLIST_FILE_NAME} replaced by the bundled default at the user's request");
+        Ok(self.reload())
+    }
+
     /// The latest report of the browser extension: the regex sources it could not turn into network rules
     /// (`POST /v1/report`). Only sources of the list in use are kept, in the list's order and without
     /// repeats. Publishes a new revision (`blocklist://changed`) and returns `true` only when that changed.

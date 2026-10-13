@@ -16,6 +16,7 @@ mod media_window;
 mod music;
 mod persistence;
 mod popup;
+mod privacy;
 mod safety_net;
 mod session_actor;
 mod shields;
@@ -26,6 +27,7 @@ mod tracker;
 mod tray;
 mod window_util;
 mod work;
+mod youtube_account;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -92,6 +94,10 @@ pub struct AppState {
     pub work: work::WorkHandle,
     /// The open "minimize to tray?" question of the first X.
     pub close: close::ClosePrompt,
+    /// Settings → "Privacy & data" (ADR-020): what is stored, export, deletes.
+    pub privacy: privacy::PrivacyHandle,
+    /// YouTube sign-in for Premium (ADR-021): sign-in window and sign-in cookie presence.
+    pub youtube: youtube_account::YoutubeAccountHandle,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -183,6 +189,14 @@ pub fn run() {
             commands::set_session_goal,
             commands::mark_goal_done,
             commands::dev_trigger,
+            commands::get_privacy_report,
+            commands::open_data_folder,
+            commands::export_privacy_data,
+            commands::delete_privacy_data,
+            commands::delete_all_data,
+            commands::get_youtube_account,
+            commands::youtube_sign_in,
+            commands::youtube_sign_out,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");
@@ -373,6 +387,14 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     if extension_dir.is_none() {
         log::warn!("browser extension folder not found");
     }
+    // What is stored where (Settings → "Privacy & data"): rescanned on its own thread.
+    let privacy = privacy::PrivacyHandle::spawn(privacy::PrivacyContext {
+        app: handle.clone(),
+        persistence: persistence.clone(),
+        calendar: calendar.clone(),
+        blocklist: blocklist.clone(),
+    })
+    .context("spawn privacy thread")?;
 
     app.manage(AppState {
         config,
@@ -393,8 +415,14 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         calendar,
         work,
         close: close::ClosePrompt::default(),
+        privacy,
+        youtube: youtube_account::YoutubeAccountHandle::default(),
     });
     chimes::clean_up_at_startup(&handle);
+    // One look at the YouTube sign-in cookies (names only, off the main thread): decides where YouTube plays.
+    if !launch.restore_only {
+        app.state::<AppState>().youtube.start(&handle);
+    }
 
     // The window is created hidden (tauri.conf.json): an autostart launch stays in the tray, and a
     // `--restore-shields` launch exits right after the crash-restore without ever showing it.
@@ -658,6 +686,7 @@ pub(crate) fn apply_language(app: &AppHandle, choice: Language) {
     for (label, title) in [
         (media_window::MEDIA_WINDOW, t.media_window_title),
         (popup::POPUP_WINDOW, t.popup_window_title),
+        (youtube_account::SIGN_IN_WINDOW, t.youtube_sign_in_title),
     ] {
         if let Some(window) = app.get_webview_window(label)
             && let Err(err) = window.set_title(title)

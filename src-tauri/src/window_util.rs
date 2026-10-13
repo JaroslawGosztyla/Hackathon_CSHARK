@@ -1,11 +1,52 @@
-//! Helpers shared by the app's extra windows (YouTube media window, phase popup).
+//! Helpers shared by the app's extra windows (YouTube media window, YouTube sign-in window, phase popup).
 
-use tauri::{AppHandle, PhysicalPosition, PhysicalSize, WebviewWindowBuilder, Wry};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-use crate::MAIN_WINDOW;
+use tauri::{AppHandle, PhysicalPosition, PhysicalSize, Url, WebviewWindowBuilder, Wry};
+use tauri_plugin_opener::OpenerExt;
+
+use crate::{MAIN_WINDOW, lock};
 
 /// Gap between a corner window and the work area edge (logical px).
 pub const SCREEN_MARGIN: f64 = 16.0;
+/// A remote page gets at most one link opened in the system browser per this interval (it cannot spam tabs).
+const EXTERNAL_OPEN_EVERY: Duration = Duration::from_secs(2);
+
+/// Hands an http(s) link that a remote-page window must not open itself to the system browser, at most once per
+/// [`EXTERNAL_OPEN_EVERY`] per window (`last_opened` is that window's clock). `window` names it in the log; only the
+/// host is logged (links may carry personal ids in the query).
+pub fn open_link_externally(
+    app: &AppHandle,
+    last_opened: &Mutex<Option<Instant>>,
+    url: &Url,
+    window: &str,
+) {
+    if !matches!(url.scheme(), "http" | "https") {
+        log::debug!("{window}: blocked a {} link", url.scheme());
+        return;
+    }
+    {
+        let mut last = lock(last_opened);
+        if last.is_some_and(|at| at.elapsed() < EXTERNAL_OPEN_EVERY) {
+            log::debug!("{window}: external link ignored (rate limit)");
+            return;
+        }
+        *last = Some(Instant::now());
+    }
+    log::info!(
+        "{window}: opening {} in the browser",
+        url.host_str().unwrap_or("?")
+    );
+    let app = app.clone();
+    let link = url.to_string();
+    // Off the main thread: starting the browser can take a moment.
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(err) = app.opener().open_url(link, None::<&str>) {
+            log::warn!("cannot open a link in the browser: {err}");
+        }
+    });
+}
 
 /// Where a window of a given logical size goes near the bottom-right corner of the primary monitor's
 /// work area (above the taskbar).

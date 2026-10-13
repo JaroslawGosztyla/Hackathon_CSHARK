@@ -10,8 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use focus_core::api::{
     AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, CalendarSource, CalendarStatus, ChimeKind,
     ChimeSound, Config, DevAction, DeviceCodePrompt, Language, MediaAction, MediaWindowStatus,
-    MeetingChoice, Phase, PopupAction, PopupInfo, SessionGoal, SessionSnapshot, SessionSummary,
-    ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport, WorkSource, WorkStatus,
+    MeetingChoice, Phase, PopupAction, PopupInfo, PrivacyItemKind, PrivacyReport, SessionGoal,
+    SessionSnapshot, SessionSummary, ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport,
+    WorkSource, WorkStatus, YoutubeAccount,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use tauri::{AppHandle, State};
@@ -19,8 +20,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::session_actor::ActorCmd;
 use crate::{
-    AppState, calendar, chimes, close, dev, effects, emit_error, lock, music, read_config, tracker,
-    work, write_config,
+    AppState, calendar, chimes, close, dev, effects, emit_error, lock, music, privacy, read_config,
+    tracker, work, write_config,
 };
 
 /// Upper bound for `list_history(limit)`.
@@ -76,9 +77,9 @@ pub async fn update_config(
     store_config(&app, &state, config).await
 }
 
-/// Validates, persists and applies a new config (shared by `update_config` and `resolve_close`).
-/// The caller holds `state.config_update`.
-async fn store_config(
+/// Validates, persists and applies a new config (shared by `update_config`, `resolve_close` and the privacy
+/// deletes). The caller holds `state.config_update`.
+pub(crate) async fn store_config(
     app: &AppHandle,
     state: &AppState,
     config: Config,
@@ -479,6 +480,58 @@ pub async fn dev_trigger(state: State<'_, AppState>, action: DevAction) -> Resul
         DevAction::SetRemaining { secs } => state.actor.dev_set_remaining(secs).await?,
     }
     Ok(())
+}
+
+// --- Privacy panel (ADR-020, `privacy.rs`) --------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_privacy_report(state: State<'_, AppState>) -> Result<PrivacyReport, AppError> {
+    state.privacy.report().await
+}
+
+#[tauri::command]
+pub async fn open_data_folder(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    privacy::open_data_folder(&app, &state).await
+}
+
+#[tauri::command]
+pub async fn export_privacy_data(state: State<'_, AppState>, path: String) -> Result<(), AppError> {
+    privacy::export(&state, &path).await
+}
+
+#[tauri::command]
+pub async fn delete_privacy_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    kinds: Vec<PrivacyItemKind>,
+) -> Result<Config, AppError> {
+    privacy::delete(&app, &state, &kinds).await
+}
+
+#[tauri::command]
+pub async fn delete_all_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Config, AppError> {
+    privacy::delete_all(&app, &state).await
+}
+
+// --- YouTube sign-in (ADR-021, `youtube_account.rs`) --------------------------------------------
+// Async on purpose: the sign-in window is created here, and WebView2 cookie calls deadlock on the main thread.
+
+#[tauri::command]
+pub async fn get_youtube_account(state: State<'_, AppState>) -> Result<YoutubeAccount, AppError> {
+    Ok(state.youtube.status())
+}
+
+#[tauri::command]
+pub async fn youtube_sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    state.youtube.sign_in(&app).await
+}
+
+#[tauri::command]
+pub async fn youtube_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    state.youtube.sign_out(&app).await
 }
 
 #[tauri::command]

@@ -25,6 +25,7 @@ pub(super) static TEXTS: Texts = Texts {
 
     media_window_title: "FocusMode — музыка (YouTube)",
     popup_window_title: "FocusMode — уведомление",
+    youtube_sign_in_title: "FocusMode — вход в YouTube",
 
     seconds: |secs| format!("{secs} с"),
     minutes: |minutes| format!("{minutes} мин"),

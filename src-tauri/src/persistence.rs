@@ -64,6 +64,25 @@ struct Inner {
     history_lock: Mutex<()>,
 }
 
+/// The files [`Persistence`] keeps, for the privacy report (ADR-020; read-only use there).
+#[derive(Debug, Clone)]
+pub struct DataFiles {
+    pub config_dir: PathBuf,
+    pub data_dir: PathBuf,
+    pub config: PathBuf,
+    pub config_backup: PathBuf,
+    pub history: PathBuf,
+    pub meeting_choices: PathBuf,
+    pub work_seen: PathBuf,
+    pub shields_restore: PathBuf,
+    pub tint_restore: PathBuf,
+    pub teams_token: PathBuf,
+    pub google_token: PathBuf,
+    pub ics_links: PathBuf,
+    pub sounds: PathBuf,
+    pub blocklist: PathBuf,
+}
+
 /// Where [`Persistence::mark_goal_done`] found the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GoalMarked {
@@ -82,6 +101,12 @@ impl Persistence {
             .context("resolve app config dir")?;
         let data_dir = app.path().app_data_dir().context("resolve app data dir")?;
         Self::with_dirs(&config_dir, &data_dir)
+    }
+
+    /// For tests of other modules (e.g. `crate::privacy`): the files in these folders.
+    #[cfg(test)]
+    pub fn with_test_dirs(config_dir: &Path, data_dir: &Path) -> anyhow::Result<Self> {
+        Self::with_dirs(config_dir, data_dir)
     }
 
     fn with_dirs(config_dir: &Path, data_dir: &Path) -> anyhow::Result<Self> {
@@ -108,6 +133,54 @@ impl Persistence {
                 history_lock: Mutex::new(()),
             }),
         })
+    }
+
+    /// Every file and folder of this module (the privacy report reads their metadata, ADR-020).
+    pub fn files(&self) -> DataFiles {
+        let inner = &self.inner;
+        DataFiles {
+            config_dir: inner
+                .config_path
+                .parent()
+                .map_or_else(|| inner.data_dir.clone(), Path::to_path_buf),
+            data_dir: inner.data_dir.clone(),
+            config: inner.config_path.clone(),
+            config_backup: inner.config_backup_path.clone(),
+            history: inner.history_path.clone(),
+            meeting_choices: inner.meeting_choices_path.clone(),
+            work_seen: inner.work_seen_path.clone(),
+            shields_restore: inner.restore_path.clone(),
+            tint_restore: inner.tint_restore_path.clone(),
+            teams_token: inner.teams_token_path.clone(),
+            google_token: inner.google_token_path.clone(),
+            ics_links: inner.ics_links_path.clone(),
+            sounds: inner.sounds_dir.clone(),
+            blocklist: inner.blocklist_path.clone(),
+        }
+    }
+
+    /// Deletes `meeting-choices.json` (privacy panel; the calendar thread forgets its answers at the same time).
+    /// A missing file is fine.
+    pub fn clear_meeting_choices(&self) -> anyhow::Result<()> {
+        let _guard = lock(&self.inner.write_lock);
+        remove_if_present(&self.inner.meeting_choices_path)?;
+        remove_if_present(&tmp_path(&self.inner.meeting_choices_path))
+    }
+
+    /// Deletes `work-seen.json` (privacy panel; the work thread forgets the ids at the same time). A missing file is
+    /// fine.
+    pub fn clear_work_seen(&self) -> anyhow::Result<()> {
+        let _guard = lock(&self.inner.write_lock);
+        remove_if_present(&self.inner.work_seen_path)?;
+        remove_if_present(&tmp_path(&self.inner.work_seen_path))
+    }
+
+    /// Deletes `config.json.bak` (the copy of a corrupted config) and a temp file a crashed config write left
+    /// ("Delete everything"). A missing file is fine.
+    pub fn remove_config_leftovers(&self) -> anyhow::Result<()> {
+        let _guard = lock(&self.inner.write_lock);
+        remove_if_present(&self.inner.config_backup_path)?;
+        remove_if_present(&tmp_path(&self.inner.config_path))
     }
 
     /// The sealed access token of a work tool (read and written by `crate::work` via `focus_platform`).
@@ -713,6 +786,32 @@ mod tests {
             root.join("data").join(GOOGLE_TOKEN_FILE)
         );
         assert_eq!(p.ics_links_path(), root.join("data").join(ICS_LINKS_FILE));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn privacy_clears_only_their_own_files() {
+        let (root, p) = temp_dirs("privacy");
+        let files = p.files();
+        assert_eq!(files.config_dir, root.join("config"));
+        assert_eq!(files.data_dir, root.join("data"));
+        assert_eq!(files.history, root.join("data").join(HISTORY_FILE));
+        p.save_meeting_choices(&vec!["a".to_owned()]).expect("save");
+        p.save_work_seen(&vec!["b".to_owned()]).expect("save");
+        p.save_config(&Config::default()).expect("save");
+        fs::write(&files.config_backup, b"{").expect("write");
+        p.clear_meeting_choices().expect("clear");
+        assert!(!files.meeting_choices.exists());
+        assert!(files.work_seen.exists(), "the other files stay");
+        p.clear_work_seen().expect("clear");
+        assert!(!files.work_seen.exists());
+        p.remove_config_leftovers().expect("remove");
+        assert!(!files.config_backup.exists());
+        assert!(files.config.exists(), "config.json itself stays");
+        // Nothing left to delete is fine.
+        p.clear_meeting_choices().expect("again");
+        p.clear_work_seen().expect("again");
+        p.remove_config_leftovers().expect("again");
         let _ = fs::remove_dir_all(&root);
     }
 

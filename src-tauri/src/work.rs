@@ -63,6 +63,8 @@ pub enum WorkCmd {
         reply: oneshot::Sender<Result<WorkStatus, AppError>>,
     },
     ConfigChanged,
+    /// Privacy panel (ADR-020): forget the seen ids and delete `work-seen.json`.
+    ClearSeen(oneshot::Sender<Result<(), AppError>>),
     /// The session phase changed (from the actor).
     Session(Phase),
     /// A fetch finished (from its fetch thread).
@@ -132,6 +134,14 @@ impl WorkHandle {
     /// The config was saved (non-blocking).
     pub fn config_changed(&self) {
         let _ = self.send(WorkCmd::ConfigChanged);
+    }
+
+    /// Forgets which items the user has seen and deletes `work-seen.json`. The items listed now are not announced
+    /// again as new (no `WorkDigest` popup for them).
+    pub async fn clear_seen(&self) -> Result<(), AppError> {
+        let (reply, response) = oneshot::channel();
+        self.send(WorkCmd::ClearSeen(reply))?;
+        response.await.map_err(|_| unavailable_error())?
     }
 
     /// The session phase changed (non-blocking; from the actor).
@@ -353,6 +363,10 @@ impl Service {
                 let _ = reply.send(result);
             }
             WorkCmd::ConfigChanged => self.config_changed(),
+            WorkCmd::ClearSeen(reply) => {
+                let result = self.clear_seen();
+                let _ = reply.send(result);
+            }
             WorkCmd::Session(phase) => self.session_changed(phase),
             WorkCmd::Fetched(fetched) => self.fetched(fetched),
         }
@@ -530,6 +544,25 @@ impl Service {
     }
 
     // -- commands ------------------------------------------------------------------------------------
+
+    /// Privacy panel: the seen ids go (memory and file). The items of every source stay known to the announcer, so
+    /// they are not announced again; they show as unseen until the user looks at the list (which stores ids again).
+    fn clear_seen(&mut self) -> Result<(), AppError> {
+        for state in &self.sources {
+            self.announcer
+                .remember(state.items.iter().map(|item| item.id.as_str()));
+        }
+        self.seen = IdSet::new(model::MAX_SEEN);
+        let deleted = self.ctx.persistence.clear_work_seen();
+        log::info!("work: seen items deleted at the user's request");
+        self.rebuild();
+        deleted.map_err(|err| {
+            AppError::new(
+                focus_core::privacy::ERR_DELETE,
+                format!("cannot delete the seen work items: {err:#}"),
+            )
+        })
+    }
 
     fn session_changed(&mut self, phase: Phase) {
         let previous = std::mem::replace(&mut self.phase, phase);

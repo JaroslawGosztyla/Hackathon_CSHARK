@@ -52,6 +52,8 @@ pub struct Texts {
     pub media_window_title: &'static str,
     /// The phase popup window (bottom-right corner).
     pub popup_window_title: &'static str,
+    /// The YouTube sign-in window (Google's sign-in page, ADR-021).
+    pub youtube_sign_in_title: &'static str,
 
     // --- Durations: `20 s`, `15 min`, `2 h`, `1 h 30 min` ---
     pub seconds: fn(u32) -> String,
@@ -766,6 +768,7 @@ mod tests {
                 texts.phase_break,
                 texts.media_window_title,
                 texts.popup_window_title,
+                texts.youtube_sign_in_title,
                 texts.ea_app,
                 texts.xbox_app,
                 texts.blocklist_missing,
@@ -785,6 +788,11 @@ mod tests {
             );
             assert!(
                 texts.popup_window_title.contains("FocusMode"),
+                "{language:?}"
+            );
+            assert!(
+                texts.youtube_sign_in_title.contains("FocusMode")
+                    && texts.youtube_sign_in_title.contains("YouTube"),
                 "{language:?}"
             );
             let status = texts.tray_status(&snapshot);

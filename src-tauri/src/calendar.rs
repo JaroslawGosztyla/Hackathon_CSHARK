@@ -96,6 +96,8 @@ pub enum CalendarCmd {
         reply: oneshot::Sender<Result<CalendarStatus, AppError>>,
     },
     GetIcsUrls(oneshot::Sender<Vec<String>>),
+    /// Privacy panel (ADR-020): forget every answer and delete `meeting-choices.json`.
+    ClearChoices(oneshot::Sender<Result<(), AppError>>),
     /// A fetch finished (from the fetch thread).
     Fetched(fetch::Fetched),
     /// A Google sign-in ended (from its thread): the account, if known, or an English error.
@@ -190,6 +192,11 @@ impl CalendarHandle {
 
     pub async fn ics_urls(&self) -> Result<Vec<String>, AppError> {
         self.request(CalendarCmd::GetIcsUrls).await
+    }
+
+    /// Forgets every meeting answer (the session's meeting holds go with them) and deletes `meeting-choices.json`.
+    pub async fn clear_choices(&self) -> Result<(), AppError> {
+        self.request(CalendarCmd::ClearChoices).await?
     }
 
     async fn request<T>(
@@ -505,6 +512,10 @@ impl Service {
             CalendarCmd::GetIcsUrls(reply) => {
                 let _ = reply.send(self.ics_urls.clone());
             }
+            CalendarCmd::ClearChoices(reply) => {
+                let result = self.clear_choices();
+                let _ = reply.send(result);
+            }
             CalendarCmd::Fetched(fetched) => self.fetched(fetched),
             CalendarCmd::GoogleDone { attempt, result } => self.google_done(attempt, result),
         }
@@ -754,6 +765,22 @@ impl Service {
         self.source_mut(source).reset();
         self.rebuild();
         Ok(lock(&self.shared).clone())
+    }
+
+    /// Privacy panel: no answer is kept in memory or on disk any more; the conflicts ask again.
+    fn clear_choices(&mut self) -> Result<(), AppError> {
+        self.choices = Choices::default();
+        self.choices_dirty = false;
+        let deleted = self.ctx.persistence.clear_meeting_choices();
+        log::info!("calendar: meeting answers deleted at the user's request");
+        // The holds and the conflict views follow at once, even when the file could not be deleted.
+        self.rebuild();
+        deleted.map_err(|err| {
+            AppError::new(
+                focus_core::privacy::ERR_DELETE,
+                format!("cannot delete the meeting answers: {err:#}"),
+            )
+        })
     }
 
     fn set_ics_urls(&mut self, urls: Vec<String>) -> Result<CalendarStatus, AppError> {
