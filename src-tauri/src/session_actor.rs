@@ -296,8 +296,7 @@ impl Actor {
             ActorCmd::ConfigChanged => {
                 let profile = self.profile();
                 self.session.set_idle_profile(profile);
-                if !read_config(&self.ctx.config).steps_active() && !self.session.steps().is_empty()
-                {
+                if !self.effective_config().steps_active() && !self.session.steps().is_empty() {
                     // Small steps were switched off: no hidden plan lingers (nor reaches the summary).
                     log::info!("small steps are off: the session plan is cleared");
                     self.apply(Input::SetSteps(Vec::new()));
@@ -451,7 +450,7 @@ impl Actor {
         let focus_started = effects
             .iter()
             .any(|effect| matches!(effect, Effect::Notify(NotifyKind::FocusStarted { .. })));
-        let next_step = (focus_started && read_config(&self.ctx.config).steps_active())
+        let next_step = (focus_started && self.effective_config().steps_active())
             .then(|| {
                 self.session
                     .steps()
@@ -499,6 +498,11 @@ impl Actor {
             break_secs,
             meeting,
         }
+    }
+
+    /// The config the beta features see: the presentation showcase treats the beta as on (memory only).
+    fn effective_config(&self) -> focus_core::api::Config {
+        crate::showcase::effective(&self.ctx.effects.rewards, read_config(&self.ctx.config))
     }
 
     /// Demo profile, or the profile from the current config.

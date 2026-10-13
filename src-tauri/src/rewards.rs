@@ -8,12 +8,20 @@
 //!   record pause ranges (for an existing streak only), which is the one write that can happen then.
 //! * Demo sessions (`TimingProfile.demo`) go to a preview copy of the ledger (status `preview: true`): created at the demo
 //!   Start, dropped at the next real Start, on reset and at exit, never written.
+//! * Presentation showcase (Developer page "Presentation mode" / `--presentation`, ADR-019): the preview is a seeded
+//!   showcase ledger (`crate::showcase::seeded_ledger`) kept across Starts until the showcase ends, and the view and
+//!   the demo facts use the beta rules of `crate::showcase::beta_config` (in memory, whatever `betaFeatures` says).
+//!   Real facts keep the real rules and the real ledger; nothing of the showcase is ever written.
 //! * `rewards.json` (numbers, day numbers and session ids only) is written after every change of the real ledger: temp
 //!   file + rename, the previous file copied to `rewards.json.bak` at most once per minute, flushed at shutdown. A
 //!   corrupted file is replaced by its backup, or set aside as `rewards.unreadable-<ms>.json` (`rewards.load`, once);
 //!   while the rewards are off that repair waits until they come on. A file that cannot be read at all (locked) is
 //!   never replaced: nothing is written that run. A failed write reports `rewards.save` once per run (rule 8: the
 //!   session goes on).
+//! * Beta collection (ADR-024): the unlock records and seasonal goal days live in the same ledger (fixed ids, day
+//!   numbers and years). The core unlocks on real facts only; at load with the rewards on, items whose rules already
+//!   hold are recorded silently and saved. Switching the beta or the rewards off never removes them; "Zacznij od nowa"
+//!   and the privacy delete start a fresh ledger (and the commands clear `Config.reward_theme`).
 //! * Moments wait in `pending` (at most [`PENDING_MAX`], memory only) until the main window acknowledges them.
 //! * Logs carry kinds and counts only, never texts (rule 11).
 
@@ -24,12 +32,13 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use focus_core::api::{AppError, Config, Phase, RewardMoment, RewardsStatus, events};
+use focus_core::api::{AppError, Config, Phase, RewardMoment, RewardTheme, RewardsStatus, events};
 use focus_core::rewards::{
     self, Ledger, LedgerMode, RewardDay, RewardRules, RewardsState, SessionTally,
 };
 use focus_core::session::ProgressFact;
 use focus_core::timing::REWARD_DAY_START_MINUTE;
+use focus_core::unlocks::{self, Unlockable};
 use tauri::{AppHandle, Emitter};
 
 use crate::persistence::Persistence;
@@ -92,6 +101,11 @@ struct Service {
     unreported: Option<AppError>,
     /// `rewards.json` could not be read at all (locked, no access): it is never overwritten this run.
     read_only: bool,
+    /// The presentation showcase is on (see the module docs): `preview` holds the seeded showcase ledger.
+    showcase: bool,
+    /// The latest demo session that ran while the showcase was on: shown only, never stored, also when it ends after
+    /// the showcase was switched off ([`RewardsHandle::showcase_session`]). An id only, memory only.
+    showcase_session: Option<String>,
     writer: Writer,
     outlet: Box<dyn Outlet>,
     clock: Clock,
@@ -99,6 +113,23 @@ struct Service {
 }
 
 impl Service {
+    /// Demo session `session_id` ran while the showcase was on (see `showcase_session`).
+    fn mark_showcase_session(&mut self, session_id: &str) {
+        if self.showcase_session.as_deref() != Some(session_id) {
+            self.showcase_session = Some(session_id.to_owned());
+        }
+    }
+
+    /// The rules of what the view shows (and of the demo facts): the showcase's beta rules while the presentation
+    /// showcase is on, else the config's.
+    fn shown_rules(&self, cfg: &Config) -> RewardRules {
+        if self.showcase {
+            RewardRules::from_config(&crate::showcase::beta_config(cfg))
+        } else {
+            RewardRules::from_config(cfg)
+        }
+    }
+
     fn status(&self, rules: &RewardRules, today: RewardDay) -> RewardsStatus {
         let shown = self.preview.as_ref().unwrap_or(&self.real);
         let mut status = rewards::view(shown, today, rules);
@@ -151,6 +182,17 @@ impl Service {
         }
         if let Some(error) = self.unreported.take() {
             (self.report)(error);
+        }
+    }
+
+    /// ADR-024, at load with the rewards on: collection items whose rules already hold (an update from a version
+    /// without the collection) are recorded silently (no moment) and saved. Logs the count only.
+    fn catch_up_unlocks(&mut self, today: RewardDay) {
+        let before = self.real.ledger.clone();
+        let count = rewards::catch_up(&mut self.real, today);
+        if count > 0 {
+            log::info!("rewards: {count} collection items unlocked at load");
+            self.save_if_changed(&before);
         }
     }
 }
@@ -235,6 +277,8 @@ impl RewardsHandle {
             repair: loaded.repair,
             unreported: loaded.problem,
             read_only: loaded.read_only,
+            showcase: false,
+            showcase_session: None,
             writer,
             outlet,
             clock,
@@ -242,30 +286,53 @@ impl RewardsHandle {
         };
         if active {
             service.repair_now();
+            service.catch_up_unlocks(today);
         }
         Self {
             inner: Arc::new(Mutex::new(service)),
         }
     }
 
+    /// ADR-024: `theme` is unlocked in the real ledger (never the demo preview or the showcase). `update_config`
+    /// accepts a new `rewardTheme` only then.
+    pub fn is_theme_unlocked(&self, theme: RewardTheme) -> bool {
+        unlocks::is_unlocked(&lock(&self.inner).real.ledger, Unlockable::Theme(theme))
+    }
+
     /// Applies a session fact (`Effect::Progress`) and returns its moment, for the popup line. Dropped while the
     /// rewards are off. A demo fact goes to the preview (created at the demo Start); a real Start drops the preview.
+    /// While the presentation showcase is on, the preview is the showcase ledger (kept at every Start) and demo facts
+    /// use the showcase rules; real facts always use the real rules.
     pub fn apply_fact(&self, fact: &ProgressFact, cfg: &Config) -> Option<RewardMoment> {
-        let rules = RewardRules::from_config(cfg);
+        let mut guard = lock(&self.inner);
+        let svc = &mut *guard;
+        let demo = fact.profile().demo;
+        if demo && svc.showcase {
+            svc.mark_showcase_session(fact.session_id());
+        }
+        let rules = if demo {
+            svc.shown_rules(cfg)
+        } else {
+            RewardRules::from_config(cfg)
+        };
         if !rules.active {
             return None;
         }
-        let mut guard = lock(&self.inner);
-        let svc = &mut *guard;
         let (today, now_ms) = (svc.clock)();
-        let demo = fact.profile().demo;
-        if matches!(fact, ProgressFact::Started { .. }) {
+        if matches!(fact, ProgressFact::Started { .. }) && !svc.showcase {
             svc.preview = demo.then(|| svc.real.clone());
         }
         let before = svc.real.ledger.clone();
         let moment = if demo {
+            let showcase = svc.showcase;
             let preview = svc.preview.get_or_insert_with(|| svc.real.clone());
-            rewards::apply(preview, today, &rules, LedgerMode::Preview, fact, now_ms)
+            let mut moment =
+                rewards::apply(preview, today, &rules, LedgerMode::Preview, fact, now_ms);
+            if showcase && let Some(moment) = moment.as_mut() {
+                // The showcase ledger's own collection unlocks (the core never unlocks in a preview).
+                crate::showcase::apply_showcase_unlocks(preview, today, moment);
+            }
+            moment
         } else {
             rewards::apply(&mut svc.real, today, &rules, LedgerMode::Real, fact, now_ms)
         };
@@ -280,7 +347,8 @@ impl RewardsHandle {
             );
         }
         svc.save_if_changed(&before);
-        svc.publish(&rules, today);
+        let shown = svc.shown_rules(cfg);
+        svc.publish(&shown, today);
         moment
     }
 
@@ -288,12 +356,16 @@ impl RewardsHandle {
     /// answer goes to the demo preview while it exists (never written). Returns the sparks the real ledger credited
     /// (0 for a demo session or an answer already paid), for the stored summary.
     pub fn goal_done(&self, session_id: &str, cfg: &Config, phase: Phase, demo: bool) -> u32 {
-        let rules = RewardRules::from_config(cfg);
+        let mut guard = lock(&self.inner);
+        let svc = &mut *guard;
+        let rules = if demo {
+            svc.shown_rules(cfg)
+        } else {
+            RewardRules::from_config(cfg)
+        };
         if !rules.active {
             return 0;
         }
-        let mut guard = lock(&self.inner);
-        let svc = &mut *guard;
         let (today, now_ms) = (svc.clock)();
         let before = svc.real.ledger.clone();
         let moment = if demo {
@@ -334,7 +406,8 @@ impl RewardsHandle {
             None => 0,
         };
         svc.save_if_changed(&before);
-        svc.publish(&rules, today);
+        let shown = svc.shown_rules(cfg);
+        svc.publish(&shown, today);
         paid
     }
 
@@ -357,32 +430,34 @@ impl RewardsHandle {
             );
             svc.push(moment);
         }
-        if !new_rules.active {
+        // The presentation showcase keeps its beta rules whatever the real config says.
+        let shown = svc.shown_rules(new);
+        if !shown.active {
             // A celebration of a switched-off feature is never shown later.
             svc.pending.clear();
         }
         let changed = svc.real.ledger != before;
         svc.save_if_changed(&before);
         if (old_rules.active || new_rules.active) && (old_rules != new_rules || changed) {
-            svc.publish(&new_rules, today);
+            svc.publish(&shown, today);
         }
     }
 
     /// The view state (`get_rewards`), with the current revision.
     pub fn status(&self, cfg: &Config) -> RewardsStatus {
-        let rules = RewardRules::from_config(cfg);
         let svc = lock(&self.inner);
+        let rules = svc.shown_rules(cfg);
         let (today, _) = (svc.clock)();
         svc.status(&rules, today)
     }
 
     /// The main window played or showed the moments up to `up_to`.
     pub fn ack(&self, up_to: u32, cfg: &Config) {
-        let rules = RewardRules::from_config(cfg);
         let mut svc = lock(&self.inner);
         let count = svc.pending.len();
         svc.pending.retain(|moment| moment.id > up_to);
         if svc.pending.len() != count {
+            let rules = svc.shown_rules(cfg);
             let (today, _) = (svc.clock)();
             svc.publish(&rules, today);
         }
@@ -395,10 +470,11 @@ impl RewardsHandle {
         let mut svc = lock(&self.inner);
         let fresh = Self::clear(&mut svc);
         svc.writer.reset(rules.active.then_some(fresh), None);
+        let shown = svc.shown_rules(cfg);
         let (today, _) = (svc.clock)();
-        svc.publish(&rules, today);
+        svc.publish(&shown, today);
         log::info!("rewards: started again at the user's request");
-        svc.status(&rules, today)
+        svc.status(&shown, today)
     }
 
     /// Privacy panel (ADR-020): like [`Self::reset`], but no fresh file is written (the item disappears until the next
@@ -410,9 +486,10 @@ impl RewardsHandle {
             let mut svc = lock(&self.inner);
             Self::clear(&mut svc);
             svc.writer.reset(None, Some(done_tx));
-            if rules.active {
+            let shown = svc.shown_rules(cfg);
+            if rules.active || shown.active {
                 let (today, _) = (svc.clock)();
-                svc.publish(&rules, today);
+                svc.publish(&shown, today);
             }
         }
         match done_rx.recv_timeout(RESET_TIMEOUT) {
@@ -428,7 +505,10 @@ impl RewardsHandle {
         let (_, now_ms) = (svc.clock)();
         svc.real = RewardsState::new(ledger.clone());
         svc.real.session = Some(SessionTally::joined(now_ms));
-        svc.preview = None;
+        // The presentation showcase is memory only and not part of the real ledger: it stays until it ends.
+        if !svc.showcase {
+            svc.preview = None;
+        }
         svc.pending.clear();
         svc.repair = None;
         svc.unreported = None;
@@ -449,8 +529,8 @@ impl RewardsHandle {
 
     /// Every minute from the actor: a new reward day refreshes the view (week strip, today) while the rewards are on.
     pub fn tick_day(&self, cfg: &Config) {
-        let rules = RewardRules::from_config(cfg);
         let mut svc = lock(&self.inner);
+        let rules = svc.shown_rules(cfg);
         let (today, _) = (svc.clock)();
         if today == svc.last_day {
             return;
@@ -459,6 +539,60 @@ impl RewardsHandle {
         if rules.active {
             log::info!("rewards: a new reward day");
             svc.publish(&rules, today);
+        }
+    }
+
+    /// Developer page "Presentation mode" / `--presentation` (ADR-019): `on` → the view shows a seeded showcase
+    /// ledger for today (`crate::showcase::seeded_ledger`) as the demo preview, kept across Starts, with the showcase's
+    /// beta rules; `off` → the preview and its moments go and the real ledger shows again. Already in that state: no-op
+    /// (a running showcase keeps its progress). Nothing is written; `rewards.json` and the real ledger are untouched.
+    pub fn set_showcase(&self, on: bool, cfg: &Config) {
+        let mut guard = lock(&self.inner);
+        let svc = &mut *guard;
+        if svc.showcase == on {
+            return;
+        }
+        let (today, now_ms) = (svc.clock)();
+        svc.showcase = on;
+        svc.preview = on.then(|| {
+            RewardsState::new(crate::showcase::seeded_ledger(
+                today,
+                crate::showcase::activation_seed(now_ms),
+            ))
+        });
+        // Moments of a preview never outlive it (moments of real sessions stay).
+        svc.pending.retain(|moment| !moment.preview);
+        log::info!(
+            "rewards: presentation showcase {}",
+            if on {
+                "on (seeded preview ledger, memory only)"
+            } else {
+                "off (the real ledger shows again)"
+            }
+        );
+        let rules = svc.shown_rules(cfg);
+        svc.publish(&rules, today);
+    }
+
+    /// The presentation showcase is on ([`Self::set_showcase`]).
+    pub fn showcase_on(&self) -> bool {
+        lock(&self.inner).showcase
+    }
+
+    /// Session `session_id` belongs to the showcase: it ends while the showcase is on, or it is the demo session that
+    /// ran while it was on (switched off before that session ended). Its summary is only shown
+    /// (`crate::showcase::keeps_summary`).
+    pub fn showcase_session(&self, session_id: &str) -> bool {
+        let svc = lock(&self.inner);
+        svc.showcase || svc.showcase_session.as_deref() == Some(session_id)
+    }
+
+    /// The showcase went on while demo session `session_id` runs: it belongs to the showcase too
+    /// ([`Self::showcase_session`]). Ignored while the showcase is off.
+    pub fn adopt_showcase_session(&self, session_id: &str) {
+        let mut svc = lock(&self.inner);
+        if svc.showcase {
+            svc.mark_showcase_session(session_id);
         }
     }
 
@@ -1271,5 +1405,271 @@ mod tests {
         );
         let json = serde_json::to_string(&fixture.handle.status(&cfg)).expect("status");
         assert!(!json.contains("Tajny") && !json.contains("Ani"));
+    }
+
+    /// A `rewards.json` of a level-8 user written before the collection existed (ADR-024).
+    const LEVEL_8_LEDGER: &str = r#"{"version":1,"seed":7,"totalSparks":840}"#;
+
+    fn unlock_ids(fixture: &Fixture) -> Vec<String> {
+        let ledger: Ledger =
+            serde_json::from_str(&fs::read_to_string(fixture.file()).expect("rewards.json"))
+                .expect("ledger");
+        ledger.unlocks.into_iter().map(|record| record.id).collect()
+    }
+
+    fn unlocked_themes(status: &RewardsStatus) -> Vec<RewardTheme> {
+        status
+            .unlocks
+            .themes
+            .iter()
+            .filter(|item| item.state == focus_core::api::UnlockState::Unlocked)
+            .map(|item| item.theme)
+            .collect()
+    }
+
+    #[test]
+    fn the_load_catches_up_with_the_collection_silently() {
+        let fixture = Fixture::new("catch-up");
+        let cfg = beta();
+        fs::write(fixture.file(), LEVEL_8_LEDGER).expect("old file");
+        // The beta off: nothing is recorded or written.
+        let fixture = fixture.reopen_with(false);
+        fixture.handle.flush_blocking();
+        assert_eq!(
+            fs::read_to_string(fixture.file()).expect("file"),
+            LEVEL_8_LEDGER
+        );
+        assert!(!fixture.handle.is_theme_unlocked(RewardTheme::Underwater));
+        // The rewards on: recorded at once, saved, without a moment.
+        let fixture = fixture.reopen();
+        let status = fixture.handle.status(&cfg);
+        assert!(status.pending.is_empty(), "no celebration");
+        assert!(lock(&fixture.statuses.0).is_empty(), "no event at load");
+        assert_eq!(
+            unlocked_themes(&status),
+            [RewardTheme::Underwater, RewardTheme::ForestCabin]
+        );
+        fixture.handle.flush_blocking();
+        assert_eq!(
+            unlock_ids(&fixture),
+            [
+                "theme:underwater",
+                "theme:forestCabin",
+                "ambience:thunder",
+                "ambience:cafe",
+                "ambience:forest",
+                "ambience:ocean"
+            ]
+        );
+        // The next load finds nothing new and writes nothing.
+        let before = fs::read(fixture.file()).expect("file");
+        let fixture = fixture.reopen();
+        fixture.handle.flush_blocking();
+        assert_eq!(fs::read(fixture.file()).expect("file"), before);
+        // Switching the beta off and on again keeps every unlock.
+        fixture
+            .handle
+            .config_changed(&cfg, &Config::default(), Phase::Idle);
+        fixture
+            .handle
+            .config_changed(&Config::default(), &cfg, Phase::Idle);
+        fixture.handle.flush_blocking();
+        assert_eq!(unlock_ids(&fixture).len(), 6);
+        assert!(fixture.handle.is_theme_unlocked(RewardTheme::ForestCabin));
+        assert!(lock(&fixture.errors).is_empty());
+    }
+
+    #[test]
+    fn a_collection_theme_can_be_picked_once_it_is_unlocked() {
+        let fixture = Fixture::new("pick-theme");
+        let handle = &fixture.handle;
+        let pick = |previous: Option<RewardTheme>, next: Option<RewardTheme>| {
+            unlocks::check_reward_theme(previous, next, |theme| handle.is_theme_unlocked(theme))
+        };
+        let refused = pick(None, Some(RewardTheme::Underwater)).expect_err("locked");
+        assert_eq!(refused.code, focus_core::config::CONFIG_INVALID);
+        assert_eq!(refused.field.as_deref(), Some("rewardTheme"));
+        assert_eq!(pick(Some(RewardTheme::Underwater), None), Ok(()));
+        // A demo session never unlocks anything in the real ledger.
+        run_session(handle, &beta(), TimingProfile::demo(), &["a"]);
+        assert!(!handle.is_theme_unlocked(RewardTheme::Underwater));
+        fs::write(fixture.file(), LEVEL_8_LEDGER).expect("level 8");
+        let fixture = fixture.reopen();
+        assert!(fixture.handle.is_theme_unlocked(RewardTheme::Underwater));
+        assert!(
+            unlocks::check_reward_theme(None, Some(RewardTheme::Underwater), |theme| fixture
+                .handle
+                .is_theme_unlocked(theme))
+            .is_ok()
+        );
+        assert!(!fixture.handle.is_theme_unlocked(RewardTheme::Halloween));
+    }
+
+    #[test]
+    fn reset_and_the_privacy_delete_empty_the_collection() {
+        let fixture = Fixture::new("reset-collection");
+        let cfg = beta();
+        fs::write(fixture.file(), LEVEL_8_LEDGER).expect("level 8");
+        let fixture = fixture.reopen();
+        assert_eq!(unlocked_themes(&fixture.handle.status(&cfg)).len(), 2);
+        let fresh = fixture.handle.reset(&cfg);
+        assert!(unlocked_themes(&fresh).is_empty());
+        let free: Vec<_> = fresh
+            .unlocks
+            .ambiences
+            .iter()
+            .filter(|item| item.state == focus_core::api::UnlockState::Free)
+            .map(|item| item.layer)
+            .collect();
+        assert_eq!(
+            free,
+            [
+                focus_core::api::AmbienceLayer::Rain,
+                focus_core::api::AmbienceLayer::Wind
+            ]
+        );
+        assert!(!fixture.handle.is_theme_unlocked(RewardTheme::Underwater));
+        fixture.handle.flush_blocking();
+        assert!(unlock_ids(&fixture).is_empty());
+        // The privacy delete: the same, and no file is left.
+        fs::write(fixture.file(), LEVEL_8_LEDGER).expect("level 8 again");
+        let fixture = fixture.reopen();
+        assert!(fixture.handle.is_theme_unlocked(RewardTheme::ForestCabin));
+        fixture.handle.delete_files(&cfg).expect("deleted");
+        assert!(!fixture.file().exists());
+        assert!(!fixture.handle.is_theme_unlocked(RewardTheme::ForestCabin));
+        assert!(unlocked_themes(&fixture.handle.status(&cfg)).is_empty());
+    }
+
+    /// Presentation mode (ADR-019, `crate::showcase`) with the beta off in the user's config: the seeded ledger shows
+    /// and a demo session plays its live moments, but `config.json`, `history.jsonl` and `rewards.json` stay byte for
+    /// byte as they were, real facts keep the real rules, and switching it off shows the real state again.
+    #[test]
+    fn a_presentation_showcase_writes_nothing_and_leaves_no_trace() {
+        let fixture = Fixture::new("showcase");
+        let files = fixture.persistence.files();
+        // The user's data: one earlier real session with the beta on (so rewards.json exists), then the beta off.
+        run_session(&fixture.handle, &beta(), TimingProfile::normal(), &[]);
+        fixture.handle.flush_blocking();
+        let off = Config::default();
+        fixture.persistence.save_config(&off).expect("config.json");
+        fs::write(
+            &files.history,
+            b"{\"sessionId\":\"earlier\"}
+",
+        )
+        .expect("history.jsonl");
+        let read = |path: &PathBuf| fs::read(path).ok();
+        let stored = |f: &crate::persistence::DataFiles| {
+            [&f.config, &f.history, &f.rewards, &f.rewards_backup].map(read)
+        };
+        let before = stored(&files);
+        assert!(before[..3].iter().all(Option::is_some));
+        let real_before = fixture.handle.status(&off);
+        assert!(!real_before.active);
+
+        fixture.handle.set_showcase(true, &off);
+        assert!(fixture.handle.showcase_on());
+        let shown = fixture.handle.status(&off);
+        assert!(shown.active && shown.preview);
+        assert_eq!((shown.level.level, shown.level.into), (8, 170));
+        assert_eq!((shown.streak.days, shown.streak.best), (12, 21));
+
+        let moments = run_session(&fixture.handle, &off, TimingProfile::demo(), &["a", "b"]);
+        let kinds: Vec<MomentKind> = moments.iter().map(|moment| moment.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                MomentKind::Start,
+                MomentKind::Step,
+                MomentKind::BreakStart,
+                MomentKind::SessionEnd
+            ]
+        );
+        assert!(moments.iter().all(|moment| moment.preview));
+        assert_eq!((moments[0].sparks, moments[1].sparks), (12, 3));
+        let burst = &moments[2];
+        assert!(burst.daily_goal && burst.surprise.is_some());
+        assert_eq!((burst.streak, burst.level_up), (Some(13), Some(9)));
+        // A demo session's goal answer goes to the showcase ledger; a real session's facts keep the real rules (off).
+        assert_eq!(
+            fixture
+                .handle
+                .goal_done("1760342400000-4242-1", &off, Phase::Idle, true),
+            0
+        );
+        assert!(run_session(&fixture.handle, &off, TimingProfile::normal(), &[]).is_empty());
+        // The demo session's summary is shown only (`Effects::finish_session`).
+        assert!(!crate::showcase::keeps_summary(
+            fixture.handle.showcase_on(),
+            true
+        ));
+        // A second activation keeps the progress of the running showcase.
+        let progressed = fixture.handle.status(&off);
+        assert!(progressed.level.level >= 9 && progressed.today.goal_met);
+        fixture.handle.set_showcase(true, &off);
+        assert_eq!(
+            fixture.handle.status(&off).total_sparks,
+            progressed.total_sparks
+        );
+        fixture.handle.ack(u32::MAX, &off);
+
+        fixture.handle.set_showcase(false, &off);
+        assert!(!fixture.handle.showcase_on());
+        let real_after = fixture.handle.status(&off);
+        assert_eq!(
+            RewardsStatus {
+                revision: real_before.revision,
+                ..real_after
+            },
+            real_before
+        );
+        fixture.handle.flush_blocking();
+        assert_eq!(
+            stored(&files),
+            before,
+            "nothing of the showcase was written"
+        );
+        assert!(lock(&fixture.errors).is_empty());
+    }
+
+    /// The demo session started during the showcase stays the showcase's when the showcase is switched off before
+    /// it ends (its summary is only shown, `Effects::finish_session`); a demo session started later is an ordinary one.
+    #[test]
+    fn a_showcase_demo_session_is_never_stored_even_when_it_ends_later() {
+        let fixture = Fixture::new("showcase-session");
+        let off = Config::default();
+        let started = |session_id: &str| ProgressFact::Started {
+            session_id: session_id.into(),
+            steps: 0,
+            profile: TimingProfile::demo(),
+        };
+        let keeps = |session_id: &str| {
+            crate::showcase::keeps_summary(fixture.handle.showcase_session(session_id), true)
+        };
+        assert!(keeps("before"), "no showcase: an ordinary demo session");
+        fixture.handle.adopt_showcase_session("before");
+        assert!(keeps("before"), "adopted only while the showcase is on");
+        fixture.handle.set_showcase(true, &off);
+        assert!(!keeps("before"), "it ends during the showcase");
+        fixture.handle.apply_fact(&started("on-stage"), &off);
+        fixture.handle.set_showcase(false, &off);
+        assert!(
+            !keeps("on-stage"),
+            "started on stage, ends after the showcase"
+        );
+        assert!(keeps("before"));
+        fixture.handle.apply_fact(&started("later"), &off);
+        assert!(keeps("later") && !keeps("on-stage"));
+        // Running when the showcase went on (`showcase::set`), ending after it went off: on stage too.
+        fixture.handle.set_showcase(true, &off);
+        fixture.handle.adopt_showcase_session("later");
+        fixture.handle.set_showcase(false, &off);
+        assert!(!keeps("later"));
+        // A real session is always kept.
+        assert!(crate::showcase::keeps_summary(
+            fixture.handle.showcase_session("real"),
+            false
+        ));
     }
 }

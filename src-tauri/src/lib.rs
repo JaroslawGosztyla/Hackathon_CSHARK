@@ -21,6 +21,7 @@ mod rewards;
 mod safety_net;
 mod session_actor;
 mod shields;
+mod showcase;
 mod teams;
 mod texts;
 mod tint;
@@ -131,6 +132,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_ARG]),
         ))
+        // Presentation mode (ADR-019): the main window learns about a showcase the shell runs (`showcase.rs`).
+        .on_page_load(showcase::on_page_load)
         .setup(move |app| {
             setup(app, launch)?;
             Ok(())
@@ -229,11 +232,20 @@ pub fn run() {
 
 fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     let handle = app.handle().clone();
-    let demo = launch.demo;
+    // `--presentation` = the demo profile + the showcase, with developer mode on for this run only (ADR-019).
+    let demo = launch.demo || launch.presentation;
+    if launch.presentation {
+        showcase::mark_launched();
+    }
     log::info!(
-        "FocusMode {} starting{}{}{}",
+        "FocusMode {} starting{}{}{}{}",
         env!("CARGO_PKG_VERSION"),
         if demo { " (demo profile)" } else { "" },
+        if launch.presentation {
+            " (presentation mode)"
+        } else {
+            ""
+        },
         if launch.autostart { " (autostart)" } else { "" },
         if launch.restore_only {
             " (restoring shields only)"
@@ -257,6 +269,10 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     }
     // Beta rewards (ADR-022): `rewards.json` is read (and repaired) now; nothing is written while the beta is off.
     let rewards = rewards::RewardsHandle::load(&handle, &persistence, &config);
+    if launch.presentation {
+        // The seeded showcase ledger (memory only); the UI gets the launch hint when its page has loaded.
+        rewards.set_showcase(true, &config);
+    }
     let config: SharedConfig = Arc::new(RwLock::new(config));
 
     let last_summary = match persistence.list_history(1) {
@@ -508,6 +524,9 @@ struct Launch {
     autostart: bool,
     /// `--restore-shields` (the logon safety net): crash-restore, then exit.
     restore_only: bool,
+    /// `--presentation` argument or `FOCUSMODE_PRESENTATION=1`: the demo profile and the showcase (`showcase.rs`),
+    /// developer mode on for this run only.
+    presentation: bool,
 }
 
 impl Launch {
@@ -519,14 +538,18 @@ impl Launch {
                 .any(|arg| arg.to_str() == Some(flag))
         };
         Self {
-            demo: has(DEMO_ARG)
-                || std::env::var("FOCUSMODE_DEMO").is_ok_and(|value| {
-                    value.trim() == "1" || value.trim().eq_ignore_ascii_case("true")
-                }),
+            demo: has(DEMO_ARG) || env_on("FOCUSMODE_DEMO"),
             autostart: has(AUTOSTART_ARG),
             restore_only: has(RESTORE_SHIELDS_ARG),
+            presentation: has(showcase::PRESENTATION_ARG) || env_on("FOCUSMODE_PRESENTATION"),
         }
     }
+}
+
+/// An environment switch for dev runs (`FOCUSMODE_DEMO=1`, `FOCUSMODE_PRESENTATION=1`): `1` or `true`.
+fn env_on(name: &str) -> bool {
+    std::env::var(name)
+        .is_ok_and(|value| value.trim() == "1" || value.trim().eq_ignore_ascii_case("true"))
 }
 
 /// A second launch was redirected here by the single-instance plugin.
@@ -562,7 +585,31 @@ fn on_second_instance(app: &AppHandle, args: &[String]) {
             None => log::info!("--demo from another launch arrived before the app was ready"),
         }
     }
+    if has(showcase::PRESENTATION_ARG) {
+        on_presentation_launch(app);
+    }
     show_main_window(app);
+}
+
+/// Another launch asked for `--presentation`: developer mode on for the rest of this run, presentation mode on (the
+/// demo profile at once while idle, from the next Start while a session runs; the showcase at once), and the main
+/// window gets the launch hint.
+fn on_presentation_launch(app: &AppHandle) {
+    showcase::mark_launched();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Some(state) = app.try_state::<AppState>() else {
+            log::info!("--presentation from another launch arrived before the app was ready");
+            return;
+        };
+        if let Err(err) = showcase::set(&state, true).await {
+            log::warn!(
+                "--presentation from another launch not applied: {}",
+                err.message
+            );
+        }
+        showcase::announce(&app);
+    });
 }
 
 /// `true` while this process was started only to restore shields and has not been kept running.

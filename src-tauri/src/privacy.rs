@@ -577,10 +577,14 @@ async fn delete_one(
         }
         PrivacyItemKind::Rewards => {
             // Like "Zacznij od nowa" (`reset_rewards`), through the rewards writer so no queued write brings the file
-            // back; no fresh file is written (the item stays gone until the next spark).
+            // back; no fresh file is written (the item stays gone until the next spark). The collection (ADR-024) goes
+            // with it, so a collection theme in the config goes back to the base theme (also when the files could not
+            // all be deleted: the ledger in memory is fresh either way).
             let rewards = state.rewards.clone();
             let config = read_config(&state.config);
-            blocking(move || rewards.delete_files(&config)).await
+            let deleted = blocking(move || rewards.delete_files(&config)).await;
+            crate::commands::clear_reward_theme(app, state).await;
+            deleted
         }
         PrivacyItemKind::MeetingChoices => state.calendar.clear_choices().await,
         PrivacyItemKind::WorkSeen => state.work.clear_seen().await,

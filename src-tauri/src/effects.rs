@@ -233,7 +233,9 @@ impl Effects {
         let config = read_config(&self.config);
         let popup_rewards = self.popup_rewards.take();
         let mut request = notification(kind, self.last_cycle, &config, context.held.as_ref());
-        with_beta_lines(&mut request, &config, popup_rewards, context);
+        // The presentation showcase treats the beta as on (memory only, `showcase.rs`).
+        let beta = crate::showcase::effective(&self.rewards, config.clone());
+        with_beta_lines(&mut request, &beta, popup_rewards, context);
         if config.phase_popups {
             self.popup.show(request);
         } else {
@@ -261,9 +263,21 @@ impl Effects {
             summary.focused_secs,
             summary.cycles_completed
         );
-        *lock(&self.last_summary) = Some(summary.clone());
+        // A demo session of the presentation showcase is only shown: never the last summary, never in the history
+        // (also when the showcase was switched off before that session ended).
+        let keep = crate::showcase::keeps_summary(
+            self.rewards.showcase_session(&summary.session_id),
+            summary.demo,
+        );
+        if keep {
+            *lock(&self.last_summary) = Some(summary.clone());
+        }
         if let Err(err) = self.app.emit(events::SESSION_SUMMARY, summary.clone()) {
             log::warn!("cannot emit session summary: {err}");
+        }
+        if !keep {
+            log::info!("presentation showcase: the demo session is shown, not saved");
+            return;
         }
 
         if !config.keep_history {

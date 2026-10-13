@@ -23,7 +23,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::session_actor::ActorCmd;
 use crate::{
     AppState, calendar, chimes, close, dev, effects, emit_error, lock, music, privacy, read_config,
-    tracker, weekly, work, write_config,
+    showcase, tracker, weekly, work, write_config,
 };
 
 /// Upper bound for `list_history(limit)`.
@@ -78,7 +78,32 @@ pub async fn update_config(
 ) -> Result<Config, AppError> {
     // Serializes concurrent updates so the file and memory always end with the last call.
     let _serial = state.config_update.lock().await;
+    // ADR-024: a new collection theme must be unlocked in the real ledger (`config.invalid`, field `rewardTheme`).
+    focus_core::unlocks::check_reward_theme(
+        read_config(&state.config).reward_theme,
+        config.reward_theme,
+        |theme| state.rewards.is_theme_unlocked(theme),
+    )?;
     store_config(&app, &state, config).await
+}
+
+/// ADR-024: "Zacznij od nowa" and the privacy delete of the rewards take the collection with the ledger, so a
+/// collection theme in the config goes too (`rewardTheme = null`: the base theme shows). Stored like `update_config`;
+/// a failure is only logged (a locked theme falls back to the base theme on screen anyway).
+pub(crate) async fn clear_reward_theme(app: &AppHandle, state: &AppState) {
+    let _serial = state.config_update.lock().await;
+    let config = read_config(&state.config);
+    if config.reward_theme.is_none() {
+        return;
+    }
+    let cleared = Config {
+        reward_theme: None,
+        ..config
+    };
+    match store_config(app, state, cleared).await {
+        Ok(_) => log::info!("rewards: the collection theme went back to the base theme"),
+        Err(err) => log::warn!("rewards: cannot clear the collection theme: {}", err.code),
+    }
 }
 
 /// Validates, persists and applies a new config (shared by `update_config`, `resolve_close` and the privacy
@@ -143,6 +168,13 @@ pub(crate) async fn store_config(
     if previous.developer_mode && !normalized.developer_mode {
         // A sticky sample has no timeout: it goes with developer mode (ADR-019).
         state.popup.withdraw_samples();
+        // Presentation mode goes with it too, unless this run is a `--presentation` one (developer mode on anyway).
+        if state.rewards.showcase_on()
+            && !showcase::launched()
+            && let Err(err) = showcase::set(state, false).await
+        {
+            log::warn!("cannot end presentation mode: {}", err.message);
+        }
     }
     // Beta rewards (ADR-022): pause bookkeeping, a lower daily goal, the UI shows or hides the rewards.
     let phase = current_phase(state).await;
@@ -473,9 +505,9 @@ pub async fn mark_goal_done(
     Ok(())
 }
 
-/// A button on the developer page (ADR-019). Only while `developerMode` is on; sample data stays in memory
-/// and nothing leaves the computer. Presentation mode is kept in memory only; the factory reset deletes the app's
-/// own data (`privacy::factory_reset`) and restarts the app.
+/// A button on the developer page (ADR-019). Only while `developerMode` is on (or in a `--presentation` run); sample
+/// data stays in memory and nothing leaves the computer. Presentation mode (demo timings + the showcase, `showcase.rs`)
+/// is kept in memory only; the factory reset deletes the app's own data (`privacy::factory_reset`) and restarts it.
 #[tauri::command]
 pub async fn dev_trigger(
     app: AppHandle,
@@ -483,7 +515,7 @@ pub async fn dev_trigger(
     action: DevAction,
 ) -> Result<(), AppError> {
     let config = read_config(&state.config);
-    if !config.developer_mode {
+    if !config.developer_mode && !showcase::launched() {
         return Err(AppError::new(
             ERR_DEVELOPER_MODE_OFF,
             "developer mode is off",
@@ -517,7 +549,7 @@ pub async fn dev_trigger(
             state.shields.toast(samples.toast(phase)?);
         }
         DevAction::SetRemaining { secs } => state.actor.dev_set_remaining(secs).await?,
-        DevAction::PresentationMode { on } => state.actor.set_presentation_mode(on).await?,
+        DevAction::PresentationMode { on } => showcase::set(&state, on).await?,
         DevAction::FactoryReset => privacy::factory_reset(&app, &state).await?,
     }
     Ok(())
@@ -595,8 +627,14 @@ pub async fn ack_reward_moments(state: State<'_, AppState>, up_to: u32) -> Resul
 }
 
 #[tauri::command]
-pub async fn reset_rewards(state: State<'_, AppState>) -> Result<RewardsStatus, AppError> {
-    Ok(state.rewards.reset(&read_config(&state.config)))
+pub async fn reset_rewards(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RewardsStatus, AppError> {
+    let status = state.rewards.reset(&read_config(&state.config));
+    // ADR-024: the unlocks went with the ledger.
+    clear_reward_theme(&app, &state).await;
+    Ok(status)
 }
 
 /// A reward sound, unless the rewards or their sounds are off, celebrations are numbers only or the user presents;
@@ -606,7 +644,7 @@ pub async fn play_reward_sound(
     state: State<'_, AppState>,
     sound: RewardSound,
 ) -> Result<(), AppError> {
-    let config = read_config(&state.config);
+    let config = showcase::effective(&state.rewards, read_config(&state.config));
     if !config.rewards_active()
         || !config.rewards.sounds
         || config.rewards.celebrations == CelebrationLevel::NumbersOnly
@@ -622,7 +660,7 @@ pub async fn play_reward_sound(
         tokio::time::sleep(wait).await;
     }
     // The settings may have changed meanwhile.
-    let config = read_config(&state.config);
+    let config = showcase::effective(&state.rewards, read_config(&state.config));
     if config.rewards_active() && config.rewards.sounds {
         state.chime.play_reward(sound, &config);
     }
@@ -634,7 +672,7 @@ pub async fn set_session_steps(
     state: State<'_, AppState>,
     steps: Vec<StepDraft>,
 ) -> Result<(), AppError> {
-    if !read_config(&state.config).steps_active() {
+    if !showcase::effective(&state.rewards, read_config(&state.config)).steps_active() {
         return Err(steps_off());
     }
     let steps = normalize_steps(steps)?;
@@ -647,7 +685,7 @@ pub async fn set_step_done(
     id: u32,
     done: bool,
 ) -> Result<(), AppError> {
-    if !read_config(&state.config).steps_active() {
+    if !showcase::effective(&state.rewards, read_config(&state.config)).steps_active() {
         return Err(steps_off());
     }
     state.actor.send(ActorCmd::SetStepDone { id, done })
