@@ -561,6 +561,18 @@ export const strings = {
       { code: "youtube\\.com/shorts", note: "tylko YouTube Shorts, reszta YouTube działa" },
       { code: "linkedin\\.com/feed", note: "tylko tablica LinkedIn" },
     ],
+    /** `BlocklistInfo.extensionSkipped`: regexes Chrome's rule engine rejected; the extension checks them per tab. */
+    extensionSkippedTitle: "Przeglądarka nie obsługuje tych wyrażeń jako reguł — sprawdzam je przy wczytaniu karty",
+  },
+
+  mascot: {
+    /** Settings → Wygląd. */
+    setting: "Pokaż maskotkę (aksolotl)",
+    settingHint:
+      "Aksolotl w słuchawkach obok zegara, w przerwie, w podsumowaniu i w okienkach przy zmianie fazy. Podpowiada dobre praktyki i propozycje na przerwę.",
+    /** Bubble labels on the Skupienie page. */
+    practiceLabel: "Dobra praktyka",
+    nextUpLabel: "Co dalej?",
   },
 
   calendar: {

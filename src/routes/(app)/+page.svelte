@@ -11,6 +11,7 @@
   import TimerRing from "$lib/components/TimerRing.svelte";
   import TimingEditor from "$lib/components/TimingEditor.svelte";
   import { formatDuration } from "$lib/format";
+  import FocusMascot from "$lib/mascot/FocusMascot.svelte";
   import { calendarEnabled } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
@@ -41,16 +42,19 @@
 <h1 class="sr-only">{strings.nav.focus}</h1>
 
 <section class="hero">
-  {#key `${snap.phase}-${snap.cycle}`}
-    <TimerRing
-      remainingSecs={remaining}
-      totalSecs={total}
-      phase={snap.phase}
-      paused={snap.paused}
-      cycle={snap.cycle}
-      demo={snap.demo}
-    />
-  {/key}
+  <div class="ring-wrap">
+    {#key `${snap.phase}-${snap.cycle}`}
+      <TimerRing
+        remainingSecs={remaining}
+        totalSecs={total}
+        phase={snap.phase}
+        paused={snap.paused}
+        cycle={snap.cycle}
+        demo={snap.demo}
+      />
+    {/key}
+    <FocusMascot />
+  </div>
 
   <div class="controls" role="group" aria-label={strings.controls.sessionControls}>
     {#if session.isIdle}
@@ -185,6 +189,11 @@
     gap: 18px;
     padding: 8px 0 28px;
     text-align: center;
+  }
+
+  /* The axolotl (FocusMascot) is placed against the ring's box, outside the flow. */
+  .ring-wrap {
+    position: relative;
   }
 
   .controls {

@@ -1,7 +1,12 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import HistoryList from "$lib/components/HistoryList.svelte";
   import UsageChart from "$lib/components/UsageChart.svelte";
   import { formatDuration, formatSpan } from "$lib/format";
+  import Axolotl from "$lib/mascot/Axolotl.svelte";
+  import { useMascot } from "$lib/mascot/controller.svelte";
+  import { followCues, mascotEnabled } from "$lib/mascot/cues.svelte";
+  import { moodFrame } from "$lib/mascot/frames";
   import { config } from "$lib/state/config.svelte";
   import { summary } from "$lib/state/summary.svelte";
   import { isOpenableUrl, work } from "$lib/state/work.svelte";
@@ -19,6 +24,26 @@
   const goalName = $derived(goal ? strings.work.itemName(goal.key, goal.title) : "");
   const goalDone = $derived(selected?.goalDone ?? null);
   const goalBusy = $derived(summary.goalBusyId !== null);
+
+  // The axolotl: sad over an empty summary; in the session card it is sad after a Stop before one full focus phase
+  // (cue from app.ts) and happy when the goal was done (a short cheer when the answer changes to "Tak").
+  const MASCOT_SIZE_EMPTY = 96;
+  const MASCOT_SIZE_CARD = 66;
+  const mascotOn = $derived(mascotEnabled(config.value));
+  const mascot = useMascot("main");
+  followCues(mascot, ["stopEarly"]);
+  let notDoneSeenFor: string | null = null;
+
+  $effect(() => {
+    const id = selected?.sessionId ?? null;
+    const done = goalDone === true;
+    untrack(() => {
+      mascot.setMood(done ? "happy" : "neutral");
+      // Cheer only for a change seen here ("Tak" clicked), not for a session that was already done.
+      if (done && notDoneSeenFor === id) mascot.react("cycle");
+      notDoneSeenFor = done ? null : id;
+    });
+  });
 </script>
 
 <svelte:head>
@@ -32,16 +57,23 @@
     <p class="hint">{strings.player.loading}</p>
   {:else if !selected}
     <section class="card empty">
-      <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true">
-        <rect x="8" y="34" width="10" height="20" rx="3" style="fill: var(--muted-mark)" />
-        <rect x="27" y="22" width="10" height="32" rx="3" style="fill: var(--accent)" opacity="0.7" />
-        <rect x="46" y="12" width="10" height="42" rx="3" style="fill: var(--muted-mark)" />
-      </svg>
+      {#if mascotOn}
+        <Axolotl size={MASCOT_SIZE_EMPTY} frame={moodFrame("main", "sad")} />
+      {:else}
+        <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true">
+          <rect x="8" y="34" width="10" height="20" rx="3" style="fill: var(--muted-mark)" />
+          <rect x="27" y="22" width="10" height="32" rx="3" style="fill: var(--accent)" opacity="0.7" />
+          <rect x="46" y="12" width="10" height="42" rx="3" style="fill: var(--muted-mark)" />
+        </svg>
+      {/if}
       <p class="secondary">{strings.summary.empty}</p>
     </section>
   {:else}
     <section class="card session" aria-labelledby="session-title">
-      <div class="card-title">
+      {#if mascotOn}
+        <span class="card-mascot"><Axolotl size={MASCOT_SIZE_CARD} frame={mascot.frame} /></span>
+      {/if}
+      <div class="card-title" class:with-mascot={mascotOn}>
         <div>
           <h2 id="session-title">{isLast ? strings.summary.lastSession : strings.summary.selectedSession}</h2>
           <p class="muted small tabular">{formatSpan(selected.startedAtMs, selected.endedAtMs)}</p>
@@ -165,6 +197,21 @@
     display: flex;
     align-items: center;
     gap: 18px;
+  }
+
+  /* In the session card's top-right corner; the title row leaves room for it. */
+  .session {
+    position: relative;
+  }
+
+  .card-mascot {
+    position: absolute;
+    top: 6px;
+    right: 12px;
+  }
+
+  .card-title.with-mascot {
+    padding-right: 64px;
   }
 
   .stats {

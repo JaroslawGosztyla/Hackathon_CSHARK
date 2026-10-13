@@ -13,6 +13,7 @@
   import ThemeSettings from "$lib/components/ThemeSettings.svelte";
   import TintSettings from "$lib/components/TintSettings.svelte";
   import WorkSettings from "$lib/components/WorkSettings.svelte";
+  import { mascotEnabled } from "$lib/mascot/cues.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
@@ -125,6 +126,15 @@
         <h2 id="appearance-settings">{strings.settings.appearanceTitle}</h2>
       </div>
       <ThemeSettings />
+      <div class="appearance-extra">
+        <Switch
+          id="show-mascot"
+          label={strings.mascot.setting}
+          hint={strings.mascot.settingHint}
+          checked={mascotEnabled(cfg)}
+          onchange={(on) => set((c) => (c.showMascot = on))}
+        />
+      </div>
     </section>
 
     <section class="card" aria-labelledby="shields-settings">
@@ -377,6 +387,12 @@
 
   .item:last-child {
     padding-bottom: 0;
+  }
+
+  .appearance-extra {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
   }
 
   .range-row {

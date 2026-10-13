@@ -3,9 +3,13 @@
   // Windows toast). The shell owns the window (380 × 150, bottom-right, created and destroyed per popup); this
   // page renders `PopupInfo` and reports the buttons and its own timeout through `popup_action`.
   import "../../../app.css";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import * as api from "$lib/api";
   import AppLogo from "$lib/components/AppLogo.svelte";
+  import Axolotl from "$lib/mascot/Axolotl.svelte";
+  import { useMascot } from "$lib/mascot/controller.svelte";
+  import { mascotEnabled } from "$lib/mascot/cues.svelte";
+  import type { MascotReaction } from "$lib/mascot/frames";
   import { formatDuration, formatTimeRange } from "$lib/format";
   import { launcherList, strings } from "$lib/strings";
   import { CATEGORY_ICON, pickBreakTip } from "$lib/tips";
@@ -35,11 +39,24 @@
     workDigest: "📋",
   };
 
+  /** The peeking axolotl's reaction to each popup (a session start winks, a completed cycle cheers). */
+  const KIND_REACTION: Record<Exclude<PopupKind, "focusStarted">, MascotReaction> = {
+    breakStarted: "break",
+    interrupted: "stopEarly",
+    launchersClosed: "nudge",
+    meetingReminder: "meeting",
+    breakHeld: "meeting",
+    workDigest: "digest",
+  };
+  /** Height of the peeking axolotl at the card's bottom-left edge, and of the small one in a meeting reminder's title. */
+  const PEEK_SIZE = 50;
+  const PEEK_SIZE_TITLE = 26;
+
   const p = strings.popup;
   const cal = strings.calendar;
 
   let info = $state<PopupInfo | null>(null);
-  /** For the wording only (music during the break, shields on); null → the default texts. */
+  /** For the wording (music during the break, shields on) and the mascot switch; null → the default texts. */
   let cfg = $state<Config | null>(null);
   /** Dismissed by this page (the shell hides the window) until the next popup arrives. */
   let hidden = $state(false);
@@ -137,6 +154,37 @@
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Mascot: the peeking axolotl reacts to the popup, then says its title and message (lip-sync).
+  // ---------------------------------------------------------------------------
+
+  const mascotOn = $derived(mascotEnabled(cfg));
+  const peek = useMascot("peek");
+  /** Revision whose popup the axolotl already reacted to. */
+  let spokenRevision = -1;
+
+  function reactionFor(popup: PopupInfo): MascotReaction | null {
+    if (!popup.kind) return null;
+    if (popup.kind === "focusStarted") return popup.cycle > 1 ? "cycle" : "start";
+    return KIND_REACTION[popup.kind];
+  }
+
+  $effect(() => {
+    const current = info;
+    if (!current?.kind || !visible || !mascotOn) {
+      untrack(() => peek.hush());
+      return;
+    }
+    if (current.revision === spokenRevision) return;
+    spokenRevision = current.revision;
+    const text = [title, message].filter((part) => part.trim() !== "").join(". ");
+    untrack(() => {
+      const reaction = reactionFor(current);
+      if (reaction) peek.react(reaction);
+      peek.talk(text);
+    });
+  });
+
   function anyShield(c: Config): boolean {
     const s = c.shields;
     return s.muteNotifications || s.teamsDnd || s.blockSites || s.keepAwake || s.closeLaunchers;
@@ -182,7 +230,8 @@
     remainingMs = totalMs;
     progress = 1;
     if (!held) runCountdown();
-    if (next.kind === "breakStarted" || next.kind === "focusStarted") void refreshConfig();
+    // Every popup reads the config again: the wording and the mascot switch follow the latest settings.
+    void refreshConfig();
     if (next.kind === "breakStarted") void refreshTipSession(next.revision);
   }
 
@@ -373,16 +422,26 @@
   {#key info.revision}
     <div class="popup kind-{kind}" class:leaving role="status" aria-live="polite" aria-atomic="true" {@attach holdWhileInside}>
       {#if kind !== "meetingReminder"}
-        <div class="icon" aria-hidden="true">
-          <span class="emoji">{KIND_ICON[kind]}</span>
-          <span class="badge-logo"><AppLogo size={20} /></span>
-        </div>
+        {#if mascotOn}
+          <div class="peek" aria-hidden="true">
+            <Axolotl variant="peek" size={PEEK_SIZE} frame={peek.frame} sit />
+          </div>
+        {:else}
+          <div class="icon" aria-hidden="true">
+            <span class="emoji">{KIND_ICON[kind]}</span>
+            <span class="badge-logo"><AppLogo size={20} /></span>
+          </div>
+        {/if}
       {/if}
 
       <div class="content">
         <p class="title">
           <span class="sr-only">{strings.appName}: </span>
-          {#if kind === "meetingReminder"}<span class="title-icon" aria-hidden="true">{KIND_ICON[kind]}</span>{/if}{title}
+          {#if kind === "meetingReminder" && mascotOn}<span class="title-peek" aria-hidden="true"
+              ><Axolotl variant="peek" size={PEEK_SIZE_TITLE} frame={peek.frame} /></span
+            >{/if}{#if kind === "meetingReminder" || mascotOn}<span class="title-icon" aria-hidden="true"
+              >{KIND_ICON[kind]}</span
+            >{/if}{title}
         </p>
         <p
           class="message"
@@ -520,6 +579,19 @@
   .kind-breakStarted .icon,
   .kind-breakHeld .icon {
     background: var(--break-soft);
+  }
+
+  /* The axolotl peeks over the card's bottom-left edge (into the padding, so it touches the edge). */
+  .peek {
+    align-self: end;
+    margin: 0 -4px -14px -12px;
+  }
+
+  /* A meeting reminder needs the whole width for its buttons: a small axolotl peeks over the title instead. */
+  .title-peek {
+    display: inline-block;
+    margin-right: 6px;
+    vertical-align: -7px;
   }
 
   /* A meeting reminder has four buttons: no icon column, so they get the whole width of the card. */

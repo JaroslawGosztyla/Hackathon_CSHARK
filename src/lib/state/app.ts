@@ -1,6 +1,7 @@
 // Wires shell events and initial reads into the stores. Called once by the root layout.
 import { goto } from "$app/navigation";
 import * as api from "$lib/api";
+import { cueForPhaseChange, cueForSummary, mascotCues } from "$lib/mascot/cues.svelte";
 import type { AppError } from "$lib/types";
 import { blocklist } from "./blocklist.svelte";
 import { calendar, reportCalendarError } from "./calendar.svelte";
@@ -14,6 +15,13 @@ import { teams } from "./teams.svelte";
 import { tint } from "./tint.svelte";
 import { toasts } from "./toasts.svelte";
 import { reportWorkError, work } from "./work.svelte";
+
+/** Length of one focus phase in the profile in use (idle snapshots report it too), for the mascot's Stop cue. */
+function focusSecs(): number {
+  const fromSnapshot = session.snapshot.focusSecs;
+  if (fromSnapshot > 0) return fromSnapshot;
+  return (config.value?.focusMinutes ?? 0) * 60;
+}
 
 /** Starts all subscriptions; returns a cleanup function. */
 export function initAppState(): () => void {
@@ -50,11 +58,20 @@ export function initAppState(): () => void {
   keep(api.subscribeCalendar((c) => calendar.apply(c), reportCalendarError));
   // Same for the developer tools (a detail could come from a tool's server); tokens never reach the UI.
   keep(api.subscribeWork((w) => work.apply(w), reportWorkError));
-  keep(api.onPhaseChanged((change) => session.announce(change)));
+  keep(
+    api.onPhaseChanged((change) => {
+      session.announce(change);
+      const cue = cueForPhaseChange(change);
+      if (cue) mascotCues.emit(cue);
+    }),
+  );
   keep(api.onNudge((n) => nudge.show(n)));
   keep(
     api.onSessionSummary((s) => {
       summary.add(s);
+      // Before the summary page opens, so its axolotl still sees the cue as fresh.
+      const cue = cueForSummary(s, focusSecs());
+      if (cue) mascotCues.emit(cue);
       void goto("/summary");
     }),
   );
