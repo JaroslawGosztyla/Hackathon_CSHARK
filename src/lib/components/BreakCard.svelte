@@ -1,7 +1,7 @@
 <script lang="ts">
   // Break screen: the user's own reminder for this break (if any), then one research-based tip picked
   // deterministically per (session, break) — the phase popup shows the same one (`breakTip` store). The axolotl
-  // beside the timer says them in its bubble (FocusMascot), so the card shows the cup.
+  // at the bottom-left of the timer section says them in its bubble (FocusMascot), so the card shows the cup.
   import SourceLink from "$lib/components/SourceLink.svelte";
   import { breakTip } from "$lib/state/breakTip.svelte";
   import { session } from "$lib/state/session.svelte";

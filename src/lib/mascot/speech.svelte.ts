@@ -100,6 +100,15 @@ export class MascotSpeech {
     return this.line !== null && this.revealed >= this.line.units.length;
   }
 
+  /**
+   * A message is on screen or about to be: its letters are being revealed, it is held after the last one, it fades
+   * out, or it waits for a running reaction to end before it shows. (One waiting only for the gap is not: nothing is
+   * shown yet.) Read it in event handlers: only `line` is reactive.
+   */
+  get active(): boolean {
+    return this.#current !== null || this.line !== null;
+  }
+
   /** Says `line` now (urgent, or the gap since the last message passed) or as soon as the gap allows. */
   say(line: MascotLine): void {
     if (this.#disposed || line.text.trim() === "") return;

@@ -1,7 +1,7 @@
 // The break on the Skupienie page: the user's own reminder for this break and one research-based tip, picked
 // deterministically per (session, break) so the phase popup shows the same one. Shared by the break card and the
-// axolotl beside the timer, which says them. "Inna propozycja" steps are kept per break, so leaving the page and
-// coming back keeps the tip.
+// axolotl at the bottom-left of the timer section, which says them. "Inna propozycja" steps are kept per break, so
+// leaving the page and coming back keeps the tip.
 import { SvelteMap } from "svelte/reactivity";
 import { pickBreakTip, type BreakTip } from "$lib/tips";
 import { config, reminderForBreak } from "./config.svelte";

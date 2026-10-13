@@ -11,7 +11,8 @@
   import TimerRing from "$lib/components/TimerRing.svelte";
   import TimingEditor from "$lib/components/TimingEditor.svelte";
   import { formatDuration } from "$lib/format";
-  import FocusMascot from "$lib/mascot/FocusMascot.svelte";
+  import { mascotEnabled } from "$lib/mascot/cues.svelte";
+  import FocusMascot, { MASCOT_WIDTH } from "$lib/mascot/FocusMascot.svelte";
   import { calendarEnabled } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
@@ -33,6 +34,34 @@
   const workOn = $derived(workEnabled(config.value));
   /** "Co dalej?" stays out of the focus phase unless the user turned off holding notifications during focus. */
   const workDuringFocus = $derived(workOn && config.value?.work.holdDuringFocus === false);
+  /** The axolotl stands at the hero's bottom-left: the centred content under the ring keeps clear of it. */
+  const mascotOn = $derived(mascotEnabled(config.value));
+
+  let hero = $state<HTMLElement | null>(null);
+  let controls = $state<HTMLElement | null>(null);
+  let lane = $state<HTMLElement | null>(null);
+  /**
+   * How far the top of the session buttons is above the lane's bottom (the hero's last line), when the buttons reach
+   * into the lane (three wide buttons, or two rows of them, in a narrow window): the bubble stays above them.
+   */
+  let buttonsTop = $state(0);
+
+  $effect(() => {
+    const box = hero;
+    const row = controls;
+    const area = lane;
+    if (!box || !row || !area) return;
+    const measure = () => {
+      const r = row.getBoundingClientRect();
+      const a = area.getBoundingClientRect();
+      buttonsTop = r.left < a.right && r.right > a.left ? Math.max(0, Math.ceil(a.bottom - r.top)) : 0;
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    observer.observe(row);
+    measure();
+    return () => observer.disconnect();
+  });
 </script>
 
 <svelte:head>
@@ -41,7 +70,7 @@
 
 <h1 class="sr-only">{strings.nav.focus}</h1>
 
-<section class="hero">
+<section class="hero" class:with-mascot={mascotOn} style:--mascot-w="{MASCOT_WIDTH}px" bind:this={hero}>
   <div class="ring-wrap">
     {#key `${snap.phase}-${snap.cycle}`}
       <TimerRing
@@ -53,10 +82,9 @@
         demo={snap.demo}
       />
     {/key}
-    <FocusMascot />
   </div>
 
-  <div class="controls" role="group" aria-label={strings.controls.sessionControls}>
+  <div class="controls" role="group" aria-label={strings.controls.sessionControls} bind:this={controls}>
     {#if session.isIdle}
       <button
         type="button"
@@ -120,6 +148,11 @@
   {/if}
 
   <SessionGoalLine />
+
+  <!-- Last in the hero, so Tab reaches Start (and the session buttons) before the axolotl. -->
+  <div class="mascot-lane" bind:this={lane}>
+    <FocusMascot bubbleFloor={buttonsTop > 0 ? buttonsTop + 10 : 0} />
+  </div>
 </section>
 
 <MeetingHoldBanner />
@@ -183,17 +216,41 @@
 
 <style>
   .hero {
+    /* Bottom padding; the axolotl stands on the line above it (the last line of the hero's content). */
+    --hero-pad-bottom: 28px;
+    /* Half the timer ring (TimerRing: 300 px wide from the minimum window width up). */
+    --ring-half: 150px;
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 18px;
-    padding: 8px 0 28px;
+    padding: 8px 0 var(--hero-pad-bottom);
     text-align: center;
   }
 
-  /* The axolotl (FocusMascot) is placed against the ring's box, outside the flow. */
-  .ring-wrap {
-    position: relative;
+  /*
+   * The axolotl's column (FocusMascot's width + a gap) on both sides, so the session buttons, the hint and the goal
+   * line under the ring stay centred and never reach under the axolotl; a long row wraps instead.
+   */
+  .hero.with-mascot {
+    padding-inline: calc(var(--mascot-w) + 14px);
+  }
+
+  /*
+   * The axolotl's lane (FocusMascot fills it), outside the flow: at the page's left content edge (the cards' left
+   * edge), from the hero's top to its last line, and narrower than the room left of the ring (a gap before the ring,
+   * at most 300 px wide). The axolotl stands at its bottom-left, the bubble grows upwards above it (and above the
+   * session buttons where they reach into the lane: `buttonsTop`).
+   */
+  .mascot-lane {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    bottom: var(--hero-pad-bottom);
+    left: 0;
+    width: min(300px, calc(50% - var(--ring-half) - 20px));
+    pointer-events: none;
   }
 
   .controls {

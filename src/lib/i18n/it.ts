@@ -565,6 +565,17 @@ export const it: Strings = {
     ],
     conflictHint: (subject: string) =>
       `Una riunione cade durante una pausa: ${subject}. Decidi qui sotto cosa farne.`,
+    tickle: "Fai il solletico all'assolotto",
+    tickleLines: [
+      "Ehi, mi fai il solletico!",
+      "Ih ih, smettila!",
+      "Bup! Torniamo al lavoro?",
+      "Soffro il solletico alle branchie!",
+      "Coccola ricevuta. Concentrazione +1!",
+      "Piano, sono tutto morbidoso!",
+      "Ancora? Va bene, un'ultima volta!",
+      "Hai scoperto dove soffro il solletico!",
+    ],
   },
 
   calendar: {

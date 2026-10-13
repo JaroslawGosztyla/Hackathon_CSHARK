@@ -25,7 +25,9 @@ export type MascotReaction =
   /** New work items announced. */
   | "digest"
   /** A short smile now and then while the user focuses (mood `calm`). */
-  | "smile";
+  | "smile"
+  /** The user tickled the axolotl on the Skupienie page (a click on it while it says nothing). */
+  | "tickle";
 
 /**
  * The face the mascot rests on between animations: `neutral` (no session, a meeting hold) and `calm` (focus running)
@@ -101,6 +103,8 @@ const FRAME_SETS: Record<MascotVariant, FrameSet> = {
       meeting: MAIN_SMILE,
       digest: { steps: [step("happy-1", 160), step("happy-2", 160), step("happy-3", 900)], still: "happy-1" },
       smile: { steps: [step("smile-1", 120), step("smile-2", 120), step("smile-3", 900)], still: "smile-1" },
+      // A giggle: the smile opens quickly and is held a moment before the funny line starts.
+      tickle: { steps: [step("smile-1", 110), step("smile-2", 110), step("smile-3", 600)], still: "smile-1" },
     },
   },
   // The peek frames have no O mouth (A instead) and no wink (a blink into a smile instead).
@@ -118,6 +122,8 @@ const FRAME_SETS: Record<MascotVariant, FrameSet> = {
       meeting: PEEK_SMILE,
       digest: { steps: [step("happy", 1600)], still: "happy" },
       smile: { steps: [step("smile", 1100)], still: "smile" },
+      // Only the main window's axolotl can be tickled; the popup's peeking one ignores clicks (kept for completeness).
+      tickle: { steps: [step("smile", 800)], still: "smile" },
     },
   },
 };

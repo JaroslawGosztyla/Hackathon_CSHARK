@@ -572,7 +572,7 @@ export const pl = {
     /** Bubble labels on the Skupienie page. */
     practiceLabel: "Dobra praktyka",
     nextUpLabel: "Co dalej?",
-    /** Said by the axolotl beside the timer (one line picked at random each time): Start, a break, a completed cycle. */
+    /** Said by the axolotl on the Skupienie page (one line picked at random each time): Start, a break, a completed cycle. */
     startLines: [
       "Do dzieła!",
       "Zaczynamy. Powodzenia!",
@@ -592,6 +592,19 @@ export const pl = {
     /** Idle: a meeting would fall into a break of a session started now (the card below has the choices). */
     conflictHint: (subject: string) =>
       `Spotkanie w czasie przerwy: ${subject}. Zdecyduj poniżej, co z nim zrobić.`,
+    /** Skupienie page: the label of the axolotl button (a click tickles it). */
+    tickle: "Połaskocz aksolotla",
+    /** What the tickled axolotl says (one at random, never the same twice in a row). */
+    tickleLines: [
+      "Hej, to łaskocze!",
+      "Hihi, przestań!",
+      "Bup! Wracamy do pracy?",
+      "Mam łaskotki na skrzelach!",
+      "Głaskanie przyjęte. Skupienie +1!",
+      "Ostrożnie, jestem mięciutki!",
+      "Jeszcze raz? No dobra!",
+      "Masz mnie! Mam tam łaskotki!",
+    ],
   },
 
   calendar: {

@@ -6,6 +6,7 @@
   import { onMount, untrack } from "svelte";
   import * as api from "$lib/api";
   import AppLogo from "$lib/components/AppLogo.svelte";
+  import { FRAME_GEOMETRY } from "$lib/mascot/assets.svelte";
   import Axolotl from "$lib/mascot/Axolotl.svelte";
   import { useMascot } from "$lib/mascot/controller.svelte";
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
@@ -60,6 +61,14 @@
   /** Height of the peeking axolotl at the card's bottom-left edge, and of the small one in a meeting reminder's title. */
   const PEEK_SIZE = 50;
   const PEEK_SIZE_TITLE = 26;
+  /**
+   * The peeking axolotl's box as Axolotl lays it out (the frame's aspect ratio; `sit` sinks the part below its paws
+   * under the edge): the buttons start right of it and their row is at least as tall as the part that shows.
+   */
+  const PEEK_WIDTH = Math.round((PEEK_SIZE * FRAME_GEOMETRY.peek.frameWidth) / FRAME_GEOMETRY.peek.frameHeight);
+  const PEEK_HEIGHT =
+    PEEK_SIZE -
+    Math.round(((FRAME_GEOMETRY.peek.frameHeight - FRAME_GEOMETRY.peek.anchorY) * PEEK_SIZE) / FRAME_GEOMETRY.peek.frameHeight);
 
   const p = strings.popup;
   const cal = strings.calendar;
@@ -484,18 +493,22 @@
 
 {#if visible && info && kind}
   {#key info.revision}
-    <div class="popup kind-{kind}" class:leaving class:with-peek={peeking} role="status" aria-live="polite" aria-atomic="true" {@attach holdWhileInside}>
-      {#if kind !== "meetingReminder"}
-        {#if mascotOn}
-          <div class="peek" aria-hidden="true">
-            <Axolotl variant="peek" size={PEEK_SIZE} frame={peek.frame} sit />
-          </div>
-        {:else}
-          <div class="icon" aria-hidden="true">
-            <span class="emoji">{KIND_ICON[kind]}</span>
-            <span class="badge-logo"><AppLogo size={20} /></span>
-          </div>
-        {/if}
+    <div
+      class="popup kind-{kind}"
+      class:leaving
+      class:with-peek={peeking}
+      style:--peek-w="{PEEK_WIDTH}px"
+      style:--peek-h="{PEEK_HEIGHT}px"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      {@attach holdWhileInside}
+    >
+      {#if kind !== "meetingReminder" && !mascotOn}
+        <div class="icon" aria-hidden="true">
+          <span class="emoji">{KIND_ICON[kind]}</span>
+          <span class="badge-logo"><AppLogo size={20} /></span>
+        </div>
       {/if}
 
       <div class="content">
@@ -556,6 +569,12 @@
           </div>
         {:else}
           <div class="actions">
+            {#if peeking}
+              <!-- In the card's bottom-left corner, left of the buttons. Inert: a click on it does nothing. -->
+              <div class="peek" aria-hidden="true">
+                <Axolotl variant="peek" size={PEEK_SIZE} frame={peek.frame} sit />
+              </div>
+            {/if}
             <button type="button" class="btn btn-sm btn-primary" disabled={busy || acted} onclick={() => act("showMain")}>
               {p.showMain}
             </button>
@@ -597,13 +616,15 @@
 
   /* The card fills the transparent window, leaving room for its shadow inside the window bounds. */
   .popup {
+    --pad-left: 12px;
+    --pad-bottom: 14px;
     position: fixed;
     inset: 8px;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: start;
     gap: 12px;
-    padding: 12px 14px 14px 12px;
+    padding: 12px 14px var(--pad-bottom) var(--pad-left);
     overflow: hidden;
     border-radius: var(--radius);
     border: var(--border-w) solid var(--border-strong);
@@ -655,14 +676,40 @@
     background: var(--break-soft);
   }
 
+  /*
+   * With the peeking axolotl the text spans the whole card, like a popup without it: only the buttons make room for
+   * the axolotl. Their row fills the card down to its bottom padding and is at least as tall as the axolotl shows
+   * above it, and the axolotl sits in that row's bottom-left corner, so it never reaches a text line.
+   */
+  .popup.with-peek {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .with-peek .content {
+    align-self: stretch;
+  }
+
+  /* The buttons stay where the text column used to start: right of the axolotl (which overlapped the gap by 4 px). */
+  .with-peek .actions {
+    position: relative;
+    flex: 1 0 auto;
+    align-content: flex-start;
+    align-items: flex-start;
+    min-height: calc(var(--peek-h) - var(--pad-bottom));
+    padding-left: calc(var(--peek-w) - 4px);
+  }
+
   /* The axolotl peeks over the card's bottom-left edge (into the padding, so it touches the edge). */
   /*
    * Enters from below the card's bottom edge (clipped by the card): a smooth ease-out rise that ends stretched a few
    * pixels above its place, then squashes, rebounds a little and rests — scaled from its bottom centre, like a spring.
+   * Inert: a click on it does nothing (it falls through to the card, which has no click action).
    */
   .peek {
-    align-self: end;
-    margin: 0 -4px -14px -12px;
+    position: absolute;
+    left: calc(-1 * var(--pad-left));
+    bottom: calc(-1 * var(--pad-bottom));
+    pointer-events: none;
     transform-origin: 50% 100%;
     animation: peek-enter 900ms both;
   }
@@ -734,6 +781,7 @@
     display: inline-block;
     margin-right: 6px;
     vertical-align: -7px;
+    pointer-events: none;
   }
 
   /* A meeting reminder has four buttons: no icon column, so they get the whole width of the card. */

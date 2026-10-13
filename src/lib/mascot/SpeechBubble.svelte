@@ -83,11 +83,11 @@
     opacity: 0;
   }
 
-  /* The tail: a small square turned 45°, showing only its two outer borders. */
+  /* The tail: a small square turned 45°, showing only its two outer borders (`--bubble-tail-x`: its left edge). */
   .bubble::after {
     content: "";
     position: absolute;
-    left: 28px;
+    left: var(--bubble-tail-x, 28px);
     bottom: -6px;
     width: 10px;
     height: 10px;

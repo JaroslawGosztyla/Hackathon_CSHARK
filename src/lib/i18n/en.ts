@@ -556,6 +556,17 @@ export const en: Strings = {
     ],
     conflictHint: (subject: string) =>
       `A meeting falls during a break: ${subject}. Decide below what to do with it.`,
+    tickle: "Tickle the axolotl",
+    tickleLines: [
+      "Hey, that tickles!",
+      "Hehe, stop it!",
+      "Boop! Back to work?",
+      "My gills are ticklish!",
+      "Pat accepted. Focus +1!",
+      "Careful, I'm squishy!",
+      "Again? Okay, one more!",
+      "You found my ticklish spot!",
+    ],
   },
 
   calendar: {

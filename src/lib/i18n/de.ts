@@ -569,6 +569,17 @@ export const de: Strings = {
     ],
     conflictHint: (subject: string) =>
       `Eine Besprechung fällt in eine Pause: ${subject}. Entscheide unten, was damit passieren soll.`,
+    tickle: "Axolotl kitzeln",
+    tickleLines: [
+      "Hey, das kitzelt!",
+      "Hihi, hör auf!",
+      "Stups! Zurück an die Arbeit?",
+      "Meine Kiemen sind kitzlig!",
+      "Streicheln angenommen. Fokus +1!",
+      "Vorsicht, ich bin ganz knautschig!",
+      "Nochmal? Na gut, ein letztes Mal!",
+      "Erwischt! Da bin ich kitzlig!",
+    ],
   },
 
   calendar: {

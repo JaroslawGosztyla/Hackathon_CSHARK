@@ -571,6 +571,17 @@ export const fr: Strings = {
     ],
     conflictHint: (subject: string) =>
       `Une réunion tombe pendant une pause : ${subject}. Choisissez ci-dessous quoi en faire.`,
+    tickle: "Chatouiller l'axolotl",
+    tickleLines: [
+      "Hé, ça chatouille !",
+      "Hihi, arrêtez !",
+      "Boup ! On se remet au travail ?",
+      "Mes branchies sont chatouilleuses !",
+      "Caresse acceptée. Concentration +1 !",
+      "Doucement, je suis tout mou !",
+      "Encore ? Bon, d'accord, une dernière !",
+      "Axo-lol ! Vous avez trouvé mon point sensible !",
+    ],
   },
 
   calendar: {

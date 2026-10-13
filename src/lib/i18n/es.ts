@@ -569,6 +569,17 @@ export const es: Strings = {
     ],
     conflictHint: (subject: string) =>
       `Una reunión cae en un descanso: ${subject}. Decide abajo qué hacer con ella.`,
+    tickle: "Hacer cosquillas al ajolote",
+    tickleLines: [
+      "¡Oye, eso hace cosquillas!",
+      "¡Jiji, para ya!",
+      "¡Bup! ¿Volvemos al trabajo?",
+      "¡Tengo cosquillas en las branquias!",
+      "Caricia recibida. ¡Concentración +1!",
+      "¡Cuidado, que soy blandito!",
+      "¿Otra vez? ¡Bueno, una más!",
+      "¡Me descubriste: ahí tengo cosquillas!",
+    ],
   },
 
   calendar: {
