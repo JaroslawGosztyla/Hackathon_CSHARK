@@ -51,6 +51,9 @@ const CONSENT_HIDE_DELAY: Duration = Duration::from_millis(2500);
 /// Google consent cookie. It exists from the first visit; the choice is in its value (see [`consent_decided`]).
 const CONSENT_COOKIE: &str = "SOCS";
 const YOUTUBE_ORIGIN: &str = "https://www.youtube.com/";
+/// Title the page script sets for a moment when the page starts over (see [`INIT_SCRIPT`]). A YouTube
+/// page title always ends in " - YouTube", so no video can look like it. Plain ASCII without quotes.
+const END_TITLE: &str = "focusmode:page-end";
 
 /// Hosts accepted by `open_media_window`.
 const OPEN_HOSTS: [&str; 5] = [
@@ -79,6 +82,17 @@ const GOOGLE_FLOW_HOSTS: [&str; 4] = [
 /// `window.__focusmodeMedia.apply()` applies the desired state now and keeps re-applying it for 20 s
 /// (the player loads late and autoplay may start on its own); every SPA navigation re-arms that window.
 /// A trusted click or key press in the page hands control to the user until the next `apply()`.
+///
+/// While the app wants music, a watch page plays what it was opened with in a loop, like the app's own
+/// lists (ADR-021): YouTube moves through a playlist (also the queue `watch_videos?video_ids=…` the
+/// player builds for a list of videos) by itself, but after its last video, or after a single video, it
+/// would autoplay a recommendation. So at that end the page holds at the start, sets the title to
+/// [`END_TITLE`] for a moment and then starts over from its first video (`playVideoAt(0)` /
+/// `playVideo()`); if YouTube got away first (an ad at the end, then autoplay) the page goes back to
+/// the address it was opened with, once per document. The app follows the page through the title it
+/// already gets (`media://window`): a new title is the next video, and a moment without a title (the
+/// end marker) is "went around", which moves a longer list on to its next link even when the title
+/// never changes (a lone video). Nothing else is reported back from the page.
 const INIT_SCRIPT: &str = r#"(function () {
   'use strict';
   if (window.top !== window.self || window.__focusmodeMedia) return;
@@ -172,14 +186,118 @@ const INIT_SCRIPT: &str = r#"(function () {
   function touched(event) {
     if (event.isTrusted) media.userTouched = true;
   }
+  // Looping (see the Rust doc comment): `home` is the watch page this document was opened on.
+  var RESTART_GRACE_MS = 4000;
+  var NEXT_GRACE_MS = 5000;
+  var LOOP_DELAY_MS = 1500;
+  var END_TITLE = '__END_TITLE__';
+  var home = (function () {
+    var params = new URLSearchParams(location.search);
+    var v = params.get('v');
+    var list = params.get('list');
+    if (location.pathname === '/watch' && (v || list)) return { href: location.href, v: v, list: list };
+    // `/playlist?list=…&playnext=1` opens the playlist's first video and then shows it as `/watch?v=…&list=…`.
+    if (location.pathname === '/playlist' && list) return { href: location.href, v: null, list: list };
+    return null;
+  })();
+  var seenHome = false;
+  var endedSince = 0;
+  var restartedAt = 0;
+  function onHome() {
+    if (location.pathname !== '/watch') return false;
+    var params = new URLSearchParams(location.search);
+    return home.list ? params.get('list') === home.list : params.get('v') === home.v;
+  }
+  function playlistOf(p) {
+    if (typeof p.getPlaylist !== 'function' || typeof p.getPlaylistIndex !== 'function') return null;
+    var list = p.getPlaylist();
+    return list && list.length ? list : null;
+  }
+  function keepOnHome() {
+    if (!home || media.want !== 'play' || media.userTouched) {
+      endedSince = 0;
+      return;
+    }
+    var now = Date.now();
+    if (now - restartedAt < RESTART_GRACE_MS) return;
+    try {
+      if (!onHome()) {
+        // YouTube moved on to something else: back to the start, once per document (no reload loops).
+        if (seenHome) {
+          seenHome = false;
+          restartedAt = now;
+          location.replace(home.href);
+        }
+        return;
+      }
+      seenHome = true;
+      var p = playerApi();
+      // An ad (the player carries `ad-showing`) ending is not the end of the video.
+      if (!p || p.classList.contains('ad-showing') || p.getPlayerState() !== 0) {
+        endedSince = 0;
+        return;
+      }
+      if (!endedSince) endedSince = now;
+      var list = playlistOf(p);
+      // A playlist page whose list the player does not report: YouTube moves on by itself (and if it leaves the list,
+      // the page goes back to its address above); restarting the video here would stall the playlist on it. Only if
+      // nothing happens for a while does the page start over from its address.
+      if (home.list && !list) {
+        if (now - endedSince >= NEXT_GRACE_MS) {
+          endedSince = 0;
+          restartedAt = now;
+          location.replace(home.href);
+        }
+        return;
+      }
+      var index = list ? p.getPlaylistIndex() : -1;
+      if (list && index >= 0 && index < list.length - 1) {
+        // Not the last video: YouTube plays the next one itself; a nudge only if it did not.
+        if (now - endedSince >= NEXT_GRACE_MS && typeof p.nextVideo === 'function') {
+          endedSince = 0;
+          restartedAt = now;
+          p.nextVideo();
+        }
+        return;
+      }
+      endedSince = 0;
+      restartedAt = now;
+      startOver(p, list);
+    } catch (e) { /* the page changed under us; the next tick retries */ }
+  }
+  // The end of what the page plays: hold at the start of this video (which also stops YouTube's autoplay), tell the
+  // app through the title (the shell turns END_TITLE into "no title" for a moment, which the player reads as "went
+  // around" and moves on in a longer list), then start over unless the app navigated or closed the window by then.
+  function startOver(p, list) {
+    media.until = 0;
+    if (typeof p.seekTo === 'function') p.seekTo(0, true);
+    p.pauseVideo();
+    var title = document.title;
+    if (title !== END_TITLE) document.title = END_TITLE;
+    setTimeout(function () {
+      if (document.title === END_TITLE) document.title = title;
+      if (media.want !== 'play' || media.userTouched) return;
+      try {
+        var q = playerApi();
+        if (!q || !onHome()) return;
+        if (list && typeof q.playVideoAt === 'function') q.playVideoAt(0);
+        else q.playVideo();
+      } catch (e) { /* the page changed under us */ }
+    }, LOOP_DELAY_MS);
+  }
   window.addEventListener('pointerdown', touched, true);
   window.addEventListener('keydown', touched, true);
+  // Media events do not bubble, but a capturing listener on the window still sees them.
+  window.addEventListener('ended', function (event) {
+    if (event.target && event.target.nodeName === 'VIDEO') setTimeout(keepOnHome, 0);
+  }, true);
   setInterval(function () {
     if (location.href !== media.href) {
       media.href = location.href;
       if (!media.userTouched) media.until = Date.now() + ENFORCE_MS;
     }
     if (!media.userTouched && Date.now() < media.until) enforce();
+    keepOnHome();
   }, 500);
   window.__focusmodeMedia = media;
 })();"#;
@@ -490,6 +608,18 @@ impl MediaWindow {
     }
 
     fn title_changed(&self, app: &AppHandle, instance: u64, raw: &str) {
+        if raw == END_TITLE {
+            // The page starts over: no title until it sets its own again, so the player sees the end
+            // even of a page whose title never changes (engine.ts `followWindow`).
+            self.update(app, |inner| {
+                if inner.instance != instance || inner.title.is_none() {
+                    return false;
+                }
+                inner.title = None;
+                inner.open
+            });
+            return;
+        }
         let Some(title) = clean_title(raw) else {
             return;
         };
@@ -669,6 +799,7 @@ fn init_script(play: bool, volume: u8) -> String {
     INIT_SCRIPT
         .replace("__WANT__", want_literal(play))
         .replace("__VOLUME__", &volume.to_string())
+        .replace("__END_TITLE__", END_TITLE)
 }
 
 /// Sets the wanted play state and volume, then applies them (and keeps applying them for a while).
@@ -698,11 +829,15 @@ fn volume_percent(volume: f64) -> u8 {
 }
 
 /// Page title without the YouTube suffix and the "(3) " notification counter; `None` when it is
-/// not a real title yet (empty, the bare site name, or the URL WebView2 reports while loading).
+/// not a real title (empty, the bare site name, the URL WebView2 reports while loading, or YouTube's
+/// error page, " - YouTube" with an empty video title). The player treats a page without a title
+/// for a while as unplayable (engine.ts), so an error page must not report one.
 fn clean_title(raw: &str) -> Option<String> {
     let mut title = raw.trim();
-    for suffix in [" - YouTube Music", " - YouTube"] {
-        if let Some(stripped) = title.strip_suffix(suffix) {
+    for suffix in ["- YouTube Music", "- YouTube"] {
+        if let Some(stripped) = title.strip_suffix(suffix)
+            && (stripped.is_empty() || stripped.ends_with(char::is_whitespace))
+        {
             title = stripped.trim_end();
             break;
         }
@@ -828,6 +963,14 @@ mod tests {
             Some("Song")
         );
         assert_eq!(clean_title("(Live) Song").as_deref(), Some("(Live) Song"));
+        // YouTube's "Video unavailable" page: no video title before the suffix.
+        assert_eq!(clean_title(" - YouTube"), None);
+        assert_eq!(clean_title("(2) - YouTube"), None);
+        assert_eq!(clean_title("- YouTube Music"), None);
+        assert_eq!(
+            clean_title("A-ha- YouTube").as_deref(),
+            Some("A-ha- YouTube")
+        );
         assert_eq!(clean_title("YouTube"), None);
         assert_eq!(clean_title("YouTube Music"), None);
         assert_eq!(clean_title("   "), None);
@@ -848,7 +991,17 @@ mod tests {
     #[test]
     fn scripts_embed_only_fixed_literals() {
         let script = init_script(false, 42);
-        assert!(!script.contains("__WANT__") && !script.contains("__VOLUME__"));
+        assert!(
+            !script.contains("__WANT__")
+                && !script.contains("__VOLUME__")
+                && !script.contains("__END_TITLE__")
+        );
+        assert!(script.contains(&format!("var END_TITLE = '{END_TITLE}';")));
+        assert!(
+            END_TITLE
+                .chars()
+                .all(|c| c.is_ascii_graphic() && c != '\'' && c != '\\')
+        );
         assert!(script.contains("want: 'pause',"));
         assert!(script.contains("volume: 42,"));
         assert!(init_script(true, 0).contains("want: 'play',"));

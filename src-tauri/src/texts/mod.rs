@@ -137,6 +137,8 @@ pub struct Texts {
     pub dev_sample_meeting: &'static str,
     /// The sample break reminder, used when the user has none for that break.
     pub dev_sample_reminder: &'static str,
+    /// The sample next step ("Teraz: …") of a focus popup sample while small steps are on (beta, ADR-022).
+    pub dev_sample_next_step: &'static str,
 }
 
 /// A toast notification: title and body.
@@ -425,6 +427,11 @@ pub fn interrupted_toast() -> Toast {
     current().interrupted_toast()
 }
 
+/// The sample next step of the developer page's focus popup sample (beta small steps, ADR-022).
+pub fn sample_next_step() -> &'static str {
+    current().dev_sample_next_step
+}
+
 pub fn break_held_toast(subject: Option<&str>, break_secs: u32, reminder: Option<&str>) -> Toast {
     current().break_held_toast(subject, break_secs, reminder)
 }
@@ -566,6 +573,7 @@ mod tests {
             music_muted: false,
             meeting_hold: None,
             goal: None,
+            steps: Vec::new(),
         }
     }
 
@@ -775,6 +783,7 @@ mod tests {
                 texts.blocklist_denied,
                 texts.dev_sample_meeting,
                 texts.dev_sample_reminder,
+                texts.dev_sample_next_step,
             ] {
                 assert!(!text.trim().is_empty(), "{language:?}");
             }

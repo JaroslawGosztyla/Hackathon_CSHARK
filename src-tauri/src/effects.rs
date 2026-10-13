@@ -2,16 +2,20 @@
 //!
 //! The actor never waits for slow work: chimes go to the audio thread, shields and toasts to the
 //! shields worker, phase popups to the popup thread, tracking to the tracker thread, history writes to
-//! the blocking pool.
+//! the blocking pool. Session facts (`Effect::Progress`, beta rewards ADR-022) are applied by the rewards
+//! service in microseconds; only its file write is queued.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use focus_audio::{AudioEvent, Chime, ChimePlayer, ChimeSource, SoundPack};
+use focus_audio::{
+    AudioEvent, Chime, ChimePlayer, ChimeSource, MAX_FILE_CHIME_DURATION, SoundPack,
+};
 use focus_core::api::{
-    AppError, ChimeKind, ChimeSound, Config, MeetingConflict, PopupKind, SessionSummary, events,
+    AppError, ChimeKind, ChimeSound, Config, MeetingConflict, PopupKind, PopupRewards, RewardSound,
+    SessionSummary, events,
 };
 use focus_core::config::reminder_for_break;
 use focus_core::session::{Effect, NotifyKind, SessionTotals};
@@ -19,12 +23,19 @@ use tauri::{AppHandle, Emitter};
 
 use crate::persistence::Persistence;
 use crate::popup::{PopupHandle, PopupRequest};
+use crate::rewards::RewardsHandle;
 use crate::shields::ShieldsHandle;
 use crate::tracker::{TrackerHandle, without_titles};
 use crate::{SharedConfig, chimes, emit_error, lock, read_config, texts};
 
 /// Longest wait for the tracker's final report when a session ends (normally a few ms).
 const FINAL_REPORT_TIMEOUT: Duration = Duration::from_millis(200);
+/// Reward sounds play at this share of the chime volume (beta, ADR-022).
+pub const REWARD_VOLUME: f32 = 0.6;
+/// A reward sound waits this long after a phase chime has finished.
+const REWARD_SOUND_GAP: Duration = Duration::from_millis(150);
+/// A reward sound that would wait longer than this for a phase chime is dropped.
+const REWARD_SOUND_MAX_WAIT: Duration = Duration::from_secs(3);
 
 /// Handle to the chime player (audio thread), keyed by the IPC `ChimeKind`.
 #[derive(Clone)]
@@ -32,11 +43,17 @@ pub struct ChimeHandle {
     player: ChimePlayer,
     /// Folder of the imported chime files (`Persistence::sounds_dir`).
     sounds_dir: PathBuf,
+    /// Until when the last phase chime plays (a reward sound waits for it).
+    phase_chime_until: Arc<Mutex<Option<Instant>>>,
 }
 
 impl ChimeHandle {
     pub fn new(player: ChimePlayer, sounds_dir: PathBuf) -> Self {
-        Self { player, sounds_dir }
+        Self {
+            player,
+            sounds_dir,
+            phase_chime_until: Arc::new(Mutex::new(None)),
+        }
     }
 
     /// Plays `kind` with the configured sound (`chime_sound`, `custom_chimes`) and volume. Non-blocking:
@@ -47,14 +64,62 @@ impl ChimeHandle {
             ChimeKind::FocusStart => Chime::FocusStart,
         };
         let source = chime_source(config, kind, &self.sounds_dir);
+        let length = match &source {
+            ChimeSource::Pack(pack) => pack.duration(chime),
+            ChimeSource::File(_) => MAX_FILE_CHIME_DURATION,
+        };
+        *lock(&self.phase_chime_until) = Some(Instant::now() + length);
         self.player.play(chime, source, config.chime_volume);
+    }
+
+    /// How long a reward sound has to wait for the phase chime that plays now (`None` = drop it: longer than
+    /// [`REWARD_SOUND_MAX_WAIT`]). Zero when no phase chime plays.
+    pub fn reward_sound_wait(&self) -> Option<Duration> {
+        let until = *lock(&self.phase_chime_until);
+        let wait = until.map_or(Duration::ZERO, |until| {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                Duration::ZERO
+            } else {
+                left + REWARD_SOUND_GAP
+            }
+        });
+        (wait <= REWARD_SOUND_MAX_WAIT).then_some(wait)
+    }
+
+    /// Plays a beta reward sound (ADR-022) now, synthesized in the configured pack (`custom` uses Midnight) at
+    /// [`REWARD_VOLUME`] of the chime volume. The caller checked the switches and waited for a phase chime.
+    pub fn play_reward(&self, sound: RewardSound, config: &Config) {
+        let chime = match sound {
+            RewardSound::Pop => Chime::Pop,
+            RewardSound::Sparkle => Chime::Sparkle,
+            RewardSound::Fanfare => Chime::Fanfare,
+        };
+        let pack = sound_pack(config.chime_sound).unwrap_or(SoundPack::Midnight);
+        self.player.play(
+            chime,
+            ChimeSource::Pack(pack),
+            config.chime_volume * REWARD_VOLUME,
+        );
     }
 }
 
 /// The sound for `kind`: the configured pack, or the user's file for `custom` (its own file, else the other
 /// one; the default pack when none is set).
 fn chime_source(config: &Config, kind: ChimeKind, sounds_dir: &Path) -> ChimeSource {
-    let pack = match config.chime_sound {
+    match sound_pack(config.chime_sound) {
+        Some(pack) => ChimeSource::Pack(pack),
+        None => config
+            .custom_chimes
+            .file_for(kind)
+            .and_then(|name| chimes::path_of(sounds_dir, name))
+            .map_or(ChimeSource::Pack(SoundPack::Midnight), ChimeSource::File),
+    }
+}
+
+/// The synthesized pack of a chime sound; `None` for `custom` (the user's files).
+fn sound_pack(sound: ChimeSound) -> Option<SoundPack> {
+    Some(match sound {
         ChimeSound::Midnight => SoundPack::Midnight,
         ChimeSound::Vaporwave => SoundPack::Vaporwave,
         ChimeSound::Lunar => SoundPack::Lunar,
@@ -62,15 +127,8 @@ fn chime_source(config: &Config, kind: ChimeKind, sounds_dir: &Path) -> ChimeSou
         ChimeSound::Classic => SoundPack::Classic,
         ChimeSound::Soft => SoundPack::Soft,
         ChimeSound::Chiptune => SoundPack::Chiptune,
-        ChimeSound::Custom => {
-            return config
-                .custom_chimes
-                .file_for(kind)
-                .and_then(|name| chimes::path_of(sounds_dir, name))
-                .map_or(ChimeSource::Pack(SoundPack::Midnight), ChimeSource::File);
-        }
-    };
-    ChimeSource::Pack(pack)
+        ChimeSound::Custom => return None,
+    })
 }
 
 /// Blocking: `Ok` when `path` is an audio file the chime player can decode (`import_chime`).
@@ -106,6 +164,16 @@ pub struct HeldBreak {
     pub meeting: Option<MeetingConflict>,
 }
 
+/// What only the session actor knows about the notifications among the effects it dispatches.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NotifyContext {
+    /// Describes a `Notify(BreakHeld)`.
+    pub held: Option<HeldBreak>,
+    /// Beta small steps (ADR-022): the next open step for a `Notify(FocusStarted)` after a break, while small steps are
+    /// on. The user's own text: never logged.
+    pub next_step: Option<String>,
+}
+
 pub struct Effects {
     pub app: AppHandle,
     pub config: SharedConfig,
@@ -117,21 +185,29 @@ pub struct Effects {
     pub last_summary: Arc<Mutex<Option<SessionSummary>>>,
     /// Cycle of the last phase change (a break popup shows which focus cycle just ended).
     pub last_cycle: u32,
+    /// Beta rewards (ADR-022): applies the session facts.
+    pub rewards: RewardsHandle,
+    /// The reward line of the last fact of this dispatch, for the phase popup that follows it.
+    pub popup_rewards: Option<PopupRewards>,
 }
 
 impl Effects {
     /// Dispatches effects in order. `shutting_down` writes the history synchronously so a session
-    /// stopped by "Zakończ" is not lost. `held` describes a `Notify(BreakHeld)` among the effects.
-    pub fn dispatch(
-        &mut self,
-        effects: Vec<Effect>,
-        shutting_down: bool,
-        held: Option<&HeldBreak>,
-    ) {
+    /// stopped by "Zakończ" is not lost. `context` details the notifications among the effects.
+    pub fn dispatch(&mut self, effects: Vec<Effect>, shutting_down: bool, context: &NotifyContext) {
+        // A reward line belongs only to the popup of the same transition.
+        self.popup_rewards = None;
         for effect in effects {
             match effect {
                 Effect::Chime(kind) => self.chime.play(kind, &read_config(&self.config)),
-                Effect::Notify(kind) => self.notify(kind, held),
+                Effect::Notify(kind) => self.notify(kind, context),
+                Effect::Progress(fact) => {
+                    let config = read_config(&self.config);
+                    self.popup_rewards = self
+                        .rewards
+                        .apply_fact(&fact, &config)
+                        .map(|moment| focus_core::rewards::popup_rewards(&moment));
+                }
                 Effect::Shields(up) => self.shields.set_up(up),
                 Effect::Tracking(on) => self.tracker.set_enabled(on),
                 Effect::PhaseChanged(change) => {
@@ -151,10 +227,13 @@ impl Effects {
         }
     }
 
-    /// The app's own popup when `phase_popups` is on, otherwise the Windows toast (never both).
-    fn notify(&self, kind: NotifyKind, held: Option<&HeldBreak>) {
+    /// The app's own popup when `phase_popups` is on, otherwise the Windows toast (never both; a toast never
+    /// carries a reward line or a step).
+    fn notify(&mut self, kind: NotifyKind, context: &NotifyContext) {
         let config = read_config(&self.config);
-        let request = notification(kind, self.last_cycle, &config, held);
+        let popup_rewards = self.popup_rewards.take();
+        let mut request = notification(kind, self.last_cycle, &config, context.held.as_ref());
+        with_beta_lines(&mut request, &config, popup_rewards, context);
         if config.phase_popups {
             self.popup.show(request);
         } else {
@@ -170,7 +249,12 @@ impl Effects {
         if !config.track_titles {
             usage = without_titles(usage);
         }
-        let summary = focus_core::stats::summarize(totals, usage);
+        let mut summary = focus_core::stats::summarize(totals, usage);
+        if config.rewards_active() && !summary.demo {
+            // The session's fact was applied just before (`Progress` comes before `SessionEnded`). A demo session's
+            // sparks live only in the preview (its summary card reads them from the status) and are never stored.
+            summary.sparks = self.rewards.session_sparks(&summary.session_id);
+        }
         log::info!(
             "session {} ended: {} s focused, {} cycles",
             summary.session_id,
@@ -210,6 +294,26 @@ impl Effects {
                 );
             }
         });
+    }
+}
+
+/// Beta (ADR-022): the reward line on a break or focus popup while the rewards are on, and the next step on a focus
+/// popup after a break while small steps are on. Nothing changes with the beta off.
+fn with_beta_lines(
+    request: &mut PopupRequest,
+    config: &Config,
+    popup_rewards: Option<PopupRewards>,
+    context: &NotifyContext,
+) {
+    let phase_popup = matches!(
+        request.kind,
+        PopupKind::BreakStarted | PopupKind::BreakHeld | PopupKind::FocusStarted
+    );
+    if phase_popup && config.rewards_active() {
+        request.rewards = popup_rewards;
+    }
+    if request.kind == PopupKind::FocusStarted && request.cycle > 1 && config.steps_active() {
+        request.next_step.clone_from(&context.next_step);
     }
 }
 
@@ -414,6 +518,99 @@ mod tests {
         assert_eq!(
             chime_source(&config, ChimeKind::FocusStart, sounds),
             ChimeSource::Pack(SoundPack::Midnight)
+        );
+    }
+
+    #[test]
+    fn beta_lines_appear_only_with_the_beta_on() {
+        let rewards = PopupRewards {
+            sparks: 72,
+            daily_goal: true,
+            streak: Some(5),
+            level_up: Some(8),
+            surprise: None,
+        };
+        let context = NotifyContext {
+            held: None,
+            next_step: Some("Napisz wstęp".into()),
+        };
+        let focus = NotifyKind::FocusStarted {
+            focus_secs: 2700,
+            cycle: 2,
+        };
+        let build = |kind: NotifyKind, config: &Config| {
+            let mut request = notification(kind, 1, config, None);
+            with_beta_lines(&mut request, config, Some(rewards), &context);
+            request
+        };
+        // Beta off: exactly the popups of today.
+        let off = Config::default();
+        let popup = build(focus.clone(), &off);
+        assert_eq!((popup.rewards, popup.next_step), (None, None));
+        let popup = build(NotifyKind::BreakStarted { break_secs: 900 }, &off);
+        assert_eq!(popup.rewards, None);
+
+        let on = Config {
+            beta_features: true,
+            ..Config::default()
+        };
+        let popup = build(focus, &on);
+        assert_eq!(popup.rewards, Some(rewards));
+        assert_eq!(popup.next_step.as_deref(), Some("Napisz wstęp"));
+        assert_eq!(
+            popup.fallback,
+            texts::focus_toast(2700, 2),
+            "no reward text in the toast"
+        );
+        let popup = build(NotifyKind::BreakStarted { break_secs: 900 }, &on);
+        assert_eq!((popup.rewards, popup.next_step), (Some(rewards), None));
+        // The first focus has no "after the break" step; an interruption never shows a reward line.
+        let first = build(
+            NotifyKind::FocusStarted {
+                focus_secs: 2700,
+                cycle: 1,
+            },
+            &on,
+        );
+        assert_eq!(first.next_step, None);
+        assert_eq!(build(NotifyKind::Interrupted, &on).rewards, None);
+        // Sparks off, small steps on (and the other way round).
+        let steps_only = Config {
+            rewards: focus_core::api::RewardsConfig {
+                enabled: false,
+                ..focus_core::api::RewardsConfig::default()
+            },
+            ..on.clone()
+        };
+        let popup = build(
+            NotifyKind::FocusStarted {
+                focus_secs: 60,
+                cycle: 3,
+            },
+            &steps_only,
+        );
+        assert_eq!((popup.rewards, popup.next_step.is_some()), (None, true));
+    }
+
+    #[test]
+    fn reward_sounds_wait_for_a_phase_chime_or_are_dropped() {
+        let (player, _events) = ChimePlayer::spawn();
+        let chime = ChimeHandle::new(player, PathBuf::from("sounds"));
+        assert_eq!(chime.reward_sound_wait(), Some(Duration::ZERO));
+        *lock(&chime.phase_chime_until) = Some(Instant::now() + Duration::from_secs(2));
+        let wait = chime.reward_sound_wait().expect("waits");
+        assert!(wait > Duration::from_secs(1) && wait <= Duration::from_millis(2_150));
+        *lock(&chime.phase_chime_until) = Some(Instant::now() + Duration::from_secs(10));
+        assert_eq!(
+            chime.reward_sound_wait(),
+            None,
+            "a long custom chime: dropped"
+        );
+        *lock(&chime.phase_chime_until) = Instant::now().checked_sub(Duration::from_millis(5));
+        assert_eq!(
+            chime.reward_sound_wait(),
+            Some(Duration::ZERO),
+            "already over"
         );
     }
 

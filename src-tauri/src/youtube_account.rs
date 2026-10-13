@@ -53,6 +53,9 @@ const SIGNED_OUT_RECHECK: Duration = Duration::from_millis(400);
 /// The startup check is tried this many times, [`STARTUP_RECHECK`] apart, while the cookies cannot be read.
 const STARTUP_CHECKS: u32 = 5;
 const STARTUP_RECHECK: Duration = Duration::from_secs(3);
+/// One cookie check that takes longer than this counts as failed (a WebView2 call that never answers must not keep
+/// the state unknown, and "Check again" disabled, for good).
+const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const YOUTUBE_ORIGIN: &str = "https://www.youtube.com/";
 /// Any of these cookie names on youtube.com means "signed in". Only the names are ever compared.
 const SIGN_IN_COOKIES: [&str; 3] = ["LOGIN_INFO", "SAPISID", "__Secure-3PAPISID"];
@@ -102,6 +105,8 @@ struct Inner {
     signed_in: bool,
     sign_in_open: bool,
     browser_rejected: bool,
+    /// The startup check or a re-check of an unknown state is running (one at a time).
+    checking: bool,
     /// Bumped for every created sign-in window, so late events and checks of a closed one are ignored.
     instance: u64,
     /// The app closed the current sign-in window itself (signed in, sign-out, cleared browser data): its `Destroyed`
@@ -133,28 +138,65 @@ struct Probe {
 }
 
 impl YoutubeAccountHandle {
-    pub fn status(&self) -> YoutubeAccount {
-        lock(&self.shared.state).status()
+    /// The state for `get_youtube_account`. While it is still unknown (every startup read failed) and no check is
+    /// running, this also starts one more cookie check in the background: the UI's "Check again" is this getter, and
+    /// the result comes as `youtube://account` like any other change.
+    pub fn status_or_recheck(&self, app: &AppHandle) -> YoutubeAccount {
+        let (status, recheck) = {
+            let mut inner = lock(&self.shared.state);
+            let recheck = !inner.known && !inner.checking;
+            if recheck {
+                inner.checking = true;
+            }
+            (inner.status(), recheck)
+        };
+        if recheck {
+            let this = self.clone();
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                log::info!("YouTube: checking the sign-in cookies again");
+                if this.timed_check(&app).await.is_none() {
+                    log::warn!("YouTube: still cannot read the sign-in cookies");
+                }
+                lock(&this.shared.state).checking = false;
+            });
+        }
+        status
     }
 
     /// Startup: reads the sign-in cookies once in the background (retried a few times while the main webview cannot
-    /// answer yet). Until then `known` stays false and the player routes YouTube as when signed out.
+    /// answer yet). Until then `known` stays false and the player routes YouTube as when signed out; when every try
+    /// fails it stays false (the UI then says the state is unknown and offers "Check again").
     pub fn start(&self, app: &AppHandle) {
+        lock(&self.shared.state).checking = true;
         let this = self.clone();
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
+            let mut found = None;
             for attempt in 0..STARTUP_CHECKS {
                 if attempt > 0 {
                     tokio::time::sleep(STARTUP_RECHECK).await;
                 }
-                if this.check(&app, false).await.is_some() {
-                    return;
+                found = this.timed_check(&app).await;
+                if found.is_some() {
+                    break;
                 }
             }
-            log::warn!(
-                "YouTube: cannot read the sign-in cookies, YouTube plays as when signed out"
-            );
+            lock(&this.shared.state).checking = false;
+            if found.is_none() {
+                log::warn!(
+                    "YouTube: cannot read the sign-in cookies, YouTube plays as when signed out"
+                );
+            }
         });
+    }
+
+    /// One plain [`Self::check`], bounded by [`CHECK_TIMEOUT`] (`None` when it fails or takes too long).
+    async fn timed_check(&self, app: &AppHandle) -> Option<bool> {
+        tokio::time::timeout(CHECK_TIMEOUT, self.check(app, false))
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Reads the sign-in cookies in the background and publishes the result (after the privacy panel cleared the

@@ -95,4 +95,5 @@ pub(super) static TEXTS: Texts = Texts {
 
     dev_sample_meeting: "Planificación del sprint",
     dev_sample_reminder: "Agua y un paseo corto",
+    dev_sample_next_step: "Escribir la introducción",
 };

@@ -8,7 +8,7 @@
 
 use focus_core::api::{
     AppError, CalendarSource, Config, GameLauncher, Meeting, MeetingChoice, MeetingConflict, Phase,
-    PopupKind, SessionSnapshot,
+    PopupKind, PopupRewards, Rarity, SessionSnapshot,
 };
 use focus_core::config::reminder_for_break;
 use focus_core::timing::MEETING_REMINDER_LEAD_MINUTES;
@@ -36,6 +36,14 @@ const LAST_LEAD_MINUTES: u32 =
 const SAMPLE_LAUNCHERS: [GameLauncher; 2] = [GameLauncher::Steam, GameLauncher::Epic];
 /// New work items of the work digest sample.
 const SAMPLE_WORK_COUNT: u32 = 3;
+/// The reward line of the break sample while the beta rewards are on (ADR-022): every part of the line.
+const SAMPLE_REWARDS: PopupRewards = PopupRewards {
+    sparks: 72,
+    daily_goal: true,
+    streak: Some(5),
+    level_up: Some(8),
+    surprise: Some(Rarity::Pearl),
+};
 const MS_PER_SEC: i64 = 1000;
 const MS_PER_MINUTE: i64 = 60 * MS_PER_SEC;
 
@@ -74,10 +82,17 @@ impl Samples<'_> {
                 let reminder = self.reminder(cycle);
                 PopupRequest {
                     reminder: Some(reminder.clone()),
+                    rewards: self.config.rewards_active().then_some(SAMPLE_REWARDS),
                     ..sample(break_secs, texts::break_toast(break_secs, Some(&reminder)))
                 }
             }
-            PopupKind::FocusStarted => sample(focus_secs, texts::focus_toast(focus_secs, cycle)),
+            PopupKind::FocusStarted => PopupRequest {
+                next_step: self
+                    .config
+                    .steps_active()
+                    .then(|| texts::sample_next_step().to_owned()),
+                ..sample(focus_secs, texts::focus_toast(focus_secs, cycle))
+            },
             PopupKind::Interrupted => sample(0, texts::interrupted_toast()),
             PopupKind::LaunchersClosed => PopupRequest {
                 launchers: SAMPLE_LAUNCHERS.to_vec(),
@@ -234,6 +249,7 @@ mod tests {
             music_muted: false,
             meeting_hold: None,
             goal: None,
+            steps: Vec::new(),
         }
     }
 
@@ -404,6 +420,50 @@ mod tests {
         let samples = samples(&on_break, &config);
         assert_eq!(samples.popup(PopupKind::FocusStarted, None, false).cycle, 3);
         assert_eq!(samples.popup(PopupKind::BreakStarted, None, false).cycle, 2);
+    }
+
+    #[test]
+    fn beta_samples_carry_the_reward_line_and_the_next_step() {
+        let snap = snapshot(Phase::Focus, 2);
+        // Beta off: the samples of today.
+        let off = Config::default();
+        let samples_off = samples(&snap, &off);
+        assert_eq!(
+            samples_off
+                .popup(PopupKind::BreakStarted, None, false)
+                .rewards,
+            None
+        );
+        assert_eq!(
+            samples_off
+                .popup(PopupKind::FocusStarted, None, false)
+                .next_step,
+            None
+        );
+
+        let on = Config {
+            beta_features: true,
+            ..Config::default()
+        };
+        let samples_on = samples(&snap, &on);
+        let rewards = samples_on
+            .popup(PopupKind::BreakStarted, None, true)
+            .rewards;
+        assert_eq!(rewards, Some(SAMPLE_REWARDS));
+        assert_eq!(
+            samples_on
+                .popup(PopupKind::FocusStarted, None, false)
+                .next_step
+                .as_deref(),
+            Some(texts::sample_next_step())
+        );
+        // Only those two kinds; the toast never carries either.
+        assert_eq!(
+            samples_on.popup(PopupKind::BreakHeld, None, false).rewards,
+            None
+        );
+        let focus = samples_on.popup(PopupKind::FocusStarted, None, false);
+        assert_eq!(focus.fallback, texts::focus_toast(2700, 2));
     }
 
     #[test]

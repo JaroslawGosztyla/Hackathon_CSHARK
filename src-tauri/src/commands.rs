@@ -8,13 +8,15 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
-    AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, CalendarSource, CalendarStatus, ChimeKind,
-    ChimeSound, Config, DevAction, DeviceCodePrompt, Language, MediaAction, MediaWindowStatus,
-    MeetingChoice, Phase, PopupAction, PopupInfo, PrivacyItemKind, PrivacyReport, SessionGoal,
-    SessionSnapshot, SessionSummary, ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport,
-    WorkSource, WorkStatus, YoutubeAccount,
+    AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, CalendarSource, CalendarStatus,
+    CelebrationLevel, ChimeKind, ChimeSound, Config, DevAction, DeviceCodePrompt, Language,
+    MediaAction, MediaWindowStatus, MeetingChoice, Phase, PopupAction, PopupInfo, PrivacyItemKind,
+    PrivacyReport, RewardSound, RewardsStatus, SessionGoal, SessionSnapshot, SessionSummary,
+    ShieldStatus, StepDraft, TeamsStatus, TintStatus, Track, UsageReport, WorkSource, WorkStatus,
+    YoutubeAccount,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
+use focus_core::session::normalize_steps;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -30,6 +32,8 @@ const MAX_HISTORY: u32 = 500;
 const MAX_SESSION_ID_LEN: usize = 128;
 /// `dev_trigger` while `Config::developer_mode` is off (ADR-019).
 const ERR_DEVELOPER_MODE_OFF: &str = "developerModeOff";
+/// `set_session_steps` / `set_step_done` while small steps are off (beta, ADR-022).
+const ERR_STEPS_OFF: &str = "stepsOff";
 
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<SessionSnapshot, AppError> {
@@ -139,6 +143,9 @@ pub(crate) async fn store_config(
         // A sticky sample has no timeout: it goes with developer mode (ADR-019).
         state.popup.withdraw_samples();
     }
+    // Beta rewards (ADR-022): pause bookkeeping, a lower daily goal, the UI shows or hides the rewards.
+    let phase = current_phase(state).await;
+    state.rewards.config_changed(&previous, &normalized, phase);
     Ok(normalized)
 }
 
@@ -417,12 +424,26 @@ pub async fn mark_goal_done(
     if session_id.is_empty() || session_id.len() > MAX_SESSION_ID_LEN {
         return Err(unknown());
     }
-    let keep_history = read_config(&state.config).keep_history;
+    let config = read_config(&state.config);
+    let keep_history = config.keep_history;
+    // Beta rewards (ADR-022): "Tak" for the latest session of this run pays once (a demo session's answer pays into
+    // the demo preview, never stored); older history entries never do. The sparks paid go into the stored summary
+    // too, so the history row and the summary card agree.
+    let latest_demo = lock(&state.last_summary)
+        .as_ref()
+        .filter(|summary| summary.session_id == session_id)
+        .map(|summary| summary.demo);
+    let mut bonus = 0;
+    if done && let Some(demo) = latest_demo {
+        let phase = current_phase(&state).await;
+        bonus = state.rewards.goal_done(&session_id, &config, phase, demo);
+    }
     let persistence = state.persistence.clone();
     let latest = Arc::clone(&state.last_summary);
+    let marked_id = session_id.clone();
     // Rewrites history.jsonl: keep it off the async workers.
     let marked = tauri::async_runtime::spawn_blocking(move || {
-        persistence.mark_goal_done(&session_id, done, &latest)
+        persistence.mark_goal_done(&marked_id, done, bonus, &latest)
     })
     .await
     .map_err(|err| AppError::new("persistence.history", err.to_string()))?
@@ -440,9 +461,14 @@ pub async fn mark_goal_done(
 }
 
 /// A button on the developer page (ADR-019). Only while `developerMode` is on; sample data stays in memory
-/// and nothing leaves the computer.
+/// and nothing leaves the computer. Presentation mode is kept in memory only; the factory reset deletes the app's
+/// own data (`privacy::factory_reset`) and restarts the app.
 #[tauri::command]
-pub async fn dev_trigger(state: State<'_, AppState>, action: DevAction) -> Result<(), AppError> {
+pub async fn dev_trigger(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    action: DevAction,
+) -> Result<(), AppError> {
     let config = read_config(&state.config);
     if !config.developer_mode {
         return Err(AppError::new(
@@ -478,6 +504,8 @@ pub async fn dev_trigger(state: State<'_, AppState>, action: DevAction) -> Resul
             state.shields.toast(samples.toast(phase)?);
         }
         DevAction::SetRemaining { secs } => state.actor.dev_set_remaining(secs).await?,
+        DevAction::PresentationMode { on } => state.actor.set_presentation_mode(on).await?,
+        DevAction::FactoryReset => privacy::factory_reset(&app, &state).await?,
     }
     Ok(())
 }
@@ -519,9 +547,14 @@ pub async fn delete_all_data(
 // --- YouTube sign-in (ADR-021, `youtube_account.rs`) --------------------------------------------
 // Async on purpose: the sign-in window is created here, and WebView2 cookie calls deadlock on the main thread.
 
+/// While the state is still unknown (every startup cookie read failed), this also starts one more check: the
+/// "Check again" action in Settings is this getter (the result arrives as `youtube://account`).
 #[tauri::command]
-pub async fn get_youtube_account(state: State<'_, AppState>) -> Result<YoutubeAccount, AppError> {
-    Ok(state.youtube.status())
+pub async fn get_youtube_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<YoutubeAccount, AppError> {
+    Ok(state.youtube.status_or_recheck(&app))
 }
 
 #[tauri::command]
@@ -532,6 +565,92 @@ pub async fn youtube_sign_in(app: AppHandle, state: State<'_, AppState>) -> Resu
 #[tauri::command]
 pub async fn youtube_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     state.youtube.sign_out(&app).await
+}
+
+// --- Sparks, streak and small steps (beta, ADR-022, `rewards.rs`) -----------------------------------------
+// Step texts are never logged; the rewards log carries kinds and counts only.
+
+#[tauri::command]
+pub async fn get_rewards(state: State<'_, AppState>) -> Result<RewardsStatus, AppError> {
+    Ok(state.rewards.status(&read_config(&state.config)))
+}
+
+#[tauri::command]
+pub async fn ack_reward_moments(state: State<'_, AppState>, up_to: u32) -> Result<(), AppError> {
+    state.rewards.ack(up_to, &read_config(&state.config));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reset_rewards(state: State<'_, AppState>) -> Result<RewardsStatus, AppError> {
+    Ok(state.rewards.reset(&read_config(&state.config)))
+}
+
+/// A reward sound, unless the rewards or their sounds are off, celebrations are numbers only or the user presents;
+/// it waits (here, never in the actor) until a phase chime that plays now has finished.
+#[tauri::command]
+pub async fn play_reward_sound(
+    state: State<'_, AppState>,
+    sound: RewardSound,
+) -> Result<(), AppError> {
+    let config = read_config(&state.config);
+    if !config.rewards_active()
+        || !config.rewards.sounds
+        || config.rewards.celebrations == CelebrationLevel::NumbersOnly
+        || focus_platform::notification_state::user_is_presenting()
+    {
+        return Ok(());
+    }
+    let Some(wait) = state.chime.reward_sound_wait() else {
+        log::debug!("reward sound {sound:?} dropped: a long phase chime plays");
+        return Ok(());
+    };
+    if !wait.is_zero() {
+        tokio::time::sleep(wait).await;
+    }
+    // The settings may have changed meanwhile.
+    let config = read_config(&state.config);
+    if config.rewards_active() && config.rewards.sounds {
+        state.chime.play_reward(sound, &config);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_session_steps(
+    state: State<'_, AppState>,
+    steps: Vec<StepDraft>,
+) -> Result<(), AppError> {
+    if !read_config(&state.config).steps_active() {
+        return Err(steps_off());
+    }
+    let steps = normalize_steps(steps)?;
+    state.actor.send(ActorCmd::SetSteps(steps))
+}
+
+#[tauri::command]
+pub async fn set_step_done(
+    state: State<'_, AppState>,
+    id: u32,
+    done: bool,
+) -> Result<(), AppError> {
+    if !read_config(&state.config).steps_active() {
+        return Err(steps_off());
+    }
+    state.actor.send(ActorCmd::SetStepDone { id, done })
+}
+
+fn steps_off() -> AppError {
+    AppError::new(ERR_STEPS_OFF, "small steps are switched off")
+}
+
+/// The phase now (for the "focus is sacred" deferral of reward moments); `Idle` when the actor cannot answer.
+async fn current_phase(state: &AppState) -> Phase {
+    state
+        .actor
+        .snapshot()
+        .await
+        .map_or(Phase::Idle, |snapshot| snapshot.phase)
 }
 
 #[tauri::command]

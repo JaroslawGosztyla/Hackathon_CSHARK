@@ -37,6 +37,12 @@ const ICS_LINKS_FILE: &str = "ics-links.bin";
 const MEETING_CHOICES_FILE: &str = "meeting-choices.json";
 /// Work items the user has seen in "Co dalej?" (item ids only, no titles).
 const WORK_SEEN_FILE: &str = "work-seen.json";
+/// The rewards ledger (beta, ADR-022): numbers, day numbers and session ids only.
+const REWARDS_FILE: &str = "rewards.json";
+/// The previous `rewards.json` (copied before a write, at most once per minute).
+const REWARDS_BACKUP_FILE: &str = "rewards.json.bak";
+/// A corrupted `rewards.json` is renamed to `rewards.unreadable-<ms>.json`.
+const REWARDS_UNREADABLE_PREFIX: &str = "rewards.unreadable-";
 /// Folder (in the app data directory) with the user's imported chime files.
 const SOUNDS_DIR: &str = "sounds";
 
@@ -57,6 +63,8 @@ struct Inner {
     ics_links_path: PathBuf,
     meeting_choices_path: PathBuf,
     work_seen_path: PathBuf,
+    rewards_path: PathBuf,
+    rewards_backup_path: PathBuf,
     data_dir: PathBuf,
     sounds_dir: PathBuf,
     write_lock: Mutex<()>,
@@ -74,6 +82,10 @@ pub struct DataFiles {
     pub history: PathBuf,
     pub meeting_choices: PathBuf,
     pub work_seen: PathBuf,
+    /// `rewards.json` (beta, ADR-022).
+    pub rewards: PathBuf,
+    /// `rewards.json.bak`.
+    pub rewards_backup: PathBuf,
     pub shields_restore: PathBuf,
     pub tint_restore: PathBuf,
     pub teams_token: PathBuf,
@@ -127,6 +139,8 @@ impl Persistence {
                 ics_links_path: data_dir.join(ICS_LINKS_FILE),
                 meeting_choices_path: data_dir.join(MEETING_CHOICES_FILE),
                 work_seen_path: data_dir.join(WORK_SEEN_FILE),
+                rewards_path: data_dir.join(REWARDS_FILE),
+                rewards_backup_path: data_dir.join(REWARDS_BACKUP_FILE),
                 data_dir: data_dir.to_path_buf(),
                 sounds_dir: data_dir.join(SOUNDS_DIR),
                 write_lock: Mutex::new(()),
@@ -149,6 +163,8 @@ impl Persistence {
             history: inner.history_path.clone(),
             meeting_choices: inner.meeting_choices_path.clone(),
             work_seen: inner.work_seen_path.clone(),
+            rewards: inner.rewards_path.clone(),
+            rewards_backup: inner.rewards_backup_path.clone(),
             shields_restore: inner.restore_path.clone(),
             tint_restore: inner.tint_restore_path.clone(),
             teams_token: inner.teams_token_path.clone(),
@@ -175,12 +191,85 @@ impl Persistence {
         remove_if_present(&tmp_path(&self.inner.work_seen_path))
     }
 
+    /// Deletes `rewards.json`, its backup, a temp file a crashed write left and the `rewards.unreadable-<ms>.json` copies
+    /// of a corrupted ledger. A missing file is fine. Called only by the rewards writer (`crate::rewards`), so a delete
+    /// never races a pending write (the privacy panel and "Zacznij od nowa" go through `RewardsHandle`).
+    pub fn clear_rewards(&self) -> anyhow::Result<()> {
+        let _guard = lock(&self.inner.write_lock);
+        remove_if_present(&self.inner.rewards_path)?;
+        remove_if_present(&self.inner.rewards_backup_path)?;
+        remove_if_present(&tmp_path(&self.inner.rewards_path))?;
+        for path in self.unreadable_rewards() {
+            remove_if_present(&path)?;
+        }
+        Ok(())
+    }
+
+    /// `rewards.unreadable-<ms>.json` files in the data folder (corrupted ledgers set aside at load).
+    fn unreadable_rewards(&self) -> Vec<PathBuf> {
+        unreadable_rewards_in(&self.inner.data_dir)
+    }
+
+    /// The text of `rewards.json` (beta, ADR-022); `Ok(None)` when there is none.
+    pub fn read_rewards(&self) -> std::io::Result<Option<String>> {
+        read_optional(&self.inner.rewards_path)
+    }
+
+    /// The text of `rewards.json.bak`; `Ok(None)` when there is none.
+    pub fn read_rewards_backup(&self) -> std::io::Result<Option<String>> {
+        read_optional(&self.inner.rewards_backup_path)
+    }
+
+    /// Writes the rewards ledger atomically. With `backup` the previous `rewards.json` is copied to `rewards.json.bak`
+    /// first (the rewards writer does that at most once per minute); a failed copy is only logged.
+    pub fn save_rewards<T: Serialize>(&self, ledger: &T, backup: bool) -> anyhow::Result<()> {
+        let json = serde_json::to_vec_pretty(ledger).context("serialize rewards")?;
+        let _guard = lock(&self.inner.write_lock);
+        if backup
+            && self.inner.rewards_path.is_file()
+            && let Err(err) = fs::copy(&self.inner.rewards_path, &self.inner.rewards_backup_path)
+        {
+            log::warn!("cannot back up rewards.json: {err}");
+        }
+        write_atomic(&self.inner.rewards_path, &json)
+    }
+
+    /// Sets an unreadable `rewards.json` aside as `rewards.unreadable-<ms>.json` (kept for the user, never read again).
+    pub fn set_aside_rewards(&self, now_ms: i64) -> anyhow::Result<PathBuf> {
+        let _guard = lock(&self.inner.write_lock);
+        let target = self
+            .inner
+            .data_dir
+            .join(format!("{REWARDS_UNREADABLE_PREFIX}{now_ms}.json"));
+        fs::rename(&self.inner.rewards_path, &target)
+            .with_context(|| format!("rename {}", self.inner.rewards_path.display()))?;
+        Ok(target)
+    }
+
     /// Deletes `config.json.bak` (the copy of a corrupted config) and a temp file a crashed config write left
     /// ("Delete everything"). A missing file is fine.
     pub fn remove_config_leftovers(&self) -> anyhow::Result<()> {
         let _guard = lock(&self.inner.write_lock);
         remove_if_present(&self.inner.config_backup_path)?;
         remove_if_present(&tmp_path(&self.inner.config_path))
+    }
+
+    /// Developer page "Factory reset" (ADR-019), after "Delete everything" stored the defaults: deletes `config.json`
+    /// (and its leftovers), so the next start is a first start, and the `sounds` folder when it is empty (it is created
+    /// on demand). Files someone else put into `sounds` stay, and so does the folder then. A missing file is fine.
+    pub fn remove_for_first_start(&self) -> anyhow::Result<()> {
+        let _guard = lock(&self.inner.write_lock);
+        remove_if_present(&self.inner.config_path)?;
+        remove_if_present(&self.inner.config_backup_path)?;
+        remove_if_present(&tmp_path(&self.inner.config_path))?;
+        // `remove_dir` only removes an empty folder.
+        match fs::remove_dir(&self.inner.sounds_dir) {
+            Err(err) if err.kind() != ErrorKind::NotFound => {
+                log::info!("factory reset: the sounds folder stays ({err})");
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// The sealed access token of a work tool (read and written by `crate::work` via `focus_platform`).
@@ -319,8 +408,8 @@ impl Persistence {
     }
 
     /// Appends one summary as a JSON line to `history.jsonl`, with the goal answer ("Zrobione?") the user may
-    /// already have given for it in `latest` (the last summary in memory, see [`Self::mark_goal_done`]): the
-    /// append runs on the blocking pool and can come after that answer.
+    /// already have given for it in `latest` (the last summary in memory, see [`Self::mark_goal_done`]) and the
+    /// sparks that answer paid (beta): the append runs on the blocking pool and can come after that answer.
     pub fn append_history(
         &self,
         summary: &SessionSummary,
@@ -330,11 +419,12 @@ impl Persistence {
         let answered = lock(latest)
             .as_ref()
             .filter(|last| last.session_id == summary.session_id)
-            .map(|last| last.goal_done)
-            .filter(|goal_done| *goal_done != summary.goal_done);
+            .map(|last| (last.goal_done, last.sparks))
+            .filter(|answer| *answer != (summary.goal_done, summary.sparks));
         let mut line = match answered {
-            Some(goal_done) => serde_json::to_vec(&SessionSummary {
+            Some((goal_done, sparks)) => serde_json::to_vec(&SessionSummary {
                 goal_done,
+                sparks,
                 ..summary.clone()
             }),
             None => serde_json::to_vec(summary),
@@ -381,11 +471,13 @@ impl Persistence {
     /// Marks the goal of session `session_id` as done / not done ("Zrobione?"): in `latest` (the last summary,
     /// in memory) and in `history.jsonl`, whose matching line is rewritten (temp file + rename; the other lines
     /// stay as they are). Serialized with [`Self::append_history`], so an answer given while the session is
-    /// still being appended is kept either way.
+    /// still being appended is kept either way. `bonus` = sparks the answer paid (beta, ADR-022; 0 otherwise): added
+    /// to the session's `sparks` in both places.
     pub fn mark_goal_done(
         &self,
         session_id: &str,
         done: bool,
+        bonus: u32,
         latest: &Mutex<Option<SessionSummary>>,
     ) -> anyhow::Result<GoalMarked> {
         let _history = lock(&self.inner.history_lock);
@@ -395,6 +487,7 @@ impl Persistence {
         {
             Some(last) => {
                 last.goal_done = Some(done);
+                last.sparks = with_bonus(last.sparks, bonus);
                 true
             }
             None => false,
@@ -410,7 +503,7 @@ impl Persistence {
             }
             Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
         };
-        let (rewritten, in_file) = with_goal_done(&text, session_id, done);
+        let (rewritten, in_file) = with_goal_done(&text, session_id, done, bonus);
         if in_file {
             let _guard = lock(&self.inner.write_lock);
             write_atomic(path, rewritten.as_bytes())?;
@@ -511,7 +604,16 @@ impl Persistence {
 
 /// `history.jsonl` text with `goalDone` set on the summary lines of `session_id` (every other line kept as
 /// it is, one per line), and whether there was such a line.
-fn with_goal_done(text: &str, session_id: &str, done: bool) -> (String, bool) {
+/// `sparks` plus `bonus` sparks (unchanged without a bonus).
+fn with_bonus(sparks: Option<u32>, bonus: u32) -> Option<u32> {
+    if bonus == 0 {
+        sparks
+    } else {
+        Some(sparks.unwrap_or(0).saturating_add(bonus))
+    }
+}
+
+fn with_goal_done(text: &str, session_id: &str, done: bool, bonus: u32) -> (String, bool) {
     let mut found = false;
     let mut out = String::with_capacity(text.len() + 32);
     for line in text.lines() {
@@ -522,6 +624,7 @@ fn with_goal_done(text: &str, session_id: &str, done: bool) -> (String, bool) {
             .and_then(|summary| {
                 serde_json::to_string(&SessionSummary {
                     goal_done: Some(done),
+                    sparks: with_bonus(summary.sparks, bonus),
                     ..summary
                 })
                 .ok()
@@ -536,6 +639,34 @@ fn with_goal_done(text: &str, session_id: &str, done: bool) -> (String, bool) {
         out.push('\n');
     }
     (out, found)
+}
+
+/// `rewards.unreadable-<ms>.json` files in `data_dir`: corrupted ledgers set aside at load (beta, ADR-022). The
+/// privacy panel lists them with the rewards item, which deletes them too ([`Persistence::clear_rewards`]).
+pub fn unreadable_rewards_in(data_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(data_dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(REWARDS_UNREADABLE_PREFIX) && name.ends_with(".json")
+                })
+        })
+        .collect()
+}
+
+/// The text of `path`; `Ok(None)` when it does not exist.
+fn read_optional(path: &Path) -> std::io::Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 /// Deletes `path`; a missing file is fine.
@@ -626,6 +757,8 @@ mod tests {
                 url: String::new(),
             }),
             goal_done: None,
+            steps: Vec::new(),
+            sparks: None,
         }
     }
 
@@ -657,7 +790,7 @@ mod tests {
         let (root, p) = temp_dirs("goal-done");
         let latest = Mutex::new(None);
         // No history yet: only the summary in memory can be marked.
-        let marked = p.mark_goal_done("s1", true, &latest).expect("mark");
+        let marked = p.mark_goal_done("s1", true, 0, &latest).expect("mark");
         assert_eq!(
             marked,
             GoalMarked {
@@ -679,7 +812,7 @@ mod tests {
         p.append_history(&summary("s2", 2), &latest)
             .expect("append");
 
-        let marked = p.mark_goal_done("s1", true, &latest).expect("mark");
+        let marked = p.mark_goal_done("s1", true, 0, &latest).expect("mark");
         assert_eq!(
             marked,
             GoalMarked {
@@ -702,7 +835,7 @@ mod tests {
 
         // Answered while the append is still pending: the append takes the answer from memory.
         *latest.lock().expect("lock") = Some(summary("s3", 3));
-        let marked = p.mark_goal_done("s3", false, &latest).expect("mark");
+        let marked = p.mark_goal_done("s3", false, 0, &latest).expect("mark");
         assert_eq!(
             marked,
             GoalMarked {
@@ -716,9 +849,52 @@ mod tests {
         assert_eq!(newest[0].goal_done, Some(false));
         // Unknown sessions change nothing.
         let before = fs::read_to_string(&history).expect("read");
-        let marked = p.mark_goal_done("nope", true, &latest).expect("mark");
+        let marked = p.mark_goal_done("nope", true, 0, &latest).expect("mark");
         assert!(!marked.in_memory && !marked.in_file);
         assert_eq!(fs::read_to_string(&history).expect("read"), before);
+
+        // Beta: the sparks the answer paid go into the stored line and the summary in memory.
+        *latest.lock().expect("lock") = Some(SessionSummary {
+            sparks: Some(40),
+            ..summary("s4", 4)
+        });
+        p.mark_goal_done("s4", true, 10, &latest).expect("mark");
+        assert_eq!(
+            latest.lock().expect("lock").as_ref().and_then(|s| s.sparks),
+            Some(50)
+        );
+        // The append comes after the answer: it takes both from memory.
+        p.append_history(
+            &SessionSummary {
+                sparks: Some(40),
+                ..summary("s4", 4)
+            },
+            &latest,
+        )
+        .expect("append");
+        let newest = p.list_history(1).expect("list");
+        assert_eq!(
+            (newest[0].goal_done, newest[0].sparks),
+            (Some(true), Some(50))
+        );
+        // An entry already in the file gets the bonus in its line; without a bonus nothing about sparks changes.
+        p.mark_goal_done("s2", true, 10, &latest).expect("mark");
+        p.mark_goal_done("s1", false, 0, &latest).expect("mark");
+        let sparks: Vec<_> = p
+            .list_history(10)
+            .expect("list")
+            .iter()
+            .map(|s| (s.session_id.clone(), s.sparks))
+            .collect();
+        assert_eq!(
+            sparks,
+            [
+                ("s4".to_owned(), Some(50)),
+                ("s3".to_owned(), None),
+                ("s2".to_owned(), Some(10)),
+                ("s1".to_owned(), None)
+            ]
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -822,6 +998,29 @@ mod tests {
         let dir = p.ensure_sounds_dir().expect("create");
         assert!(dir.is_dir());
         assert_eq!(dir, p.sounds_dir());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn first_start_removes_the_config_and_an_empty_sounds_folder_only() {
+        let (root, p) = temp_dirs("first-start");
+        let files = p.files();
+        p.save_config(&Config::default()).expect("save");
+        fs::write(&files.config_backup, b"{").expect("backup");
+        p.append_history(&summary("kept", 1), &Mutex::new(None))
+            .expect("history");
+        p.ensure_sounds_dir().expect("sounds");
+        p.remove_for_first_start().expect("remove");
+        assert!(!files.config.exists());
+        assert!(!files.config_backup.exists());
+        assert!(!files.sounds.exists(), "an empty sounds folder goes");
+        assert!(files.history.exists(), "other files are not this helper's");
+
+        // A file that is not ours keeps the sounds folder (and the file).
+        p.ensure_sounds_dir().expect("sounds");
+        fs::write(files.sounds.join("readme.txt"), b"not ours").expect("other");
+        p.remove_for_first_start().expect("again");
+        assert!(files.sounds.join("readme.txt").exists());
         let _ = fs::remove_dir_all(&root);
     }
 }

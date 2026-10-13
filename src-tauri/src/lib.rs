@@ -17,6 +17,7 @@ mod music;
 mod persistence;
 mod popup;
 mod privacy;
+mod rewards;
 mod safety_net;
 mod session_actor;
 mod shields;
@@ -50,6 +51,8 @@ const AUTOSTART_ARG: &str = "--autostart";
 /// then exit.
 pub(crate) const RESTORE_SHIELDS_ARG: &str = "--restore-shields";
 
+/// Set by the developer page's factory reset ([`request_fresh_restart`]): the app starts again once it has exited.
+static RESTART_FRESH: AtomicBool = AtomicBool::new(false);
 /// `--restore-shields` launch state (see [`finish_restore_only`]).
 static RESTORE_ONLY: AtomicU8 = AtomicU8::new(RESTORE_ONLY_OFF);
 /// Workers that still run their startup crash-restore (shields, tint); see [`crash_restore_done`].
@@ -98,6 +101,8 @@ pub struct AppState {
     pub privacy: privacy::PrivacyHandle,
     /// YouTube sign-in for Premium (ADR-021): sign-in window and sign-in cookie presence.
     pub youtube: youtube_account::YoutubeAccountHandle,
+    /// Beta sparks, streak and small steps (ADR-022): the rewards ledger (`rewards.json`) and its moments.
+    pub rewards: rewards::RewardsHandle,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -197,6 +202,12 @@ pub fn run() {
             commands::get_youtube_account,
             commands::youtube_sign_in,
             commands::youtube_sign_out,
+            commands::get_rewards,
+            commands::ack_reward_moments,
+            commands::reset_rewards,
+            commands::play_reward_sound,
+            commands::set_session_steps,
+            commands::set_step_done,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");
@@ -204,6 +215,10 @@ pub fn run() {
     app.run(|app, event| {
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             shutdown(app);
+        }
+        // The plugins saw `Exit` before this callback, so the single-instance lock is already released.
+        if matches!(event, RunEvent::Exit) && RESTART_FRESH.load(Ordering::SeqCst) {
+            restart_fresh(app);
         }
     });
 }
@@ -236,6 +251,8 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     if config.launch_on_login && !launch.restore_only {
         refresh_autostart(&handle);
     }
+    // Beta rewards (ADR-022): `rewards.json` is read (and repaired) now; nothing is written while the beta is off.
+    let rewards = rewards::RewardsHandle::load(&handle, &persistence, &config);
     let config: SharedConfig = Arc::new(RwLock::new(config));
 
     let last_summary = match persistence.list_history(1) {
@@ -373,6 +390,8 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
                 persistence: persistence.clone(),
                 last_summary: Arc::clone(&last_summary),
                 last_cycle: 0,
+                rewards: rewards.clone(),
+                popup_rewards: None,
             },
             tracker: tracker.clone(),
             bridge: Arc::clone(&bridge),
@@ -417,6 +436,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         close: close::ClosePrompt::default(),
         privacy,
         youtube: youtube_account::YoutubeAccountHandle::default(),
+        rewards,
     });
     chimes::clean_up_at_startup(&handle);
     // One look at the YouTube sign-in cookies (names only, off the main thread): decides where YouTube plays.
@@ -445,6 +465,34 @@ pub(crate) fn shutdown(app: &AppHandle) {
         state.shields.exit_blocking(SHIELDS_SHUTDOWN_TIMEOUT);
         state.tint.exit_blocking(TINT_SHUTDOWN_TIMEOUT);
     }
+}
+
+/// Developer page "Factory reset" (`privacy::factory_reset`): exits through the normal path (`ExitRequested` /
+/// `Exit` run [`shutdown`], so the shields and the screen colours come back) and starts the app again.
+pub(crate) fn request_fresh_restart(app: &AppHandle) {
+    RESTART_FRESH.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+/// Starts the app again like a first launch, with its window: `--autostart` and `--restore-shields` are left out
+/// (`AppHandle::restart` would repeat them, and the app would come back hidden in the tray or quit), `--demo` stays.
+fn restart_fresh(app: &AppHandle) -> ! {
+    let mut env = app.env();
+    env.args_os = fresh_start_args(std::mem::take(&mut env.args_os));
+    log::info!("restarting after the factory reset");
+    app.cleanup_before_exit();
+    tauri::process::restart(&env)
+}
+
+/// The arguments of this process (the program first) without `--autostart` and `--restore-shields`.
+fn fresh_start_args(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let mut args = args.into_iter();
+    args.next()
+        .into_iter()
+        .chain(
+            args.filter(|arg| !matches!(arg.to_str(), Some(AUTOSTART_ARG | RESTORE_SHIELDS_ARG))),
+        )
+        .collect()
 }
 
 /// How this process was started.
@@ -709,8 +757,29 @@ pub(crate) fn write_config(config: &SharedConfig, value: Config) {
 
 #[cfg(test)]
 mod tests {
-    use super::without_verbatim_prefix;
+    use super::{fresh_start_args, without_verbatim_prefix};
+    use std::ffi::OsString;
     use std::path::PathBuf;
+
+    #[test]
+    fn fresh_start_drops_autostart_and_restore_but_keeps_the_rest() {
+        let args = |list: &[&str]| list.iter().map(OsString::from).collect::<Vec<_>>();
+        assert_eq!(
+            fresh_start_args(args(&[
+                "focusmode.exe",
+                "--autostart",
+                "--demo",
+                "--restore-shields"
+            ])),
+            args(&["focusmode.exe", "--demo"])
+        );
+        // The program itself is never dropped, whatever it is called.
+        assert_eq!(
+            fresh_start_args(args(&["--autostart"])),
+            args(&["--autostart"])
+        );
+        assert!(fresh_start_args(Vec::new()).is_empty());
+    }
 
     #[test]
     fn strips_only_the_drive_verbatim_prefix() {

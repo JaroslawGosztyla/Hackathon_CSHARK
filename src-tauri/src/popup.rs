@@ -15,7 +15,8 @@
 //! [`SAFETY_TIMEOUT`] if the page never loaded (it never called `get_popup`), or after [`LOADED_TIMEOUT`]
 //! if it runs but never dismissed it (its own countdown pauses while the pointer or the focus is on it).
 //!
-//! If the window cannot be created, the popup falls back to the toast it replaces (degradation, never both).
+//! If the window cannot be created, or its page never loads (hidden after [`SAFETY_TIMEOUT`]), the popup falls back to
+//! the toast it replaces (degradation, never both; developer-mode samples have no fallback).
 //!
 //! A meeting reminder asks a question, so it is not lost to a phase popup that arrives while it is on
 //! screen: it is parked and shown again when that popup goes away, unless the meeting was answered
@@ -57,7 +58,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use focus_core::api::{AppError, GameLauncher, MeetingConflict, PopupInfo, PopupKind, events};
+use focus_core::api::{
+    AppError, GameLauncher, MeetingConflict, PopupInfo, PopupKind, PopupRewards, events,
+};
 use focus_platform::notification_state;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -117,6 +120,11 @@ pub struct PopupRequest {
     pub sample: bool,
     /// Stays until it is closed (`PopupInfo.sticky`): no shell timeout once the page runs. Samples only.
     pub sticky: bool,
+    /// Beta (ADR-022): the reward line of a `BreakStarted` / `BreakHeld` / `FocusStarted` popup while the rewards are on.
+    pub rewards: Option<PopupRewards>,
+    /// Beta (ADR-022): the next open step of a `FocusStarted` popup after a break ("Teraz: …"). The user's own text:
+    /// never logged (only `kind` is).
+    pub next_step: Option<String>,
     /// Shown instead (through the shields worker) when the popup window cannot be created.
     pub fallback: Toast,
 }
@@ -134,6 +142,8 @@ impl PopupRequest {
             work_count: 0,
             sample: false,
             sticky: false,
+            rewards: None,
+            next_step: None,
             fallback,
         }
     }
@@ -153,11 +163,10 @@ impl PopupRequest {
 }
 
 enum PopupCmd {
-    Show(PopupRequest),
+    /// Boxed: a request is much larger than the other commands.
+    Show(Box<PopupRequest>),
     /// `forced`: a button was pressed (no [`DISMISS_GRACE`]).
-    Dismiss {
-        forced: bool,
-    },
+    Dismiss { forced: bool },
     /// "Skip phase": closes the popup and runs the skip, unless the button was on a developer-mode sample.
     SkipPhase(Box<dyn FnOnce() + Send>),
     /// The meeting with this id was answered: close or forget its reminder.
@@ -212,7 +221,7 @@ impl PopupHandle {
     }
 
     pub fn show(&self, request: PopupRequest) {
-        self.send(PopupCmd::Show(request));
+        self.send(PopupCmd::Show(Box::new(request)));
     }
 
     /// The page's close button or timeout.
@@ -312,7 +321,7 @@ impl Worker {
                 },
             };
             match cmd {
-                Some(PopupCmd::Show(request)) => self.show(request),
+                Some(PopupCmd::Show(request)) => self.show(*request),
                 Some(PopupCmd::Dismiss { forced }) => {
                     let fresh = self.shown_at.is_some_and(|at| at.elapsed() < DISMISS_GRACE);
                     if forced || !fresh {
@@ -376,6 +385,15 @@ impl Worker {
                 }
                 Some(_) => {}
             }
+        }
+        // The window was created but its page never ran, so nothing was on screen: the toast it replaces comes
+        // instead (still never both). Samples are for screenshots and have no fallback.
+        if self.shown_at.is_some()
+            && !self.page_loaded.load(Ordering::SeqCst)
+            && let Some(current) = self.current.as_ref().filter(|current| !current.sample)
+        {
+            log::warn!("popup: its page never loaded; showing the Windows toast instead");
+            self.shields.toast(current.fallback.clone());
         }
         log::debug!("popup: not dismissed by the page, hiding it");
         self.hide();
@@ -723,6 +741,8 @@ fn popup_info(revision: u32, request: Option<&PopupRequest>) -> PopupInfo {
             meeting: request.meeting.clone(),
             work_count: request.work_count,
             sticky: request.is_sticky(),
+            rewards: request.rewards,
+            next_step: request.next_step.clone(),
         },
         None => PopupInfo {
             revision,
@@ -734,6 +754,8 @@ fn popup_info(revision: u32, request: Option<&PopupRequest>) -> PopupInfo {
             meeting: None,
             work_count: 0,
             sticky: false,
+            rewards: None,
+            next_step: None,
         },
     }
 }
@@ -1211,5 +1233,44 @@ mod tests {
         assert_eq!(hidden.reminder, None);
         assert_eq!(hidden.meeting, None);
         assert!(hidden.launchers.is_empty());
+        assert_eq!((hidden.rewards, hidden.next_step), (None, None));
+    }
+
+    #[test]
+    fn popup_info_carries_the_reward_line_and_the_next_step() {
+        let plain = PopupRequest::new(
+            PopupKind::BreakStarted,
+            1,
+            900,
+            texts::break_toast(900, None),
+        );
+        let info = popup_info(1, Some(&plain));
+        assert_eq!(
+            (info.rewards, info.next_step),
+            (None, None),
+            "beta off: nothing new"
+        );
+        let rewards = PopupRewards {
+            sparks: 72,
+            daily_goal: true,
+            streak: Some(5),
+            level_up: None,
+            surprise: None,
+        };
+        let request = PopupRequest {
+            rewards: Some(rewards),
+            next_step: Some("Napisz wstęp".into()),
+            ..PopupRequest::new(
+                PopupKind::FocusStarted,
+                2,
+                2700,
+                texts::focus_toast(2700, 2),
+            )
+        };
+        let info = popup_info(2, Some(&request));
+        assert_eq!(info.rewards, Some(rewards));
+        assert_eq!(info.next_step.as_deref(), Some("Napisz wstęp"));
+        // The toast it replaces never carries either.
+        assert_eq!(request.fallback, texts::focus_toast(2700, 2));
     }
 }

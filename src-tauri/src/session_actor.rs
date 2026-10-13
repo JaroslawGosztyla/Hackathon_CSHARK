@@ -14,12 +14,17 @@
 //! The session goal ("Co dalej?", `set_session_goal`) lives in the core session: it is part of every
 //! snapshot and moves into the summary on Stop. Every phase change is reported to `crate::work`, which holds
 //! new work items back during focus and shows them at the break or after the session.
+//!
+//! Beta (ADR-022): the session's small steps live in the core session too (`set_session_steps`, `set_step_done`);
+//! a focus popup after a break gets the next open step, and switching small steps off clears the plan. Every
+//! [`DAY_CHECK`] (also while idle) the rewards service checks for a new reward day; at exit its last write is flushed.
 
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
-    AppError, Meeting, MeetingChoice, MeetingConflict, Phase, SessionGoal, SessionSnapshot, events,
+    AppError, Meeting, MeetingChoice, MeetingConflict, Phase, SessionGoal, SessionSnapshot,
+    StepDraft, events,
 };
 use focus_core::session::{Effect, Input, MeetingHold, NotifyKind, Now, Session};
 use focus_core::timing::TimingProfile;
@@ -29,7 +34,7 @@ use tokio::time::MissedTickBehavior;
 
 use crate::bridge::SharedBridge;
 use crate::calendar::{CalendarHandle, SessionPlan};
-use crate::effects::{Effects, HeldBreak};
+use crate::effects::{Effects, HeldBreak, NotifyContext};
 use crate::texts;
 use crate::tracker::TrackerHandle;
 use crate::tray::Tray;
@@ -38,6 +43,8 @@ use crate::{SharedConfig, lock, read_config};
 
 /// While a session runs, the meeting holds are rebuilt from the wall clock this often.
 const HOLDS_RESYNC: Duration = Duration::from_secs(60);
+/// The rewards service looks for a new reward day this often (beta, ADR-022).
+const DAY_CHECK: Duration = Duration::from_secs(60);
 
 pub enum ActorCmd {
     Start,
@@ -52,6 +59,13 @@ pub enum ActorCmd {
     /// Another launch asked for `--demo`: idle → the demo profile for the rest of this process;
     /// a session runs → a toast asking to stop it first.
     UseDemoProfile,
+    /// Developer page "Presentation mode" (`dev_trigger`, ADR-019): `true` → the demo profile, `false` → the
+    /// profile from the config, for the rest of this process. Idle: at once; a running or paused session keeps its
+    /// profile and the next Start uses the new one. Replies once applied.
+    SetPresentationMode {
+        on: bool,
+        reply: oneshot::Sender<()>,
+    },
     GetSnapshot(oneshot::Sender<SessionSnapshot>),
     /// Every meeting answered with `Extend` / `PauseAtBreak` (from `crate::calendar`): replaces the
     /// session's meeting holds.
@@ -63,6 +77,14 @@ pub enum ActorCmd {
     DevSetRemaining {
         secs: u32,
         reply: oneshot::Sender<Result<(), AppError>>,
+    },
+    /// Beta (ADR-022): the small steps of the coming or running session (`set_session_steps`, already cleaned by
+    /// `normalize_steps`). The texts are never logged.
+    SetSteps(Vec<StepDraft>),
+    /// Beta (ADR-022): ticks or unticks a step (`set_step_done`); Idle or an unknown id: no-op.
+    SetStepDone {
+        id: u32,
+        done: bool,
     },
     /// App exit: stop the session (history written synchronously), then ack.
     Shutdown(std_mpsc::Sender<()>),
@@ -102,6 +124,15 @@ impl ActorHandle {
             .map_err(|_| AppError::new("session.unavailable", "session actor is not running"))?
     }
 
+    /// Developer mode (ADR-019): presentation mode (the demo profile) on or off; see [`ActorCmd::SetPresentationMode`].
+    pub async fn set_presentation_mode(&self, on: bool) -> Result<(), AppError> {
+        let (reply, response) = oneshot::channel();
+        self.send(ActorCmd::SetPresentationMode { on, reply })?;
+        response
+            .await
+            .map_err(|_| AppError::new("session.unavailable", "session actor is not running"))
+    }
+
     /// Stops the running session and waits (bounded) until its summary is saved.
     pub fn shutdown_blocking(&self, timeout: Duration) {
         let (ack_tx, ack_rx) = std_mpsc::channel();
@@ -114,7 +145,8 @@ impl ActorHandle {
 
 pub struct ActorContext {
     pub app: AppHandle,
-    /// Demo profile (`--demo` at start, or later from another launch while idle).
+    /// Demo profile (`--demo` at start, later from another launch while idle, or the Developer page's
+    /// "Presentation mode", which also switches it off). Used by the next Start and the idle snapshot.
     pub demo: bool,
     pub config: SharedConfig,
     pub effects: Effects,
@@ -146,6 +178,7 @@ async fn run(ctx: ActorContext, mut rx: mpsc::UnboundedReceiver<ActorCmd>) {
         holds_synced_at: Instant::now(),
         last_plan: None,
         last_work_phase: None,
+        day_checked_at: Instant::now(),
     };
     let profile = actor.profile();
     actor.session.set_idle_profile(profile);
@@ -203,6 +236,8 @@ struct Actor {
     last_plan: Option<PlanKey>,
     /// Phase last reported to the work service.
     last_work_phase: Option<Phase>,
+    /// When the rewards service last looked for a new reward day.
+    day_checked_at: Instant,
 }
 
 /// What the calendar's break plan depends on; a new plan is sent when it changes. A running phase keeps
@@ -243,11 +278,20 @@ impl Actor {
             ActorCmd::DevSetRemaining { secs, reply } => {
                 let _ = reply.send(self.dev_set_remaining(secs));
             }
+            // Shown by every snapshot; the core never trusts the texts and keeps at most 5.
+            ActorCmd::SetSteps(steps) => self.apply(Input::SetSteps(steps)),
+            ActorCmd::SetStepDone { id, done } => self.apply(Input::SetStepDone { id, done }),
             ActorCmd::Stop => self.apply(Input::Stop),
             ActorCmd::Skip => self.apply(Input::SkipPhase),
             ActorCmd::ConfigChanged => {
                 let profile = self.profile();
                 self.session.set_idle_profile(profile);
+                if !read_config(&self.ctx.config).steps_active() && !self.session.steps().is_empty()
+                {
+                    // Small steps were switched off: no hidden plan lingers (nor reaches the summary).
+                    log::info!("small steps are off: the session plan is cleared");
+                    self.apply(Input::SetSteps(Vec::new()));
+                }
                 self.publish(false);
                 // A new UI language relabels the tray even when the snapshot did not change.
                 if !self.shutting_down
@@ -257,6 +301,10 @@ impl Actor {
                 }
             }
             ActorCmd::UseDemoProfile => self.use_demo_profile(),
+            ActorCmd::SetPresentationMode { on, reply } => {
+                self.set_presentation_mode(on);
+                let _ = reply.send(());
+            }
             ActorCmd::GetSnapshot(reply) => {
                 let mut snapshot = self.session.snapshot(self.clock.now());
                 snapshot.revision = self.revision;
@@ -265,6 +313,8 @@ impl Actor {
             ActorCmd::Shutdown(ack) => {
                 self.shutting_down = true;
                 self.apply(Input::Stop);
+                // The facts of the stopped session are in the ledger: write it before the process ends.
+                self.ctx.effects.rewards.flush_blocking();
                 let _ = ack.send(());
             }
         }
@@ -300,7 +350,8 @@ impl Actor {
     /// Switches to the demo profile while idle (the snapshot shows `demo`, the next Start uses it); a running
     /// or paused session keeps its profile and the user is asked to stop it first.
     fn use_demo_profile(&mut self) {
-        // Already on: a running session started after it was switched on, so it uses the demo profile too.
+        // Already on: the next Start uses it (a running session started with it, or the Developer page switched it
+        // on while that session ran).
         if self.shutting_down || self.ctx.demo {
             return;
         }
@@ -312,10 +363,39 @@ impl Actor {
                 .toast(texts::demo_needs_stop_toast());
             return;
         }
-        self.ctx.demo = true;
         log::info!("--demo from another launch: demo profile from now on");
+        self.switch_profile(true);
+    }
+
+    /// Developer page "Presentation mode" (ADR-019): the demo profile on or off for the rest of this process. Idle:
+    /// the snapshot shows it at once. A running or paused session keeps its profile and phase lengths (only the idle
+    /// profile changes, which the core never applies to a running session); the next Start uses the new one.
+    fn set_presentation_mode(&mut self, on: bool) {
+        if self.shutting_down {
+            return;
+        }
+        if self.ctx.demo == on {
+            self.publish(true);
+            return;
+        }
+        let when = if self.session.phase() == Phase::Idle {
+            "now"
+        } else {
+            "from the next Start (the running session keeps its profile)"
+        };
+        log::info!(
+            "developer mode: presentation mode {} {when}",
+            if on { "on" } else { "off" }
+        );
+        self.switch_profile(on);
+    }
+
+    /// Demo profile on or off for the next Start and the idle snapshot (a running session is not touched).
+    fn switch_profile(&mut self, demo: bool) {
+        self.ctx.demo = demo;
         let profile = self.profile();
         self.session.set_idle_profile(profile);
+        // Idle, the calendar gets the new profile with this snapshot (it is part of the plan key).
         self.publish(true);
     }
 
@@ -351,15 +431,29 @@ impl Actor {
         self.holds_synced_at = Instant::now();
     }
 
-    /// Executes the effects; a held break gets its meeting and length for the popup.
+    /// Executes the effects; a held break gets its meeting and length for the popup, a focus start after a break the
+    /// next open step (beta, while small steps are on).
     fn dispatch(&mut self, effects: Vec<Effect>, now: Now) {
         let held = effects
             .iter()
             .any(|effect| matches!(effect, Effect::Notify(NotifyKind::BreakHeld { .. })))
             .then(|| self.held_break(now));
+        let focus_started = effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Notify(NotifyKind::FocusStarted { .. })));
+        let next_step = (focus_started && read_config(&self.ctx.config).steps_active())
+            .then(|| {
+                self.session
+                    .steps()
+                    .iter()
+                    .find(|step| !step.done)
+                    .map(|step| step.text.clone())
+            })
+            .flatten();
+        let context = NotifyContext { held, next_step };
         self.ctx
             .effects
-            .dispatch(effects, self.shutting_down, held.as_ref());
+            .dispatch(effects, self.shutting_down, &context);
     }
 
     /// The break that just started paused: its length and the meeting holding it.
@@ -414,6 +508,14 @@ impl Actor {
     }
 
     fn tick(&mut self) {
+        if self.day_checked_at.elapsed() >= DAY_CHECK {
+            // Also while idle: the week strip and "today" follow the reward day.
+            self.day_checked_at = Instant::now();
+            self.ctx
+                .effects
+                .rewards
+                .tick_day(&read_config(&self.ctx.config));
+        }
         if self.session.phase() == Phase::Idle {
             return;
         }

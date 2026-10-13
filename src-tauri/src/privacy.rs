@@ -3,8 +3,8 @@
 //!
 //! * **Report** (`get_privacy_report` + `privacy://changed`, own revision): one `PrivacyItem` per `PrivacyItemKind`,
 //!   from file metadata only (presence, size, a count where it makes sense). DPAPI files (tokens, ICS links) and the
-//!   browser profile are reported by presence and size, never opened; the history, the meeting answers and the seen
-//!   work items are parsed for their counts only. Built on a blocking thread and published only when it differs.
+//!   browser profile are reported by presence and size, never opened; the history, the rewards ledger (beta,
+//!   ADR-022), the meeting answers and the seen work items are parsed for their counts only. Built on a blocking thread and published only when it differs.
 //! * **Refresh**: the "focus-privacy" thread rescans every [`POLL_EVERY`] (metadata only: the JSON files are parsed
 //!   again only when their size or modification time changed, the WebView2 profile is walked at most every
 //!   [`BROWSER_EVERY`] and with limits), and [`DEBOUNCE`] after [`PrivacyHandle::changed`]: the events of the modules
@@ -17,7 +17,7 @@
 //!   profile through WebView2). An item that fails does not stop the others; the call then fails with
 //!   `privacy.delete`. The restore files of the shields and the tint are never deleted here.
 //! * **Export** (`export_privacy_data`): one JSON file (`focus_core::privacy::Export`): the config without secrets,
-//!   the history, the meeting answers and the seen items. Never tokens, ICS links, cookies, sounds or logs.
+//!   the history, the meeting answers, the seen items and the rewards ledger (numbers only, when it exists). Never tokens, ICS links, cookies, sounds or logs.
 //!
 //! Privacy (rule 11): only kinds and counts are logged; never file contents, titles, tokens or links.
 
@@ -395,10 +395,11 @@ pub async fn export(state: &AppState, path: &str) -> Result<(), AppError> {
     match written {
         Ok(stats) => {
             log::info!(
-                "privacy: data exported ({} sessions, meeting answers {}, seen items {})",
+                "privacy: data exported ({} sessions, meeting answers {}, seen items {}, rewards {})",
                 stats.sessions,
                 if stats.meeting_choices { "yes" } else { "no" },
-                if stats.work_seen { "yes" } else { "no" }
+                if stats.work_seen { "yes" } else { "no" },
+                if stats.rewards { "yes" } else { "no" }
             );
             Ok(())
         }
@@ -456,6 +457,27 @@ pub async fn delete_all(app: &AppHandle, state: &AppState) -> Result<Config, App
     }
     op.end(true).await;
     outcome(failures, read_config(&state.config))
+}
+
+/// Developer page "Factory reset" (`dev_trigger`, ADR-019): [`delete_all`] (the same code path: the session stops and
+/// its shields come down first, the tint goes off with the default settings), then what a first start does not have
+/// yet ([`Persistence::remove_for_first_start`]: `config.json` and an empty `sounds` folder), then a restart through
+/// the normal exit path (session stopped, shields and screen colours restored, `crate::shutdown`) that comes back with
+/// the main window like a first launch (`crate::request_fresh_restart`: without `--autostart` / `--restore-shields`).
+///
+/// `websiteblacklist.txt` was just reset to the bundled default, which is what a first start writes. The restore files
+/// of the shields and the tint are left to their workers, which delete them once Windows is restored (rule 7): one
+/// still pending at the restart is completed by the next start. Nothing outside the app's own folders is touched (the
+/// installed app, the browser extension folder and the music folders stay). A failed delete rejects with
+/// `privacy.delete` and the app does not restart, so the error can be read.
+pub async fn factory_reset(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
+    log::info!("developer mode: factory reset requested");
+    delete_all(app, state).await?;
+    let persistence = state.persistence.clone();
+    blocking(move || persistence.remove_for_first_start()).await?;
+    log::info!("developer mode: factory reset done, restarting");
+    crate::request_fresh_restart(app);
+    Ok(())
 }
 
 /// The app's own autostart entry (Windows `Run` value) is removed when it is still there.
@@ -550,6 +572,13 @@ async fn delete_one(
             blocking(move || persistence.clear_history()).await?;
             *lock(&state.last_summary) = None;
             Ok(())
+        }
+        PrivacyItemKind::Rewards => {
+            // Like "Zacznij od nowa" (`reset_rewards`), through the rewards writer so no queued write brings the file
+            // back; no fresh file is written (the item stays gone until the next spark).
+            let rewards = state.rewards.clone();
+            let config = read_config(&state.config);
+            blocking(move || rewards.delete_files(&config)).await
         }
         PrivacyItemKind::MeetingChoices => state.calendar.clear_choices().await,
         PrivacyItemKind::WorkSeen => state.work.clear_seen().await,
@@ -676,6 +705,7 @@ struct ExportStats {
     sessions: usize,
     meeting_choices: bool,
     work_seen: bool,
+    rewards: bool,
 }
 
 /// The file the export goes to: an absolute path (`.json` added when it has no extension), outside the app's own
@@ -714,10 +744,12 @@ fn write_export(files: &DataFiles, config: &Config, target: &Path) -> anyhow::Re
     let history = read_history_lines(&files.history)?;
     let meeting_choices = read_json(&files.meeting_choices);
     let work_seen = read_json(&files.work_seen);
+    let rewards = read_json(&files.rewards);
     let stats = ExportStats {
         sessions: history.len(),
         meeting_choices: meeting_choices.is_some(),
         work_seen: work_seen.is_some(),
+        rewards: rewards.is_some(),
     };
     let document = Export::new(
         wall_ms(),
@@ -726,6 +758,7 @@ fn write_export(files: &DataFiles, config: &Config, target: &Path) -> anyhow::Re
         history,
         meeting_choices,
         work_seen,
+        rewards,
     );
     let json = serde_json::to_vec_pretty(&document).context("serialize the export")?;
     write_atomic(target, &json)?;
@@ -768,6 +801,7 @@ struct Scanner {
     history: Option<(Stamp, HistoryCount)>,
     meeting_choices: Option<(Stamp, Option<u32>)>,
     work_seen: Option<(Stamp, Option<u32>)>,
+    rewards: Option<(Stamp, Option<u32>)>,
     browser: Option<(Instant, Walked)>,
 }
 
@@ -803,6 +837,22 @@ impl Scanner {
                     )
                 }
                 PrivacyItemKind::History => self.history_item(&files.history),
+                PrivacyItemKind::Rewards => {
+                    // The ledger, its backup and unreadable copies set aside at load together (what the delete
+                    // takes); `count` = stored days of `rewards.json`.
+                    let count = cached_count(&mut self.rewards, &files.rewards, "days");
+                    let sizes: Vec<u64> = [files.rewards.clone(), files.rewards_backup.clone()]
+                        .into_iter()
+                        .chain(crate::persistence::unreadable_rewards_in(&files.data_dir))
+                        .filter_map(|path| file_size(&path))
+                        .collect();
+                    let bytes = (!sizes.is_empty()).then(|| {
+                        sizes
+                            .iter()
+                            .fold(0_u64, |sum, size| sum.saturating_add(*size))
+                    });
+                    item(kind, bytes.is_some(), bytes, count)
+                }
                 PrivacyItemKind::MeetingChoices => {
                     let count =
                         cached_count(&mut self.meeting_choices, &files.meeting_choices, "choices");
@@ -1194,12 +1244,19 @@ mod tests {
         );
         assert!(!find(&empty, PrivacyItemKind::Settings).deletable);
         assert!(find(&empty, PrivacyItemKind::History).deletable);
+        assert!(find(&empty, PrivacyItemKind::Rewards).deletable);
 
         persistence.save_config(&Config::default()).expect("config");
         persistence
             .save_meeting_choices(&serde_json::json!({ "version": 1, "choices": [{}, {}, {}] }))
             .expect("choices");
         fs::write(&files.ics_links, vec![0_u8; 1500]).expect("ics");
+        fs::write(
+            &files.rewards,
+            r#"{"version":1,"totalSparks":62,"days":[{"day":20739},{"day":20740}]}"#,
+        )
+        .expect("rewards");
+        fs::write(&files.rewards_backup, vec![b' '; 1100]).expect("rewards backup");
         fs::create_dir_all(&files.sounds).expect("sounds");
         fs::write(files.sounds.join("custom-break-1.mp3"), b"x").expect("chime");
         fs::write(files.sounds.join("readme.txt"), b"not ours").expect("other");
@@ -1211,6 +1268,24 @@ mod tests {
         let settings = find(&items, PrivacyItemKind::Settings);
         assert!(settings.present && settings.size_kib.is_some_and(|kib| kib >= 1));
         assert_eq!(find(&items, PrivacyItemKind::MeetingChoices).count, Some(3));
+        let rewards = find(&items, PrivacyItemKind::Rewards);
+        assert_eq!(
+            (rewards.present, rewards.size_kib, rewards.count),
+            (true, Some(2), Some(2))
+        );
+        persistence.clear_rewards().expect("clear rewards");
+        assert!(!files.rewards.exists() && !files.rewards_backup.exists());
+        // Only an unreadable copy set aside at load: still listed (it is deleted with the item).
+        let aside = files.data_dir.join("rewards.unreadable-1760342400000.json");
+        fs::write(&aside, vec![b'x'; 2000]).expect("aside");
+        let only_aside = scanner.scan(&folders, &live, true);
+        let rewards = find(&only_aside, PrivacyItemKind::Rewards);
+        assert_eq!(
+            (rewards.present, rewards.size_kib, rewards.count),
+            (true, Some(2), None)
+        );
+        persistence.clear_rewards().expect("clear rewards");
+        assert!(!aside.exists());
         let ics = find(&items, PrivacyItemKind::IcsLinks);
         assert_eq!(
             (ics.present, ics.size_kib, ics.count),
