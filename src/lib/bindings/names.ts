@@ -43,6 +43,11 @@ export const COMMANDS = {
   disconnectCalendar: "disconnect_calendar",
   setIcsUrls: "set_ics_urls",
   getIcsUrls: "get_ics_urls",
+  getWork: "get_work",
+  refreshWork: "refresh_work",
+  setWorkToken: "set_work_token",
+  setSessionGoal: "set_session_goal",
+  markGoalDone: "mark_goal_done",
 } as const;
 
 export const EVENTS = {
@@ -59,6 +64,7 @@ export const EVENTS = {
   popupShow: "popup://show",
   tintChanged: "tint://changed",
   calendarChanged: "calendar://changed",
+  workChanged: "work://changed",
 } as const;
 
 export const BRIDGE_PORT = 47615;

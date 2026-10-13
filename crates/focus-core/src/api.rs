@@ -105,6 +105,16 @@ pub mod commands {
     pub const SET_ICS_URLS: &str = "set_ics_urls";
     /// `() -> string[]` the stored ICS links (to edit them in Settings).
     pub const GET_ICS_URLS: &str = "get_ics_urls";
+    /// `() -> WorkStatus` ranked work items ("Co dalej?") from the connected tools.
+    pub const GET_WORK: &str = "get_work";
+    /// `() -> WorkStatus` fetches all connected tools now.
+    pub const REFRESH_WORK: &str = "refresh_work";
+    /// `{ source: WorkSource, token: string | null } -> WorkStatus` stores (encrypted) or forgets the access token.
+    pub const SET_WORK_TOKEN: &str = "set_work_token";
+    /// `{ goal: SessionGoal | null } -> ()` the item the user focuses on (shown under the timer, kept in the summary).
+    pub const SET_SESSION_GOAL: &str = "set_session_goal";
+    /// `{ sessionId: string, done: boolean } -> ()` marks the goal of a finished session as done / not done (history).
+    pub const MARK_GOAL_DONE: &str = "mark_goal_done";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -136,6 +146,8 @@ pub mod events {
     pub const TINT_CHANGED: &str = "tint://changed";
     /// `CalendarStatus`, after every sync, choice or connection change.
     pub const CALENDAR_CHANGED: &str = "calendar://changed";
+    /// `WorkStatus`, after every sync or token change.
+    pub const WORK_CHANGED: &str = "work://changed";
 }
 
 /// Loopback port of the browser-extension bridge (`GET http://127.0.0.1:{BRIDGE_PORT}/v1/state` → `BridgeState`).
@@ -207,6 +219,9 @@ pub struct SessionSnapshot {
     /// A meeting currently extends the focus or holds the break.
     #[serde(default)]
     pub meeting_hold: Option<MeetingHoldView>,
+    /// What the user focuses on in this session (from "Co dalej?").
+    #[serde(default)]
+    pub goal: Option<SessionGoal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -275,6 +290,29 @@ pub struct Config {
     pub keep_history: bool,
     /// Calendar integrations (meeting / break collisions). All off by default.
     pub calendar: CalendarConfig,
+    /// Developer tools for "Co dalej?". All off by default; tokens are stored separately (encrypted).
+    pub work: WorkConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct WorkConfig {
+    pub github: bool,
+    pub gitlab: bool,
+    /// GitLab instance. Default `https://gitlab.com`.
+    pub gitlab_url: String,
+    pub jira: bool,
+    /// Jira site, e.g. `https://firma.atlassian.net` or a Data Center URL.
+    pub jira_url: String,
+    /// Account e-mail for Jira Cloud API tokens (empty = Data Center personal access token).
+    pub jira_email: String,
+    pub azure_devops: bool,
+    /// Azure DevOps organisation, e.g. `firma` (https://dev.azure.com/firma).
+    pub azure_org: String,
+    pub linear: bool,
+    /// Hold new notifications during focus and show them at the break. Default true.
+    pub hold_during_focus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -587,6 +625,11 @@ pub struct SessionSummary {
     pub cycles_completed: u32,
     pub usage: UsageReport,
     pub demo: bool,
+    #[serde(default)]
+    pub goal: Option<SessionGoal>,
+    /// Set by the user in the summary ("Zrobione?").
+    #[serde(default)]
+    pub goal_done: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -731,6 +774,8 @@ pub enum PopupKind {
     MeetingReminder,
     /// The break started paused because of a meeting (`meeting`).
     BreakHeld,
+    /// New work items arrived during focus (`work_count`).
+    WorkDigest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -750,6 +795,9 @@ pub struct PopupInfo {
     /// The meeting for `MeetingReminder` / `BreakHeld`.
     #[serde(default)]
     pub meeting: Option<MeetingConflict>,
+    /// Number of new work items for `WorkDigest`.
+    #[serde(default)]
+    pub work_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -893,6 +941,122 @@ pub struct MeetingHoldView {
 }
 
 // ---------------------------------------------------------------------------
+// Work items ("Co dalej?") and the session goal
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum WorkSource {
+    Github,
+    Gitlab,
+    Jira,
+    AzureDevops,
+    Linear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum WorkItemKind {
+    /// Issue / ticket / work item assigned to the user.
+    Assigned,
+    /// A pull / merge request waits for the user's review.
+    ReviewRequested,
+    /// Changes were requested on the user's own pull / merge request.
+    ChangesRequested,
+    /// Checks failed on the user's own pull / merge request.
+    CiFailed,
+    /// The user was mentioned.
+    Mention,
+    /// Any other notification.
+    Notification,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum WorkReason {
+    Assigned,
+    InSprint,
+    HighPriority,
+    DueToday,
+    Overdue,
+    InProgress,
+    BlockingOthers,
+    WaitingLong,
+    Mentioned,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkItem {
+    /// Stable id: source + key.
+    pub id: String,
+    pub source: WorkSource,
+    pub kind: WorkItemKind,
+    /// Human key, e.g. `PROJ-123`, `owner/repo#45`, `ENG-7`.
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    pub project: Option<String>,
+    /// Priority as the tool names it (e.g. "High", "P1").
+    pub priority_label: Option<String>,
+    /// Normalised priority 0 (highest) ..= 4 (lowest).
+    pub priority_rank: Option<u32>,
+    #[ts(type = "number | null")]
+    pub due_ms: Option<i64>,
+    /// Status as the tool names it (e.g. "In Progress").
+    pub status: Option<String>,
+    /// In the active sprint / cycle / iteration.
+    pub in_sprint: bool,
+    #[ts(type = "number")]
+    pub updated_ms: i64,
+    /// Ranking score (higher first); tier 1 = assigned to the user always ranks above tier 2 and 3.
+    pub score: u32,
+    pub reasons: Vec<WorkReason>,
+    /// Arrived since the user last looked (held during focus).
+    pub unseen: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkSourceStatus {
+    pub source: WorkSource,
+    pub state: IntegrationState,
+    pub detail: Option<String>,
+    /// Signed-in user name, if known.
+    pub account: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkStatus {
+    /// Set by the shell; grows with every emitted status.
+    pub revision: u32,
+    pub sources: Vec<WorkSourceStatus>,
+    /// Ranked, best first (at most 50).
+    pub items: Vec<WorkItem>,
+    /// New items held back during focus (shown at the break).
+    pub held_count: u32,
+    #[ts(type = "number | null")]
+    pub last_sync_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SessionGoal {
+    pub source: WorkSource,
+    pub key: String,
+    pub title: String,
+    pub url: String,
+}
+
+// ---------------------------------------------------------------------------
 // Browser extension bridge
 // ---------------------------------------------------------------------------
 
@@ -974,6 +1138,11 @@ mod tests {
             ("disconnectCalendar", commands::DISCONNECT_CALENDAR),
             ("setIcsUrls", commands::SET_ICS_URLS),
             ("getIcsUrls", commands::GET_ICS_URLS),
+            ("getWork", commands::GET_WORK),
+            ("refreshWork", commands::REFRESH_WORK),
+            ("setWorkToken", commands::SET_WORK_TOKEN),
+            ("setSessionGoal", commands::SET_SESSION_GOAL),
+            ("markGoalDone", commands::MARK_GOAL_DONE),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),
@@ -989,6 +1158,7 @@ mod tests {
             ("popupShow", events::POPUP_SHOW),
             ("tintChanged", events::TINT_CHANGED),
             ("calendarChanged", events::CALENDAR_CHANGED),
+            ("workChanged", events::WORK_CHANGED),
         ];
         let mut out = String::from(
             "// This file was generated by `cargo test -p focus-core` (api.rs). Do not edit this file manually.\n\n",

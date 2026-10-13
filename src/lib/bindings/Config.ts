@@ -7,6 +7,7 @@ import type { MusicConfig } from "./MusicConfig";
 import type { ShieldsConfig } from "./ShieldsConfig";
 import type { Theme } from "./Theme";
 import type { TintConfig } from "./TintConfig";
+import type { WorkConfig } from "./WorkConfig";
 
 export type Config = { 
 /**
@@ -79,4 +80,8 @@ keepHistory: boolean,
 /**
  * Calendar integrations (meeting / break collisions). All off by default.
  */
-calendar: CalendarConfig, };
+calendar: CalendarConfig, 
+/**
+ * Developer tools for "Co dalej?". All off by default; tokens are stored separately (encrypted).
+ */
+work: WorkConfig, };

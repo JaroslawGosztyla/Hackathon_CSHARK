@@ -23,4 +23,8 @@ reminder: string | null,
 /**
  * The meeting for `MeetingReminder` / `BreakHeld`.
  */
-meeting: MeetingConflict | null, };
+meeting: MeetingConflict | null, 
+/**
+ * Number of new work items for `WorkDigest`.
+ */
+workCount: number, };
