@@ -9,8 +9,14 @@
 //! A file that cannot be read keeps the list in use (at startup: the bundled default) and sets
 //! `BlocklistInfo.error`, plus `app://error` `blocklist.read`.
 //!
+//! The browser extension reports which regex sources it could not turn into network rules
+//! (`POST /v1/report`, see `crate::bridge`); [`BlocklistService::set_extension_skipped`] keeps the sources of
+//! the latest report that are in the list in use as `BlocklistInfo.extension_skipped` (a new revision and
+//! `blocklist://changed` when that changes). A reload keeps only those that are still in the list.
+//!
 //! Privacy (rule 11): only counts are logged, never entries, titles or URLs.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
@@ -103,6 +109,7 @@ impl BlocklistService {
             patterns: list.pattern_sources(),
             issues,
             error,
+            extension_skipped: Vec::new(),
         };
         log_loaded(&info);
         lock(&bridge).set_blocklist(&list);
@@ -146,6 +153,36 @@ impl BlocklistService {
             self.reload();
         }
         Ok(self.inner.path.clone())
+    }
+
+    /// The latest report of the browser extension: the regex sources it could not turn into network rules
+    /// (`POST /v1/report`). Only sources of the list in use are kept, in the list's order and without
+    /// repeats. Publishes a new revision (`blocklist://changed`) and returns `true` only when that changed.
+    /// Blocking only for as long as a reload runs.
+    pub fn set_extension_skipped(&self, reported: &[String]) -> bool {
+        let _serial = lock(&self.inner.reload);
+        let mut state = lock(&self.inner.state);
+        let skipped = kept_skipped(&state.info.patterns, reported);
+        if skipped == state.info.extension_skipped {
+            return false;
+        }
+        let next = BlocklistInfo {
+            revision: state.info.revision.wrapping_add(1),
+            extension_skipped: skipped,
+            ..state.info.clone()
+        };
+        state.info = next.clone();
+        drop(state);
+
+        log::info!(
+            "browser extension cannot enforce {} of {} patterns as network rules (checked when a tab loads)",
+            next.extension_skipped.len(),
+            next.patterns.len()
+        );
+        if let Err(err) = self.inner.app.emit(events::BLOCKLIST_CHANGED, next) {
+            log::warn!("cannot emit blocklist info: {err}");
+        }
+        true
     }
 
     fn apply(&self, stamp: Option<FileStamp>, loaded: Loaded) -> BlocklistInfo {
@@ -219,17 +256,22 @@ impl BlocklistService {
 }
 
 /// The info after a load, with the next revision; `None` when nothing changed. Comparing the
-/// domains and patterns is the same as comparing the `Blocklist`s (they are its contents).
+/// domains and patterns is the same as comparing the `Blocklist`s (they are its contents). The
+/// extension's skipped sources that are no longer in the list are dropped.
 fn next_info(current: &BlocklistInfo, loaded: &Loaded) -> Option<BlocklistInfo> {
     let next = match loaded {
-        Ok((list, issues)) => BlocklistInfo {
-            revision: current.revision,
-            path: current.path.clone(),
-            domains: list.domains().to_vec(),
-            patterns: list.pattern_sources(),
-            issues: issues.clone(),
-            error: None,
-        },
+        Ok((list, issues)) => {
+            let patterns = list.pattern_sources();
+            BlocklistInfo {
+                revision: current.revision,
+                path: current.path.clone(),
+                domains: list.domains().to_vec(),
+                extension_skipped: kept_skipped(&patterns, &current.extension_skipped),
+                patterns,
+                issues: issues.clone(),
+                error: None,
+            }
+        }
         // The list in use and its issues stay; only the error is new.
         Err(err) => BlocklistInfo {
             error: Some(err.polish()),
@@ -240,6 +282,17 @@ fn next_info(current: &BlocklistInfo, loaded: &Loaded) -> Option<BlocklistInfo> 
         revision: current.revision.wrapping_add(1),
         ..next
     })
+}
+
+/// The sources of `patterns` that `reported` names, in the order of `patterns`, each once.
+fn kept_skipped(patterns: &[String], reported: &[String]) -> Vec<String> {
+    let reported: HashSet<&str> = reported.iter().map(String::as_str).collect();
+    let mut kept = HashSet::new();
+    patterns
+        .iter()
+        .filter(|source| reported.contains(source.as_str()) && kept.insert(source.as_str()))
+        .cloned()
+        .collect()
 }
 
 #[derive(Debug)]
@@ -378,6 +431,7 @@ mod tests {
             patterns: list.pattern_sources(),
             issues,
             error: None,
+            extension_skipped: Vec::new(),
         }
     }
 
@@ -479,6 +533,45 @@ mod tests {
             next_info(&failed, &Ok(Blocklist::parse("kwejk.pl\nreddit\n"))).expect("error cleared");
         assert_eq!(fixed.error, None);
         assert_eq!(fixed.revision, 5);
+    }
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|&item| item.to_owned()).collect()
+    }
+
+    #[test]
+    fn only_skipped_sources_of_the_list_in_use_are_kept() {
+        let patterns = strings(&[r"a\d+", r"youtube\.com/shorts", r"c\d+"]);
+        // List order, no repeats, unknown sources dropped (a report for an older list, or a forged one).
+        assert_eq!(
+            kept_skipped(&patterns, &strings(&[r"c\d+", "zzz", r"a\d+", r"c\d+"])),
+            strings(&[r"a\d+", r"c\d+"])
+        );
+        assert!(kept_skipped(&patterns, &[]).is_empty());
+        assert!(kept_skipped(&[], &strings(&[r"a\d+"])).is_empty());
+        // Exact match only: the extension reports the sources exactly as the bridge sent them.
+        assert!(kept_skipped(&patterns, &strings(&[r"A\d+", r" a\d+"])).is_empty());
+    }
+
+    #[test]
+    fn a_reload_keeps_the_skipped_sources_still_in_the_list() {
+        let text = "/a\\d+/\n/c\\d+/\nkwejk.pl\n";
+        let base = info(2, text);
+        assert_eq!(base.patterns.len(), 2);
+        let current = BlocklistInfo {
+            extension_skipped: base.patterns.clone(),
+            ..base
+        };
+        // Unchanged file: nothing new.
+        assert_eq!(next_info(&current, &Ok(Blocklist::parse(text))), None);
+        // The second pattern left the file: it leaves the report too.
+        let next =
+            next_info(&current, &Ok(Blocklist::parse("/a\\d+/\nkwejk.pl\n"))).expect("changed");
+        assert_eq!(next.extension_skipped, current.patterns[..1]);
+        assert_eq!(next.revision, 3);
+        // A read error keeps everything in use, the report included.
+        let failed = next_info(&current, &Err(not_found())).expect("error is new");
+        assert_eq!(failed.extension_skipped, current.extension_skipped);
     }
 
     #[test]

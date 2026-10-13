@@ -54,6 +54,14 @@ pub fn focus_toast(focus_secs: u32, cycle: u32) -> Toast {
     )
 }
 
+/// Another launch asked for the demo profile (`--demo`, "tryb prezentacji" in the UI) while a session runs.
+pub fn demo_needs_stop_toast() -> Toast {
+    Toast::new(
+        "Tryb prezentacji",
+        "Zatrzymaj sesję, aby włączyć tryb prezentacji.",
+    )
+}
+
 /// The session was auto-paused after a sleep/clock gap.
 pub fn interrupted_toast() -> Toast {
     Toast::new(

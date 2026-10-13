@@ -213,6 +213,10 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         emit_startup_error(&handle, err);
     }
     music::allow_configured_folder(&handle, config.music.folder.as_deref());
+    // Not for a `--restore-shields` launch, which only repairs what a crash left behind.
+    if config.launch_on_login && !launch.restore_only {
+        refresh_autostart(&handle);
+    }
     let config: SharedConfig = Arc::new(RwLock::new(config));
 
     let last_summary = match persistence.list_history(1) {
@@ -285,8 +289,13 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     })
     .context("spawn tracker")?;
 
-    bridge::spawn(handle.clone(), Arc::clone(&bridge), shields.clone())
-        .context("spawn extension bridge")?;
+    bridge::spawn(
+        handle.clone(),
+        Arc::clone(&bridge),
+        shields.clone(),
+        blocklist.clone(),
+    )
+    .context("spawn extension bridge")?;
 
     let (actor, actor_rx) = session_actor::ActorHandle::channel();
     let tray = match tray::build(&handle, actor.clone()) {
@@ -458,9 +467,15 @@ fn on_second_instance(app: &AppHandle, args: &[String]) {
         return;
     }
     if has(DEMO_ARG) {
-        log::info!(
-            "--demo ignored by the running instance; restart FocusMode to use the demo profile"
-        );
+        // The actor decides: idle → the demo profile from now on; a session runs → a toast asking to stop it.
+        match app.try_state::<AppState>() {
+            Some(state) => {
+                if let Err(err) = state.actor.send(session_actor::ActorCmd::UseDemoProfile) {
+                    log::warn!("--demo from another launch not applied: {}", err.message);
+                }
+            }
+            None => log::info!("--demo from another launch arrived before the app was ready"),
+        }
     }
     show_main_window(app);
 }
@@ -549,6 +564,36 @@ pub(crate) fn sync_autostart(app: &AppHandle, enabled: bool) {
             app,
             AppError::new("autostart", format!("cannot change launch on login: {err}")),
         );
+    }
+}
+
+/// `launch_on_login` is on: write the OS autostart entry again (disable + enable), so an entry written by an
+/// older build or from another install path carries the current executable and [`AUTOSTART_ARG`]. An entry
+/// that is missing or switched off at the OS level (e.g. disabled in Task Manager) is left alone: enabling
+/// it would override the user's choice there. Errors are only logged.
+fn refresh_autostart(app: &AppHandle) {
+    let Some(manager) = app.try_state::<tauri_plugin_autostart::AutoLaunchManager>() else {
+        return;
+    };
+    match manager.is_enabled() {
+        Ok(true) => {}
+        Ok(false) => {
+            log::info!(
+                "launch on login is on, but the OS entry is missing or disabled; leaving it as is"
+            );
+            return;
+        }
+        Err(err) => {
+            log::warn!("cannot check the launch-on-login entry: {err}");
+            return;
+        }
+    }
+    if let Err(err) = manager.disable() {
+        log::warn!("cannot remove the launch-on-login entry before writing it again: {err}");
+    }
+    match manager.enable() {
+        Ok(()) => log::info!("launch-on-login entry written again"),
+        Err(err) => log::warn!("cannot write the launch-on-login entry: {err}"),
     }
 }
 

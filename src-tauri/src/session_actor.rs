@@ -30,6 +30,7 @@ use tokio::time::MissedTickBehavior;
 use crate::bridge::SharedBridge;
 use crate::calendar::{CalendarHandle, SessionPlan};
 use crate::effects::{Effects, HeldBreak};
+use crate::texts;
 use crate::tracker::TrackerHandle;
 use crate::tray::Tray;
 use crate::work::WorkHandle;
@@ -48,6 +49,9 @@ pub enum ActorCmd {
     Skip,
     /// Config saved: refresh the profile shown while idle.
     ConfigChanged,
+    /// Another launch asked for `--demo`: idle → the demo profile for the rest of this process;
+    /// a session runs → a toast asking to stop it first.
+    UseDemoProfile,
     GetSnapshot(oneshot::Sender<SessionSnapshot>),
     /// Every meeting answered with `Extend` / `PauseAtBreak` (from `crate::calendar`): replaces the
     /// session's meeting holds.
@@ -95,6 +99,7 @@ impl ActorHandle {
 
 pub struct ActorContext {
     pub app: AppHandle,
+    /// Demo profile (`--demo` at start, or later from another launch while idle).
     pub demo: bool,
     pub config: SharedConfig,
     pub effects: Effects,
@@ -227,6 +232,7 @@ impl Actor {
                 self.session.set_idle_profile(profile);
                 self.publish(false);
             }
+            ActorCmd::UseDemoProfile => self.use_demo_profile(),
             ActorCmd::GetSnapshot(reply) => {
                 let mut snapshot = self.session.snapshot(self.clock.now());
                 snapshot.revision = self.revision;
@@ -265,6 +271,28 @@ impl Actor {
             session_id,
             profile,
         });
+    }
+
+    /// Switches to the demo profile while idle (the snapshot shows `demo`, the next Start uses it); a running
+    /// or paused session keeps its profile and the user is asked to stop it first.
+    fn use_demo_profile(&mut self) {
+        // Already on: a running session started after it was switched on, so it uses the demo profile too.
+        if self.shutting_down || self.ctx.demo {
+            return;
+        }
+        if self.session.phase() != Phase::Idle {
+            log::info!("--demo from another launch: a session runs, asking to stop it first");
+            self.ctx
+                .effects
+                .shields
+                .toast(texts::demo_needs_stop_toast());
+            return;
+        }
+        self.ctx.demo = true;
+        log::info!("--demo from another launch: demo profile from now on");
+        let profile = self.profile();
+        self.session.set_idle_profile(profile);
+        self.publish(true);
     }
 
     /// Resume, with the meeting holds rebuilt first (the monotonic clock may have drifted during a sleep).

@@ -29,6 +29,14 @@
 //! is not parked) and [`PopupHandle::withdraw_work_digest`] (focus started with items held, also without phase
 //! popups) removes it from the screen and from the parked ones.
 //!
+//! While the user presents (`focus_platform::notification_state::user_is_presenting`: a full-screen app or
+//! game, Windows presentation settings), no popup window appears, whatever its kind (phase, launchers,
+//! meeting reminder, work digest): the newest popup is held instead (it meets the one held before it as it
+//! would meet one on screen, so a meeting question or a work digest it displaces waits among the parked ones)
+//! and shown as soon as presenting ends, checked every [`PRESENTING_POLL`]. A popup still held
+//! [`PRESENTING_HOLD_MAX`] after it arrived is dropped, without a fallback toast (Windows holds toasts back in
+//! those modes too, and the main window keeps the state). A popup already on screen is left alone.
+//!
 //! The window stays focusable on purpose (no `WS_EX_NOACTIVATE`): its buttons must take clicks reliably.
 //! It still appears without activation; only the user activates it (a click, Alt+Tab). It is listed in
 //! Alt+Tab while visible.
@@ -41,6 +49,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{AppError, GameLauncher, MeetingConflict, PopupInfo, PopupKind, events};
+use focus_platform::notification_state;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::shields::ShieldsHandle;
@@ -72,6 +81,10 @@ const CLOSE_WAIT: Duration = Duration::from_millis(1500);
 const CLOSE_POLL: Duration = Duration::from_millis(20);
 /// A "launchers closed" popup this soon after a "focus started" popup shows that focus phase's numbers.
 const INHERIT_FOCUS_WITHIN: Duration = Duration::from_secs(30);
+/// While the user presents, the held popup is retried this often...
+const PRESENTING_POLL: Duration = Duration::from_secs(5);
+/// ...and dropped when the user still presents this long after it arrived.
+const PRESENTING_HOLD_MAX: Duration = Duration::from_secs(10 * 60);
 
 /// What to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +170,7 @@ impl PopupHandle {
                     last_focus: None,
                     current: None,
                     parked: Vec::new(),
+                    held: None,
                     height: HEIGHT,
                 }
                 .run(rx);
@@ -223,21 +237,31 @@ struct Worker {
     current: Option<PopupRequest>,
     /// Meeting reminders replaced by another popup, oldest first; shown again when it goes away.
     parked: Vec<PopupRequest>,
+    /// The newest popup that arrived while the user presents (shown when that ends).
+    held: Option<Held>,
     /// Logical height of the popup window on screen.
     height: f64,
+}
+
+/// A popup held back while the user presents.
+struct Held {
+    request: PopupRequest,
+    /// Dropped when the user still presents at this time.
+    until: Instant,
+    /// Next look at whether the user still presents.
+    next_check: Instant,
 }
 
 impl Worker {
     fn run(mut self, rx: Receiver<PopupCmd>) {
         loop {
-            let cmd = match self.deadline {
-                Some(deadline) => {
-                    match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                        Ok(cmd) => Some(cmd),
-                        Err(RecvTimeoutError::Timeout) => None,
-                        Err(RecvTimeoutError::Disconnected) => return,
-                    }
-                }
+            let cmd = match self.next_wake() {
+                Some(wake) => match rx.recv_timeout(wake.saturating_duration_since(Instant::now()))
+                {
+                    Ok(cmd) => Some(cmd),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                },
                 None => match rx.recv() {
                     Ok(cmd) => Some(cmd),
                     Err(_) => return,
@@ -255,23 +279,50 @@ impl Worker {
                 }
                 Some(PopupCmd::ResolveMeeting(id)) => self.resolve_meeting(&id),
                 Some(PopupCmd::WithdrawWorkDigest) => self.withdraw_work_digest(),
-                None => {
-                    if let Some(shown_at) = self.shown_at {
-                        let kind = self.current.as_ref().map(|current| current.kind);
-                        let due = hide_at(shown_at, self.page_loaded.load(Ordering::SeqCst), kind);
-                        if Instant::now() < due {
-                            // The page runs (maybe held by the pointer): wait for it longer.
-                            self.deadline = Some(due);
-                            continue;
-                        }
-                    }
-                    log::debug!("popup: not dismissed by the page, hiding it");
-                    self.hide();
-                }
+                None => self.on_timer(),
             }
         }
     }
 
+    /// The earliest of the safety timeout of the popup on screen and the next look at a held popup.
+    fn next_wake(&self) -> Option<Instant> {
+        let check = self.held.as_ref().map(|held| held.next_check);
+        match (self.deadline, check) {
+            (Some(deadline), Some(check)) => Some(deadline.min(check)),
+            (deadline, check) => deadline.or(check),
+        }
+    }
+
+    fn on_timer(&mut self) {
+        let now = Instant::now();
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            self.on_deadline(now);
+        }
+        if self
+            .held
+            .as_ref()
+            .is_some_and(|held| now >= held.next_check)
+        {
+            self.check_held(now);
+        }
+    }
+
+    /// The safety timeout of the popup on screen passed.
+    fn on_deadline(&mut self, now: Instant) {
+        if let Some(shown_at) = self.shown_at {
+            let kind = self.current.as_ref().map(|current| current.kind);
+            let due = hide_at(shown_at, self.page_loaded.load(Ordering::SeqCst), kind);
+            if now < due {
+                // The page runs (maybe held by the pointer): wait for it longer.
+                self.deadline = Some(due);
+                return;
+            }
+        }
+        log::debug!("popup: not dismissed by the page, hiding it");
+        self.hide();
+    }
+
+    /// A popup arrives: held while the user presents, shown otherwise.
     fn show(&mut self, mut request: PopupRequest) {
         let now = Instant::now();
         match request.kind {
@@ -296,6 +347,86 @@ impl Worker {
             self.parked
                 .retain(|parked| parked.kind != PopupKind::WorkDigest);
         }
+        if notification_state::user_is_presenting() {
+            self.hold(request, now);
+            return;
+        }
+        if let Some(held) = self.held.take() {
+            // Presenting ended before the next look: the held popup and this one meet as on screen, and
+            // whichever goes first goes up now.
+            request = merge_held(Some(held.request), request, &mut self.parked).0;
+        }
+        self.display(request);
+    }
+
+    /// Keeps `request` back while the user presents (see [`merge_held`]); a newly held popup gets
+    /// [`PRESENTING_HOLD_MAX`] from now.
+    fn hold(&mut self, request: PopupRequest, now: Instant) {
+        log::info!(
+            "popup held back while the user presents: {:?}",
+            request.kind
+        );
+        let (previous, until) = match self.held.take() {
+            Some(held) => (Some(held.request), Some(held.until)),
+            None => (None, None),
+        };
+        let (request, newly_held) = merge_held(previous, request, &mut self.parked);
+        let until = match until {
+            Some(until) if !newly_held => until,
+            _ => now + PRESENTING_HOLD_MAX,
+        };
+        self.held = Some(Held {
+            request,
+            until,
+            next_check: now + PRESENTING_POLL,
+        });
+    }
+
+    /// Shows the held popup once the user no longer presents; drops it when presenting outlasts
+    /// [`PRESENTING_HOLD_MAX`].
+    fn check_held(&mut self, now: Instant) {
+        let presenting = notification_state::user_is_presenting();
+        let Some(held) = self.held.take() else {
+            return;
+        };
+        if !presenting {
+            if meeting_over(&held.request, wall_ms()) {
+                self.show_next_parked();
+            } else {
+                self.display(held.request);
+            }
+            return;
+        }
+        if now < held.until {
+            self.held = Some(Held {
+                next_check: now + PRESENTING_POLL,
+                ..held
+            });
+            return;
+        }
+        log::info!(
+            "popup dropped: the user still presents {} min after it arrived ({:?})",
+            PRESENTING_HOLD_MAX.as_secs() / 60,
+            held.request.kind
+        );
+        if self.current.is_none() {
+            // Nothing on screen would bring back the ones waiting behind it.
+            self.parked.clear();
+        }
+    }
+
+    /// The held popup goes away (answered or withdrawn); the ones waiting behind it follow it unless a popup
+    /// on screen brings them back when it goes away.
+    fn drop_held(&mut self) {
+        self.held = None;
+        if self.current.is_none() {
+            self.show_next_parked();
+        }
+    }
+
+    /// Shows the popup on screen now (the user does not present).
+    fn display(&mut self, request: PopupRequest) {
+        let now = Instant::now();
         match arrival(self.current.as_ref(), &request) {
             Arrival::Wait => {
                 self.parked.push(request);
@@ -352,18 +483,32 @@ impl Worker {
             }
             self.wait_until_gone();
         }
-        let now = wall_ms();
-        self.parked.retain(|parked| !meeting_over(parked, now));
-        if !self.parked.is_empty() {
-            let next = self.parked.remove(0);
-            self.show(next);
-        }
+        self.show_next_parked();
     }
 
-    /// A work digest on screen or parked goes away (focus started).
+    /// The oldest parked popup whose meeting has not ended comes back. While a popup is held, they all keep
+    /// waiting: they come after it, once it was shown and went away.
+    fn show_next_parked(&mut self) {
+        let now = wall_ms();
+        self.parked.retain(|parked| !meeting_over(parked, now));
+        if self.held.is_some() || self.parked.is_empty() {
+            return;
+        }
+        let next = self.parked.remove(0);
+        self.show(next);
+    }
+
+    /// A work digest on screen, held or parked goes away (focus started).
     fn withdraw_work_digest(&mut self) {
         self.parked
             .retain(|parked| parked.kind != PopupKind::WorkDigest);
+        if self
+            .held
+            .as_ref()
+            .is_some_and(|held| held.request.kind == PopupKind::WorkDigest)
+        {
+            self.drop_held();
+        }
         if self
             .current
             .as_ref()
@@ -373,10 +518,18 @@ impl Worker {
         }
     }
 
-    /// The meeting `id` was answered: its reminder goes away (on screen or parked).
+    /// The meeting `id` was answered: its reminder goes away (on screen, held or parked).
     fn resolve_meeting(&mut self, id: &str) {
         self.parked
             .retain(|parked| parked.reminder_meeting_id() != Some(id));
+        if self
+            .held
+            .as_ref()
+            .and_then(|held| held.request.reminder_meeting_id())
+            == Some(id)
+        {
+            self.drop_held();
+        }
         if self
             .current
             .as_ref()
@@ -527,6 +680,30 @@ fn arrival(current: Option<&PopupRequest>, request: &PopupRequest) -> Arrival {
     match current.reminder_meeting_id() {
         Some(id) if request.reminder_meeting_id() != Some(id) => Arrival::ParkCurrent,
         _ => Arrival::Replace,
+    }
+}
+
+/// While the user presents, `request` meets the popup held before it (if any) as it would meet one on
+/// screen ([`arrival`]): it replaces it, parks it (a meeting question or a work digest), or waits behind it
+/// (a work digest). Returns the popup to hold and whether that is `request`.
+fn merge_held(
+    held: Option<PopupRequest>,
+    request: PopupRequest,
+    parked: &mut Vec<PopupRequest>,
+) -> (PopupRequest, bool) {
+    let Some(held) = held else {
+        return (request, true);
+    };
+    match arrival(Some(&held), &request) {
+        Arrival::Replace => (request, true),
+        Arrival::ParkCurrent => {
+            parked.push(held);
+            (request, true)
+        }
+        Arrival::Wait => {
+            parked.push(request);
+            (held, false)
+        }
     }
 }
 
@@ -685,6 +862,62 @@ mod tests {
             (Some(PopupKind::WorkDigest), 7)
         );
         assert_eq!(popup_info(5, None).work_count, 0);
+    }
+
+    #[test]
+    fn the_newest_popup_is_held_while_the_user_presents() {
+        let break_popup = PopupRequest::new(
+            PopupKind::BreakStarted,
+            1,
+            900,
+            texts::break_toast(900, None),
+        );
+        let focus_popup = PopupRequest::new(
+            PopupKind::FocusStarted,
+            2,
+            2700,
+            texts::focus_toast(2700, 2),
+        );
+        let mut parked = Vec::new();
+
+        // Nothing held yet: held as it is.
+        assert_eq!(
+            merge_held(None, break_popup.clone(), &mut parked),
+            (break_popup.clone(), true)
+        );
+        // A newer phase popup replaces the held one (the break is over anyway).
+        assert_eq!(
+            merge_held(Some(break_popup.clone()), focus_popup.clone(), &mut parked),
+            (focus_popup.clone(), true)
+        );
+        assert!(parked.is_empty());
+
+        // A digest waits behind the held popup; the held one stays (and keeps its time limit).
+        assert_eq!(
+            merge_held(Some(break_popup.clone()), digest(3), &mut parked),
+            (break_popup.clone(), false)
+        );
+        assert_eq!(parked, [digest(3)]);
+        parked.clear();
+
+        // A held meeting question is parked, not lost, when a phase popup arrives.
+        assert_eq!(
+            merge_held(
+                Some(meeting_reminder("m1")),
+                break_popup.clone(),
+                &mut parked
+            ),
+            (break_popup.clone(), true)
+        );
+        assert_eq!(parked, [meeting_reminder("m1")]);
+        parked.clear();
+
+        // A focus start drops a held digest for good.
+        assert_eq!(
+            merge_held(Some(digest(2)), focus_popup.clone(), &mut parked),
+            (focus_popup, true)
+        );
+        assert!(parked.is_empty());
     }
 
     #[test]
