@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "overlays",
-  "description": "Phase popup and screen tint windows: events only. App commands (get_popup, popup_action, get_tint_status) need no entry: without an app ACL manifest Tauri allows them to local windows. The YouTube window (media) gets no capability.",
-  "windows": ["popup", "tint-*"],
+  "description": "Phase popup window: events only. App commands (get_popup, popup_action) need no entry: without an app ACL manifest Tauri allows them to local windows. The YouTube window (media) gets no capability.",
+  "windows": ["popup"],
   "permissions": ["core:event:default"]
 }

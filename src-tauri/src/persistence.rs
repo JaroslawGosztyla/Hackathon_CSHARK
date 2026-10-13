@@ -1,4 +1,5 @@
-//! All file IO of the app: config, session history, shields crash-restore token, Teams token path.
+//! All file IO of the app: config, session history, the crash-restore files of the shields (muted
+//! notifications) and of the screen tint, the custom chime folder and the Teams token path.
 //! `websiteblacklist.txt` lives next to `config.json`, but `crate::blocklist` reads and watches it.
 //!
 //! Every method is blocking. Callers on the async runtime use `spawn_blocking`; the shields
@@ -13,6 +14,8 @@ use anyhow::Context;
 use focus_core::api::{AppError, Config, SessionSummary};
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use focus_platform::notifications::MuteToken;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tauri::{AppHandle, Manager};
 
 use crate::lock;
@@ -21,7 +24,10 @@ const CONFIG_FILE: &str = "config.json";
 const CONFIG_BACKUP_FILE: &str = "config.json.bak";
 const HISTORY_FILE: &str = "history.jsonl";
 const SHIELDS_RESTORE_FILE: &str = "shields-restore.json";
+const TINT_RESTORE_FILE: &str = "tint-restore.json";
 const TEAMS_TOKEN_FILE: &str = "teams-token.bin";
+/// Folder (in the app data directory) with the user's imported chime files.
+const SOUNDS_DIR: &str = "sounds";
 
 #[derive(Clone)]
 pub struct Persistence {
@@ -34,7 +40,9 @@ struct Inner {
     blocklist_path: PathBuf,
     history_path: PathBuf,
     restore_path: PathBuf,
+    tint_restore_path: PathBuf,
     teams_token_path: PathBuf,
+    sounds_dir: PathBuf,
     write_lock: Mutex<()>,
 }
 
@@ -61,7 +69,9 @@ impl Persistence {
                 blocklist_path: config_dir.join(BLACKLIST_FILE_NAME),
                 history_path: data_dir.join(HISTORY_FILE),
                 restore_path: data_dir.join(SHIELDS_RESTORE_FILE),
+                tint_restore_path: data_dir.join(TINT_RESTORE_FILE),
                 teams_token_path: data_dir.join(TEAMS_TOKEN_FILE),
+                sounds_dir: data_dir.join(SOUNDS_DIR),
                 write_lock: Mutex::new(()),
             }),
         })
@@ -69,6 +79,19 @@ impl Persistence {
 
     pub fn teams_token_path(&self) -> PathBuf {
         self.inner.teams_token_path.clone()
+    }
+
+    /// Folder of the imported chime files (`Config::custom_chimes` names files in it). Created on demand
+    /// by [`Self::ensure_sounds_dir`].
+    pub fn sounds_dir(&self) -> PathBuf {
+        self.inner.sounds_dir.clone()
+    }
+
+    /// Creates [`Self::sounds_dir`] when it is missing and returns it.
+    pub fn ensure_sounds_dir(&self) -> anyhow::Result<PathBuf> {
+        fs::create_dir_all(&self.inner.sounds_dir)
+            .with_context(|| format!("create {}", self.inner.sounds_dir.display()))?;
+        Ok(self.inner.sounds_dir.clone())
     }
 
     /// `websiteblacklist.txt` in the config directory (user-editable; see `crate::blocklist`).
@@ -165,6 +188,15 @@ impl Persistence {
             .collect())
     }
 
+    /// Deletes the whole session history (`history.jsonl` and a temp file a crashed write may have left).
+    /// A missing file is not an error.
+    pub fn clear_history(&self) -> anyhow::Result<()> {
+        let _guard = lock(&self.inner.write_lock);
+        remove_if_present(&self.inner.history_path)?;
+        remove_if_present(&tmp_path(&self.inner.history_path))?;
+        Ok(())
+    }
+
     /// Remembers how to restore Windows notifications if the app dies while they are muted.
     pub fn save_shields_restore(&self, token: &MuteToken) -> anyhow::Result<()> {
         let json = serde_json::to_vec_pretty(token).context("serialize mute token")?;
@@ -195,21 +227,78 @@ impl Persistence {
 
     pub fn clear_shields_restore(&self) {
         let _guard = lock(&self.inner.write_lock);
-        match fs::remove_file(&self.inner.restore_path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == ErrorKind::NotFound => {}
-            Err(err) => log::warn!("cannot delete shields restore file: {err}"),
+        if let Err(err) = remove_if_present(&self.inner.restore_path) {
+            log::warn!("cannot delete shields restore file: {err:#}");
         }
+    }
+
+    /// A notifications restore is pending (`shields-restore.json` exists).
+    pub fn has_shields_restore(&self) -> bool {
+        self.inner.restore_path.is_file()
+    }
+
+    /// Remembers the screen colours to restore if the app dies while the tint is applied.
+    pub fn save_tint_restore<T: Serialize>(&self, snapshot: &T) -> anyhow::Result<()> {
+        let json = serde_json::to_vec_pretty(snapshot).context("serialize tint restore")?;
+        let _guard = lock(&self.inner.write_lock);
+        write_atomic(&self.inner.tint_restore_path, &json)
+    }
+
+    /// The snapshot left behind by a run that did not restore the screen colours. A corrupted file is
+    /// deleted (nothing sensible can be restored from it).
+    pub fn load_tint_restore<T: DeserializeOwned>(&self) -> Option<T> {
+        let text = match fs::read_to_string(&self.inner.tint_restore_path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == ErrorKind::NotFound => return None,
+            Err(err) => {
+                log::warn!("cannot read tint restore file: {err}");
+                return None;
+            }
+        };
+        match serde_json::from_str::<T>(&text) {
+            Ok(snapshot) => Some(snapshot),
+            Err(err) => {
+                log::warn!("corrupted tint restore file, deleting it: {err}");
+                self.clear_tint_restore();
+                None
+            }
+        }
+    }
+
+    pub fn clear_tint_restore(&self) {
+        let _guard = lock(&self.inner.write_lock);
+        if let Err(err) = remove_if_present(&self.inner.tint_restore_path) {
+            log::warn!("cannot delete tint restore file: {err:#}");
+        }
+    }
+
+    /// A screen colour restore is pending (`tint-restore.json` exists).
+    pub fn has_tint_restore(&self) -> bool {
+        self.inner.tint_restore_path.is_file()
     }
 }
 
-/// Writes `bytes` to `<path>.tmp`, syncs it and renames it over `path`.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+/// Deletes `path`; a missing file is fine.
+fn remove_if_present(path: &Path) -> anyhow::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("delete {}", path.display())),
+    }
+}
+
+/// `<path>.tmp`, the temp file of [`write_atomic`].
+fn tmp_path(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".to_owned());
-    let tmp = path.with_file_name(format!("{file_name}.tmp"));
+    path.with_file_name(format!("{file_name}.tmp"))
+}
+
+/// Writes `bytes` to `<path>.tmp`, syncs it and renames it over `path`.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let tmp = tmp_path(path);
     {
         let mut file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
         file.write_all(bytes)
@@ -279,6 +368,40 @@ mod tests {
         let list = p.list_history(2).expect("list");
         let ids: Vec<_> = list.iter().map(|s| s.session_id.as_str()).collect();
         assert_eq!(ids, ["s2", "s1"]);
+
+        let history = root.join("data").join(HISTORY_FILE);
+        fs::write(tmp_path(&history), b"x").expect("tmp");
+        p.clear_history().expect("clear");
+        assert!(p.list_history(10).expect("list").is_empty());
+        assert!(!history.exists());
+        assert!(!tmp_path(&history).exists());
+        // Clearing an empty history is fine too.
+        p.clear_history().expect("clear again");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tint_restore_round_trip_and_corruption() {
+        let (root, p) = temp_dirs("tint");
+        assert!(!p.has_tint_restore());
+        assert_eq!(p.load_tint_restore::<Vec<u32>>(), None);
+        p.save_tint_restore(&vec![1_u32, 2, 3]).expect("save");
+        assert!(p.has_tint_restore());
+        assert_eq!(p.load_tint_restore::<Vec<u32>>(), Some(vec![1, 2, 3]));
+        fs::write(root.join("data").join(TINT_RESTORE_FILE), b"{ nope").expect("write");
+        assert_eq!(p.load_tint_restore::<Vec<u32>>(), None);
+        assert!(!p.has_tint_restore(), "a corrupted file is deleted");
+        p.clear_tint_restore();
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sounds_dir_is_created_on_demand() {
+        let (root, p) = temp_dirs("sounds");
+        assert!(!p.sounds_dir().exists());
+        let dir = p.ensure_sounds_dir().expect("create");
+        assert!(dir.is_dir());
+        assert_eq!(dir, p.sounds_dir());
         let _ = fs::remove_dir_all(&root);
     }
 }

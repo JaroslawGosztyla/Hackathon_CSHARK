@@ -4,42 +4,78 @@
 //! shields worker, phase popups to the popup thread, tracking to the tracker thread, history writes to
 //! the blocking pool.
 
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use focus_audio::{AudioEvent, Chime, ChimePlayer};
-use focus_core::api::{AppError, ChimeKind, PopupKind, SessionSummary, events};
+use focus_audio::{AudioEvent, Chime, ChimePlayer, ChimeSource, SoundPack};
+use focus_core::api::{AppError, ChimeKind, ChimeSound, Config, PopupKind, SessionSummary, events};
+use focus_core::config::reminder_for_break;
 use focus_core::session::{Effect, NotifyKind, SessionTotals};
 use tauri::{AppHandle, Emitter};
 
 use crate::persistence::Persistence;
 use crate::popup::{PopupHandle, PopupRequest};
 use crate::shields::ShieldsHandle;
-use crate::texts::Toast;
-use crate::tracker::TrackerHandle;
-use crate::{SharedConfig, emit_error, lock, read_config, texts};
+use crate::tracker::{TrackerHandle, without_titles};
+use crate::{SharedConfig, chimes, emit_error, lock, read_config, texts};
 
 /// Longest wait for the tracker's final report when a session ends (normally a few ms).
 const FINAL_REPORT_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Handle to the chime player (audio thread), keyed by the IPC `ChimeKind`.
 #[derive(Clone)]
-pub struct ChimeHandle(ChimePlayer);
+pub struct ChimeHandle {
+    player: ChimePlayer,
+    /// Folder of the imported chime files (`Persistence::sounds_dir`).
+    sounds_dir: PathBuf,
+}
 
 impl ChimeHandle {
-    pub fn new(player: ChimePlayer) -> Self {
-        Self(player)
+    pub fn new(player: ChimePlayer, sounds_dir: PathBuf) -> Self {
+        Self { player, sounds_dir }
     }
 
-    /// Non-blocking.
-    pub fn play(&self, kind: ChimeKind, volume: f32) {
+    /// Plays `kind` with the configured sound (`chime_sound`, `custom_chimes`) and volume. Non-blocking:
+    /// a custom file is read and decoded on the audio thread.
+    pub fn play(&self, kind: ChimeKind, config: &Config) {
         let chime = match kind {
             ChimeKind::BreakStart => Chime::BreakStart,
             ChimeKind::FocusStart => Chime::FocusStart,
         };
-        self.0.play(chime, volume);
+        let source = chime_source(config, kind, &self.sounds_dir);
+        self.player.play(chime, source, config.chime_volume);
     }
+}
+
+/// The sound for `kind`: the configured pack, or the user's file for `custom` (its own file, else the other
+/// one; the default pack when none is set).
+fn chime_source(config: &Config, kind: ChimeKind, sounds_dir: &Path) -> ChimeSource {
+    let pack = match config.chime_sound {
+        ChimeSound::Midnight => SoundPack::Midnight,
+        ChimeSound::Vaporwave => SoundPack::Vaporwave,
+        ChimeSound::Lunar => SoundPack::Lunar,
+        ChimeSound::Autumn => SoundPack::Autumn,
+        ChimeSound::Classic => SoundPack::Classic,
+        ChimeSound::Soft => SoundPack::Soft,
+        ChimeSound::Chiptune => SoundPack::Chiptune,
+        ChimeSound::Custom => {
+            return config
+                .custom_chimes
+                .file_for(kind)
+                .and_then(|name| chimes::path_of(sounds_dir, name))
+                .map_or(ChimeSource::Pack(SoundPack::Midnight), ChimeSource::File);
+        }
+    };
+    ChimeSource::Pack(pack)
+}
+
+/// Blocking: `Ok` when `path` is an audio file the chime player can decode (`import_chime`).
+pub fn probe_chime_file(path: &Path) -> Result<(), String> {
+    focus_audio::probe_file(path)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 /// Forwards audio thread errors to the UI as `app://error` (`audio.device`).
@@ -77,10 +113,7 @@ impl Effects {
     pub fn dispatch(&mut self, effects: Vec<Effect>, shutting_down: bool) {
         for effect in effects {
             match effect {
-                Effect::Chime(kind) => {
-                    let volume = read_config(&self.config).chime_volume;
-                    self.chime.play(kind, volume);
-                }
+                Effect::Chime(kind) => self.chime.play(kind, &read_config(&self.config)),
                 Effect::Notify(kind) => self.notify(kind),
                 Effect::Shields(up) => self.shields.set_up(up),
                 Effect::Tracking(on) => self.tracker.set_enabled(on),
@@ -103,24 +136,23 @@ impl Effects {
 
     /// The app's own popup when `phase_popups` is on, otherwise the Windows toast (never both).
     fn notify(&self, kind: NotifyKind) {
-        let (popup_kind, cycle, phase_secs, toast) = notification(kind, self.last_cycle);
-        if read_config(&self.config).phase_popups {
-            self.popup.show(PopupRequest {
-                kind: popup_kind,
-                cycle,
-                phase_secs,
-                launchers: Vec::new(),
-                fallback: toast,
-            });
+        let config = read_config(&self.config);
+        let request = notification(kind, self.last_cycle, &config);
+        if config.phase_popups {
+            self.popup.show(request);
         } else {
-            self.shields.toast(toast);
+            self.shields.toast(request.fallback);
         }
     }
 
     fn finish_session(&self, totals: &SessionTotals, shutting_down: bool) {
         // `Tracking(false)` was just queued to the tracker: wait (bounded) until it is applied so the
         // last partial sample is in the summary.
-        let usage = self.tracker.settled_report(FINAL_REPORT_TIMEOUT);
+        let config = read_config(&self.config);
+        let mut usage = self.tracker.settled_report(FINAL_REPORT_TIMEOUT);
+        if !config.track_titles {
+            usage = without_titles(usage);
+        }
         let summary = focus_core::stats::summarize(totals, usage);
         log::info!(
             "session {} ended: {} s focused, {} cycles",
@@ -133,6 +165,11 @@ impl Effects {
             log::warn!("cannot emit session summary: {err}");
         }
 
+        if !config.keep_history {
+            // The summary is shown (and kept in memory until the app quits), but not stored.
+            log::info!("session history is off; the summary is not saved");
+            return;
+        }
         if shutting_down {
             if let Err(err) = self.persistence.append_history(&summary) {
                 log::error!("cannot save session history: {err:#}");
@@ -155,26 +192,42 @@ impl Effects {
     }
 }
 
-/// Popup kind, cycle, phase length and toast text of a session notification. `last_cycle` is the cycle
-/// of the latest phase change (the focus cycle that just ended, for a break).
-fn notification(kind: NotifyKind, last_cycle: u32) -> (PopupKind, u32, u32, Toast) {
+/// Popup (and its toast fallback) of a session notification. `last_cycle` is the cycle of the latest
+/// phase change: for a break, the focus cycle that just ended, which is also the break's number
+/// (the break after cycle 1 is break 1) for the user's per-break reminder.
+fn notification(kind: NotifyKind, last_cycle: u32, config: &Config) -> PopupRequest {
+    let request = |kind, cycle, phase_secs, reminder, fallback| PopupRequest {
+        kind,
+        cycle,
+        phase_secs,
+        launchers: Vec::new(),
+        reminder,
+        fallback,
+    };
     match kind {
-        NotifyKind::BreakStarted { break_secs } => (
-            PopupKind::BreakStarted,
-            last_cycle,
-            break_secs,
-            texts::break_toast(break_secs),
-        ),
-        NotifyKind::FocusStarted { focus_secs, cycle } => (
+        NotifyKind::BreakStarted { break_secs } => {
+            let reminder = reminder_for_break(config, last_cycle);
+            let toast = texts::break_toast(break_secs, reminder.as_deref());
+            request(
+                PopupKind::BreakStarted,
+                last_cycle,
+                break_secs,
+                reminder,
+                toast,
+            )
+        }
+        NotifyKind::FocusStarted { focus_secs, cycle } => request(
             PopupKind::FocusStarted,
             cycle,
             focus_secs,
+            None,
             texts::focus_toast(focus_secs, cycle),
         ),
-        NotifyKind::Interrupted => (
+        NotifyKind::Interrupted => request(
             PopupKind::Interrupted,
             last_cycle,
             0,
+            None,
             texts::interrupted_toast(),
         ),
     }
@@ -186,22 +239,106 @@ mod tests {
 
     #[test]
     fn notifications_map_to_popups_and_toasts() {
-        let (kind, cycle, secs, toast) =
-            notification(NotifyKind::BreakStarted { break_secs: 900 }, 3);
-        assert_eq!((kind, cycle, secs), (PopupKind::BreakStarted, 3, 900));
-        assert_eq!(toast, texts::break_toast(900));
+        let config = Config::default();
+        let popup = notification(NotifyKind::BreakStarted { break_secs: 900 }, 3, &config);
+        assert_eq!(
+            (popup.kind, popup.cycle, popup.phase_secs),
+            (PopupKind::BreakStarted, 3, 900)
+        );
+        assert_eq!(popup.reminder, None);
+        assert_eq!(popup.fallback, texts::break_toast(900, None));
 
-        let (kind, cycle, secs, toast) = notification(
+        let popup = notification(
             NotifyKind::FocusStarted {
                 focus_secs: 2700,
                 cycle: 4,
             },
             3,
+            &config,
         );
-        assert_eq!((kind, cycle, secs), (PopupKind::FocusStarted, 4, 2700));
-        assert_eq!(toast, texts::focus_toast(2700, 4));
+        assert_eq!(
+            (popup.kind, popup.cycle, popup.phase_secs),
+            (PopupKind::FocusStarted, 4, 2700)
+        );
+        assert_eq!(popup.fallback, texts::focus_toast(2700, 4));
 
-        let (kind, cycle, secs, _) = notification(NotifyKind::Interrupted, 2);
-        assert_eq!((kind, cycle, secs), (PopupKind::Interrupted, 2, 0));
+        let popup = notification(NotifyKind::Interrupted, 2, &config);
+        assert_eq!(
+            (popup.kind, popup.cycle, popup.phase_secs),
+            (PopupKind::Interrupted, 2, 0)
+        );
+    }
+
+    #[test]
+    fn chime_sound_picks_the_pack_or_the_custom_file() {
+        let sounds = Path::new("sounds");
+        let mut config = Config::default();
+        assert_eq!(
+            chime_source(&config, ChimeKind::BreakStart, sounds),
+            ChimeSource::Pack(SoundPack::Midnight)
+        );
+        config.chime_sound = ChimeSound::Chiptune;
+        assert_eq!(
+            chime_source(&config, ChimeKind::FocusStart, sounds),
+            ChimeSource::Pack(SoundPack::Chiptune)
+        );
+
+        // Custom without files: the default sound.
+        config.chime_sound = ChimeSound::Custom;
+        assert_eq!(
+            chime_source(&config, ChimeKind::FocusStart, sounds),
+            ChimeSource::Pack(SoundPack::Midnight)
+        );
+        // Only a break file: used for both chimes.
+        config.custom_chimes.break_file = Some("custom-break-1.mp3".into());
+        let break_file = ChimeSource::File(sounds.join("custom-break-1.mp3"));
+        assert_eq!(
+            chime_source(&config, ChimeKind::BreakStart, sounds),
+            break_file
+        );
+        assert_eq!(
+            chime_source(&config, ChimeKind::FocusStart, sounds),
+            break_file
+        );
+        config.custom_chimes.focus_file = Some("custom-focus-2.wav".into());
+        assert_eq!(
+            chime_source(&config, ChimeKind::FocusStart, sounds),
+            ChimeSource::File(sounds.join("custom-focus-2.wav"))
+        );
+        // A name that would leave the folder is never used.
+        config.custom_chimes.focus_file = Some("../x.mp3".into());
+        config.custom_chimes.break_file = None;
+        assert_eq!(
+            chime_source(&config, ChimeKind::FocusStart, sounds),
+            ChimeSource::Pack(SoundPack::Midnight)
+        );
+    }
+
+    #[test]
+    fn each_break_gets_its_own_reminder() {
+        let config = Config {
+            break_reminders: vec!["rozciąganie".into(), String::new(), "obiad".into()],
+            ..Config::default()
+        };
+        let reminder = |cycle| {
+            notification(NotifyKind::BreakStarted { break_secs: 600 }, cycle, &config).reminder
+        };
+        assert_eq!(reminder(1).as_deref(), Some("rozciąganie"));
+        assert_eq!(reminder(2), None);
+        assert_eq!(reminder(3).as_deref(), Some("obiad"));
+        assert_eq!(reminder(4), None);
+
+        let popup = notification(NotifyKind::BreakStarted { break_secs: 600 }, 3, &config);
+        assert_eq!(popup.fallback, texts::break_toast(600, Some("obiad")));
+        // Focus popups never carry a break reminder.
+        let focus = notification(
+            NotifyKind::FocusStarted {
+                focus_secs: 60,
+                cycle: 1,
+            },
+            0,
+            &config,
+        );
+        assert_eq!(focus.reminder, None);
     }
 }

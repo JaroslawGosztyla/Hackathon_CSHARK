@@ -1,13 +1,23 @@
-//! Local music folder: scanning for audio files and allowing them in the asset protocol scope,
-//! so the WebView can play them with `convertFileSrc(path)`.
+//! Local music: the user's folder and the library bundled with the app (Open Lo-Fi, CC0). Found audio
+//! files are allowed in the asset protocol scope, so the WebView can play them with `convertFileSrc(path)`.
 //!
-//! Only the scanned audio files are allowed (one scope entry per track, at most `MAX_FILES`), never
+//! Only the listed audio files are allowed (one scope entry per track, at most `MAX_FILES`), never
 //! the folder itself: other files in it (documents, keys, ...) stay unreadable for the WebView.
 
 use std::path::{Path, PathBuf};
 
 use focus_core::api::{AppError, Track};
+use serde::Deserialize;
 use tauri::{AppHandle, Manager};
+
+/// Bundled library folder inside the resource directory (`tauri.conf.json` → `bundle.resources`).
+const LIBRARY_DIR: [&str; 2] = ["music", "open-lofi"];
+/// Track list of the bundled library (file names and titles, see `CREDITS.md`).
+const LIBRARY_INDEX: &str = "library.json";
+/// Sanity limits for `library.json`.
+const MAX_LIBRARY_INDEX_BYTES: u64 = 256 * 1024;
+const MAX_LIBRARY_TRACKS: usize = 500;
+const MAX_TITLE_CHARS: usize = 120;
 
 const EXTENSIONS: &[&str] = &[
     "mp3", "m4a", "aac", "flac", "wav", "ogg", "oga", "opus", "webm",
@@ -128,6 +138,102 @@ pub fn allow_configured_folder(app: &AppHandle, folder: Option<&str>) {
     }
 }
 
+/// `library.json`: only the fields the shell needs (the rest documents the source and licence).
+#[derive(Debug, Deserialize)]
+struct LibraryIndex {
+    #[serde(default)]
+    tracks: Vec<LibraryEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LibraryEntry {
+    file: String,
+    #[serde(default)]
+    title: String,
+}
+
+/// Blocking: the bundled tracks in `library.json` order, allowed for playback (`list_library_tracks`).
+pub fn library_tracks(app: &AppHandle) -> Result<Vec<Track>, AppError> {
+    let dir = find_library_dir(app).ok_or_else(|| {
+        library_error("the bundled music library was not found (music/open-lofi/library.json)")
+    })?;
+    let tracks = read_library(&dir)?;
+    allow_tracks(app, &tracks);
+    Ok(tracks)
+}
+
+/// Bundled library (`$RESOURCE/music/open-lofi`), or the repo folder in debug builds.
+fn find_library_dir(app: &AppHandle) -> Option<PathBuf> {
+    let in_resources = |root: PathBuf| LIBRARY_DIR.iter().fold(root, |dir, part| dir.join(part));
+    let bundled = app.path().resource_dir().ok().map(in_resources);
+    // Release builds must not embed (or look into) the build machine's source path.
+    #[cfg(debug_assertions)]
+    let dev = Some(in_resources(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("resources"),
+    ));
+    #[cfg(not(debug_assertions))]
+    let dev: Option<PathBuf> = None;
+    [bundled, dev]
+        .into_iter()
+        .flatten()
+        .find(|dir| dir.join(LIBRARY_INDEX).is_file())
+        .map(crate::without_verbatim_prefix)
+}
+
+/// Blocking: reads `library.json` in `dir`. Entries that are not a plain audio file name in `dir`, or
+/// whose file is missing, are skipped (logged); the title falls back to the file name.
+fn read_library(dir: &Path) -> Result<Vec<Track>, AppError> {
+    let index = dir.join(LIBRARY_INDEX);
+    let size = std::fs::metadata(&index)
+        .map_err(|err| library_error(format!("cannot read {}: {err}", index.display())))?
+        .len();
+    if size > MAX_LIBRARY_INDEX_BYTES {
+        return Err(library_error(format!("{} is too large", index.display())));
+    }
+    let text = std::fs::read_to_string(&index)
+        .map_err(|err| library_error(format!("cannot read {}: {err}", index.display())))?;
+    let parsed: LibraryIndex = serde_json::from_str(&text)
+        .map_err(|err| library_error(format!("invalid {}: {err}", index.display())))?;
+
+    let mut tracks = Vec::new();
+    for entry in parsed.tracks.into_iter().take(MAX_LIBRARY_TRACKS) {
+        let file = entry.file.trim();
+        if !is_plain_file_name(file) || !is_audio(Path::new(file)) {
+            log::warn!("music library: skipping invalid entry {file:?}");
+            continue;
+        }
+        let path = dir.join(file);
+        if !path.is_file() {
+            log::warn!("music library: {file} is missing");
+            continue;
+        }
+        let title = entry.title.trim();
+        let title = if title.is_empty() {
+            Path::new(file)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            title.chars().take(MAX_TITLE_CHARS).collect()
+        };
+        tracks.push(Track {
+            path: path.to_string_lossy().into_owned(),
+            title,
+        });
+    }
+    Ok(tracks)
+}
+
+/// A bare file name: no separators, no `..`, no drive or stream colon, no control characters.
+fn is_plain_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && !name.contains("..")
+        && !name
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+}
+
 fn is_audio(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -144,6 +250,10 @@ fn folder_error(message: String) -> AppError {
         message,
         field: Some("music.folder".into()),
     }
+}
+
+fn library_error(message: impl Into<String>) -> AppError {
+    AppError::new("music.library", message)
 }
 
 #[cfg(test)]
@@ -165,6 +275,63 @@ mod tests {
         let titles: Vec<_> = tracks.iter().map(|t| t.title.as_str()).collect();
         assert_eq!(titles, ["alpha", "beta", "Zeta"]);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reads_the_library_index_and_skips_bad_entries() {
+        let root = std::env::temp_dir().join(format!("focusmode-library-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dir");
+        fs::write(root.join("one.mp3"), b"x").expect("file");
+        fs::write(root.join("two.mp3"), b"x").expect("file");
+        fs::write(
+            root.join(LIBRARY_INDEX),
+            r#"{
+                "collection": "Test", "license": "CC0-1.0",
+                "tracks": [
+                    { "file": "two.mp3", "title": " Second Track " },
+                    { "file": "one.mp3" },
+                    { "file": "../outside.mp3", "title": "Escape" },
+                    { "file": "notes.txt", "title": "Text" },
+                    { "file": "missing.mp3", "title": "Missing" }
+                ]
+            }"#,
+        )
+        .expect("index");
+
+        let tracks = read_library(&root).expect("library");
+        let titles: Vec<_> = tracks.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, ["Second Track", "one"]);
+        assert!(Path::new(&tracks[0].path).ends_with("two.mp3"));
+
+        fs::write(root.join(LIBRARY_INDEX), b"{ broken").expect("index");
+        assert_eq!(
+            read_library(&root).expect_err("broken").code,
+            "music.library"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_bundled_library_lists_existing_tracks() {
+        let dir = LIBRARY_DIR.iter().fold(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("resources"),
+            |dir, part| dir.join(part),
+        );
+        let tracks = read_library(&dir).expect("bundled library");
+        assert!(!tracks.is_empty());
+        assert!(tracks.iter().all(|track| Path::new(&track.path).is_file()));
+        assert!(tracks.iter().all(|track| !track.title.is_empty()));
+    }
+
+    #[test]
+    fn plain_file_names_only() {
+        assert!(is_plain_file_name("terminal-rain.mp3"));
+        for bad in [
+            "", ".", "..", "a/b.mp3", r"a\b.mp3", "C:x.mp3", "a..mp3", "x\n.mp3",
+        ] {
+            assert!(!is_plain_file_name(bad), "{bad:?}");
+        }
     }
 
     #[test]

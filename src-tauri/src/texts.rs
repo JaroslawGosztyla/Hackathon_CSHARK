@@ -18,8 +18,6 @@ pub const TRAY_QUIT: &str = "Zakończ";
 pub const MEDIA_WINDOW_TITLE: &str = "FocusMode — muzyka (YouTube)";
 /// Title of the phase popup window (bottom-right corner; seen only in Alt+Tab).
 pub const POPUP_WINDOW_TITLE: &str = "FocusMode — powiadomienie";
-/// Title of the warm screen tint overlays (one per monitor; seen only in Alt+Tab).
-pub const TINT_WINDOW_TITLE: &str = "FocusMode — ciepłe światło";
 
 /// A toast notification: title and body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,15 +35,15 @@ impl Toast {
     }
 }
 
-/// Focus ended, break begins.
-pub fn break_toast(break_secs: u32) -> Toast {
-    Toast::new(
-        "Czas na przerwę ☕",
-        format!(
-            "Wstań, rozciągnij się, napij się wody. Wracamy za {}.",
-            duration_pl(break_secs)
-        ),
-    )
+/// Focus ended, break begins. `reminder` (the user's own text for this break, `Config::break_reminders`)
+/// replaces the generic suggestion when present.
+pub fn break_toast(break_secs: u32, reminder: Option<&str>) -> Toast {
+    let back_in = duration_pl(break_secs);
+    let body = match reminder.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(reminder) => format!("Przypomnienie: {reminder}\nWracamy za {back_in}."),
+        None => format!("Wstań, rozciągnij się, napij się wody. Wracamy za {back_in}."),
+    };
+    Toast::new("Czas na przerwę ☕", body)
 }
 
 /// Break ended, next focus cycle begins.
@@ -174,8 +172,19 @@ mod tests {
     }
 
     #[test]
+    fn break_toast_shows_the_reminder() {
+        let plain = break_toast(15 * 60, None);
+        assert!(plain.body.contains("Wstań"));
+        let reminder = break_toast(15 * 60, Some("  obiad  "));
+        assert!(reminder.body.starts_with("Przypomnienie: obiad\n"));
+        assert!(reminder.body.contains("15 min"));
+        assert!(!reminder.body.contains("Wstań"));
+        assert_eq!(break_toast(60, Some("   ")), break_toast(60, None));
+    }
+
+    #[test]
     fn toasts_contain_numbers() {
-        assert!(break_toast(15 * 60).body.contains("15 min"));
+        assert!(break_toast(15 * 60, None).body.contains("15 min"));
         assert!(focus_toast(45 * 60, 2).body.contains("Cykl 2"));
         assert!(nudge_toast("reddit.com", false).body.contains("reddit.com"));
         let launchers = launchers_closed_toast(&["Steam", "GOG Galaxy"]);

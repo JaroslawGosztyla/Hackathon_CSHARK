@@ -18,7 +18,9 @@
 //!
 //! The window stays focusable on purpose (no `WS_EX_NOACTIVATE`): its buttons must take clicks reliably.
 //! It still appears without activation; only the user activates it (a click, Alt+Tab). It is listed in
-//! Alt+Tab while visible (see the note in `crate::tint`).
+//! Alt+Tab while visible.
+// TODO(hackathon): tao gives every unowned window `WS_EX_APPWINDOW` and `skip_taskbar` only removes the
+// taskbar button; hiding it from Alt+Tab needs `WS_EX_TOOLWINDOW` (a `focus-platform` helper).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -62,6 +64,8 @@ pub struct PopupRequest {
     /// Length of the phase that just started, in seconds (0 when not applicable).
     pub phase_secs: u32,
     pub launchers: Vec<GameLauncher>,
+    /// The user's reminder for the break that just started (`Config::break_reminders`).
+    pub reminder: Option<String>,
     /// Shown instead (through the shields worker) when the popup window cannot be created.
     pub fallback: Toast,
 }
@@ -93,6 +97,7 @@ impl PopupHandle {
             cycle: 0,
             phase_secs: 0,
             launchers: Vec::new(),
+            reminder: None,
         }));
         let shared = Arc::clone(&info);
         let page_loaded = Arc::new(AtomicBool::new(false));
@@ -219,12 +224,7 @@ impl Worker {
             _ => {}
         }
         // Published first: a window created below reads it with `get_popup` when its page loads.
-        self.publish(
-            Some(request.kind),
-            request.cycle,
-            request.phase_secs,
-            request.launchers.clone(),
-        );
+        self.publish(Some(&request));
         match self.ensure_window() {
             Ok(()) => {
                 self.shown_at = Some(now);
@@ -232,7 +232,7 @@ impl Worker {
             }
             Err(err) => {
                 emit_error(&self.app, err);
-                self.publish(None, 0, 0, Vec::new());
+                self.publish(None);
                 self.shown_at = None;
                 self.deadline = None;
                 self.shields.toast(request.fallback);
@@ -245,7 +245,7 @@ impl Worker {
         self.deadline = None;
         let showing = lock(&self.info).kind.is_some();
         if showing {
-            self.publish(None, 0, 0, Vec::new());
+            self.publish(None);
         }
         if let Some(window) = self.app.get_webview_window(POPUP_WINDOW) {
             if let Err(err) = window.destroy() {
@@ -312,26 +312,39 @@ impl Worker {
         }
     }
 
-    /// Bumps the revision, stores the info for `get_popup` and emits `popup://show`.
-    fn publish(
-        &mut self,
-        kind: Option<PopupKind>,
-        cycle: u32,
-        phase_secs: u32,
-        launchers: Vec<GameLauncher>,
-    ) {
+    /// Bumps the revision, stores the info for `get_popup` and emits `popup://show`; `None` hides.
+    fn publish(&mut self, request: Option<&PopupRequest>) {
         let info = {
             let mut info = lock(&self.info);
-            info.revision = info.revision.wrapping_add(1);
-            info.kind = kind;
-            info.cycle = cycle;
-            info.phase_secs = phase_secs;
-            info.launchers = launchers;
+            let revision = info.revision.wrapping_add(1);
+            *info = popup_info(revision, request);
             info.clone()
         };
         if let Err(err) = self.app.emit(events::POPUP_SHOW, info) {
             log::warn!("cannot emit popup: {err}");
         }
+    }
+}
+
+/// What `get_popup` returns for `request` (`None` = nothing to show).
+fn popup_info(revision: u32, request: Option<&PopupRequest>) -> PopupInfo {
+    match request {
+        Some(request) => PopupInfo {
+            revision,
+            kind: Some(request.kind),
+            cycle: request.cycle,
+            phase_secs: request.phase_secs,
+            launchers: request.launchers.clone(),
+            reminder: request.reminder.clone(),
+        },
+        None => PopupInfo {
+            revision,
+            kind: None,
+            cycle: 0,
+            phase_secs: 0,
+            launchers: Vec::new(),
+            reminder: None,
+        },
     }
 }
 
@@ -366,5 +379,27 @@ mod tests {
         assert_eq!(hide_at(shown, false), shown + SAFETY_TIMEOUT);
         // The page counts 8 s and pauses while hovered: the shell must not cut it short.
         assert_eq!(hide_at(shown, true), shown + LOADED_TIMEOUT);
+    }
+
+    #[test]
+    fn popup_info_carries_the_reminder_and_hides_clean() {
+        let request = PopupRequest {
+            kind: PopupKind::BreakStarted,
+            cycle: 2,
+            phase_secs: 900,
+            launchers: Vec::new(),
+            reminder: Some("Woda i spacer z psem".into()),
+            fallback: texts::break_toast(900, Some("Woda i spacer z psem")),
+        };
+        let shown = popup_info(7, Some(&request));
+        assert_eq!(shown.revision, 7);
+        assert_eq!(shown.kind, Some(PopupKind::BreakStarted));
+        assert_eq!((shown.cycle, shown.phase_secs), (2, 900));
+        assert_eq!(shown.reminder.as_deref(), Some("Woda i spacer z psem"));
+
+        let hidden = popup_info(8, None);
+        assert_eq!(hidden.kind, None);
+        assert_eq!(hidden.reminder, None);
+        assert!(hidden.launchers.is_empty());
     }
 }

@@ -4,18 +4,21 @@
 //! (several of them wait for a worker reply; the main thread must stay free for the event loop).
 
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
-    AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, ChimeKind, Config, DeviceCodePrompt,
-    Language, MediaAction, MediaWindowStatus, Phase, PopupAction, PopupInfo, SessionSnapshot,
-    SessionSummary, ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport,
+    AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, ChimeKind, ChimeSound, Config,
+    DeviceCodePrompt, Language, MediaAction, MediaWindowStatus, Phase, PopupAction, PopupInfo,
+    SessionSnapshot, SessionSummary, ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::session_actor::ActorCmd;
-use crate::{AppState, close, emit_error, lock, music, read_config, write_config};
+use crate::{
+    AppState, chimes, close, effects, emit_error, lock, music, read_config, tracker, write_config,
+};
 
 /// Upper bound for `list_history(limit)`.
 const MAX_HISTORY: u32 = 500;
@@ -201,6 +204,14 @@ pub async fn list_folder_tracks(app: AppHandle, path: String) -> Result<Vec<Trac
 }
 
 #[tauri::command]
+pub async fn list_library_tracks(app: AppHandle) -> Result<Vec<Track>, AppError> {
+    // Reads library.json and allows each bundled file in the asset scope: keep it off the async workers.
+    tauri::async_runtime::spawn_blocking(move || music::library_tracks(&app))
+        .await
+        .map_err(|err| AppError::new("music.library", format!("library scan failed: {err}")))?
+}
+
+#[tauri::command]
 pub async fn get_shield_status(state: State<'_, AppState>) -> Result<ShieldStatus, AppError> {
     Ok(state.shields.status())
 }
@@ -211,7 +222,12 @@ pub async fn get_current_usage(state: State<'_, AppState>) -> Result<UsageReport
     if snapshot.phase == Phase::Idle {
         return Ok(UsageReport::default());
     }
-    Ok(state.tracker.report())
+    let report = state.tracker.report();
+    Ok(if read_config(&state.config).track_titles {
+        report
+    } else {
+        tracker::without_titles(report)
+    })
 }
 
 #[tauri::command]
@@ -232,6 +248,23 @@ pub async fn list_history(
         .await
         .map_err(|err| AppError::new("persistence.history", err.to_string()))?
         .map_err(|err| AppError::new("persistence.history", format!("{err:#}")))
+}
+
+#[tauri::command]
+pub async fn clear_history(state: State<'_, AppState>) -> Result<(), AppError> {
+    let persistence = state.persistence.clone();
+    tauri::async_runtime::spawn_blocking(move || persistence.clear_history())
+        .await
+        .map_err(|err| AppError::new("persistence.history", err.to_string()))?
+        .map_err(|err| {
+            AppError::new(
+                "persistence.history",
+                format!("cannot delete the session history: {err:#}"),
+            )
+        })?;
+    *lock(&state.last_summary) = None;
+    log::info!("session history deleted at the user's request");
+    Ok(())
 }
 
 #[tauri::command]
@@ -285,9 +318,62 @@ pub async fn open_extension_dir(
 
 #[tauri::command]
 pub async fn test_chime(state: State<'_, AppState>, chime: ChimeKind) -> Result<(), AppError> {
-    let volume = read_config(&state.config).chime_volume;
-    state.chime.play(chime, volume);
+    state.chime.play(chime, &read_config(&state.config));
     Ok(())
+}
+
+#[tauri::command]
+pub async fn import_chime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    chime: ChimeKind,
+) -> Result<Config, AppError> {
+    // Held for the whole import: `remove_unused` below must never see a copy whose name is not stored yet.
+    let _serial = state.config_update.lock().await;
+    let sounds_dir = state.persistence.sounds_dir();
+    let source = PathBuf::from(path.trim());
+    let dir = sounds_dir.clone();
+    let name = tauri::async_runtime::spawn_blocking(move || {
+        chimes::import(&dir, &source, chime, wall_ms(), effects::probe_chime_file)
+    })
+    .await
+    .map_err(|err| AppError::new("chime.save", format!("chime import failed: {err}")))??;
+
+    let mut config = read_config(&state.config);
+    *chimes::slot(&mut config.custom_chimes, chime) = Some(name.clone());
+    config.chime_sound = ChimeSound::Custom;
+    let stored = store_config(&app, &state, config).await;
+    let custom = match &stored {
+        Ok(saved) => saved.custom_chimes.clone(),
+        // Not stored: the new copy is unused and goes away with the other leftovers.
+        Err(_) => read_config(&state.config).custom_chimes,
+    };
+    chimes::remove_unused_later(sounds_dir, custom).await;
+    stored
+}
+
+#[tauri::command]
+pub async fn remove_custom_chime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    chime: ChimeKind,
+) -> Result<Config, AppError> {
+    let _serial = state.config_update.lock().await;
+    let mut config = read_config(&state.config);
+    // `chimeSound` stays `custom`: the other file (or, with none left, the default sound) plays instead.
+    *chimes::slot(&mut config.custom_chimes, chime) = None;
+    let saved = store_config(&app, &state, config).await?;
+    chimes::remove_unused_later(state.persistence.sounds_dir(), saved.custom_chimes.clone()).await;
+    Ok(saved)
+}
+
+/// Wall clock in Unix milliseconds (unique imported chime names).
+fn wall_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 #[tauri::command]

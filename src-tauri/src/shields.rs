@@ -10,8 +10,9 @@
 //! No failure ever stops the session: it becomes `IntegrationState::Error` + `app://error`.
 //!
 //! Notifications crash-restore: the `MuteToken` is written to `shields-restore.json` and the logon
-//! safety net (`RunOnce` → `FocusMode.exe --restore-shields`) is registered **before** Windows is changed;
-//! both are removed after notifications are restored. Without a saved token we never mute.
+//! safety net (`RunOnce` → `FocusMode.exe --restore-shields`, shared with the screen tint, see
+//! `crate::safety_net`) is armed **before** Windows is changed; both are cleared after notifications are
+//! restored. Without a saved token we never mute.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -23,7 +24,6 @@ use focus_core::api::{
 };
 use focus_core::launchers;
 use focus_platform::PlatformError;
-use focus_platform::logon::LogonTask;
 use focus_platform::notifications::{MuteToken, NotificationMuter};
 use focus_platform::power::KeepAwake;
 use focus_platform::processes::{ClosedProcess, ProcessCloser};
@@ -33,11 +33,12 @@ use tauri_plugin_notification::NotificationExt;
 use crate::bridge::SharedBridge;
 use crate::persistence::Persistence;
 use crate::popup::{PopupHandle, PopupRequest};
+use crate::safety_net::{Pending, SafetyNet};
 use crate::teams::TeamsHandle;
 use crate::texts::{self, Toast};
 use crate::{
-    RESTORE_SHIELDS_ARG, SharedConfig, emit_error, emit_startup_error, finish_restore_only, lock,
-    read_config, restore_only_pending,
+    SharedConfig, crash_restore_done, emit_error, emit_startup_error, lock, read_config,
+    restore_only_pending,
 };
 
 /// How often the worker re-checks the extension connection when nothing else happens.
@@ -156,6 +157,8 @@ pub struct ShieldsContext {
     pub teams: TeamsHandle,
     /// Reports closed launchers when `phase_popups` is on.
     pub popup: PopupHandle,
+    /// Logon restore entry (shared with the screen tint).
+    pub safety_net: SafetyNet,
 }
 
 pub fn spawn(
@@ -170,7 +173,6 @@ pub fn spawn(
         .spawn(move || {
             let mut worker = Worker {
                 muter: focus_platform::notifications::notification_muter(),
-                logon: focus_platform::logon::restore_at_logon(),
                 awake: focus_platform::power::keep_awake(),
                 closer: focus_platform::processes::process_closer(),
                 ctx,
@@ -194,9 +196,10 @@ pub fn spawn(
                 last_published: None,
             };
             worker.restore_after_crash();
-            // A `--restore-shields` launch is done now (no-op for a normal launch). The exit goes
-            // through the event loop and comes back here as `Exit`, so keep serving the queue.
-            finish_restore_only(&worker.ctx.app);
+            // A `--restore-shields` launch exits once the tint is restored too (no-op for a normal
+            // launch). The exit goes through the event loop and comes back here as `Exit`, so keep
+            // serving the queue.
+            crash_restore_done(&worker.ctx.app);
             worker.reconcile();
             worker.run(rx);
         })?;
@@ -210,8 +213,6 @@ struct Worker {
     applied_generation: u64,
     shared_status: Arc<Mutex<ShieldStatus>>,
     muter: Box<dyn NotificationMuter>,
-    /// Logon safety net for muted notifications (`--restore-shields`).
-    logon: Box<dyn LogonTask>,
     awake: Box<dyn KeepAwake>,
     closer: Box<dyn ProcessCloser>,
     /// Desired: shields up.
@@ -320,27 +321,15 @@ impl Worker {
         }
     }
 
-    /// Registers `FocusMode.exe --restore-shields` for the next logon (best effort: the restore file
-    /// alone still repairs notifications on the next start of the app).
+    /// Arms `FocusMode.exe --restore-shields` for the next logon (best effort: the restore file alone
+    /// still repairs notifications on the next start of the app).
     fn schedule_logon_restore(&mut self) {
-        let exe = match std::env::current_exe() {
-            Ok(exe) => exe,
-            Err(err) => {
-                log::warn!("cannot register the logon restore: executable path unknown: {err}");
-                return;
-            }
-        };
-        if let Err(err) = self.logon.schedule(&exe, RESTORE_SHIELDS_ARG)
-            && !err.is_unsupported()
-        {
-            log::warn!("cannot register the logon restore: {err}");
-        }
+        self.ctx.safety_net.arm(Pending::Notifications);
     }
 
+    /// Drops the notifications part of the logon entry (it stays while the tint still needs it).
     fn cancel_logon_restore(&mut self) {
-        if let Err(err) = self.logon.cancel() {
-            log::warn!("cannot remove the logon restore: {err}");
-        }
+        self.ctx.safety_net.disarm(Pending::Notifications);
     }
 
     fn reconcile(&mut self) {
@@ -426,6 +415,7 @@ impl Worker {
                 cycle: 0,
                 phase_secs: 0,
                 launchers: closed.to_vec(),
+                reminder: None,
                 fallback: toast,
             });
         } else {

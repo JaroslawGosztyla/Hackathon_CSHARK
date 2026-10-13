@@ -6,6 +6,7 @@
 
 mod blocklist;
 mod bridge;
+mod chimes;
 mod close;
 mod commands;
 mod effects;
@@ -13,6 +14,7 @@ mod media_window;
 mod music;
 mod persistence;
 mod popup;
+mod safety_net;
 mod session_actor;
 mod shields;
 mod teams;
@@ -39,11 +41,15 @@ pub(crate) const MAIN_WINDOW: &str = "main";
 const DEMO_ARG: &str = "--demo";
 /// Launched by the OS autostart entry: start in the tray, without showing the window.
 const AUTOSTART_ARG: &str = "--autostart";
-/// Launched by the logon safety net (`RunOnce`): restore muted notifications, then exit.
+/// Launched by the logon safety net (`RunOnce`): restore muted notifications and the screen colours,
+/// then exit.
 pub(crate) const RESTORE_SHIELDS_ARG: &str = "--restore-shields";
 
 /// `--restore-shields` launch state (see [`finish_restore_only`]).
 static RESTORE_ONLY: AtomicU8 = AtomicU8::new(RESTORE_ONLY_OFF);
+/// Workers that still run their startup crash-restore (shields, tint); see [`crash_restore_done`].
+static CRASH_RESTORES_LEFT: AtomicU8 = AtomicU8::new(CRASH_RESTORES);
+const CRASH_RESTORES: u8 = 2;
 const RESTORE_ONLY_OFF: u8 = 0;
 /// Started only to restore shields: exit once the crash-restore is done.
 const RESTORE_ONLY_PENDING: u8 = 1;
@@ -53,6 +59,7 @@ const RESTORE_ONLY_EXITING: u8 = 2;
 const STARTUP_ERROR_DELAY: Duration = Duration::from_secs(4);
 const ACTOR_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const SHIELDS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const TINT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Managed state used by the commands.
 pub struct AppState {
@@ -74,7 +81,7 @@ pub struct AppState {
     pub media: media_window::MediaWindow,
     /// Phase popups (bottom-right corner).
     pub popup: popup::PopupHandle,
-    /// Warm screen tint overlays.
+    /// Warm screen tint (Night light or display gamma).
     pub tint: tint::TintHandle,
     /// The open "minimize to tray?" question of the first X.
     pub close: close::ClosePrompt,
@@ -152,6 +159,10 @@ pub fn run() {
             commands::popup_action,
             commands::get_tint_status,
             commands::preview_tint,
+            commands::import_chime,
+            commands::remove_custom_chime,
+            commands::list_library_tracks,
+            commands::clear_history,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");
@@ -201,16 +212,27 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     let (chime_player, audio_events) = focus_audio::ChimePlayer::spawn();
     effects::forward_audio_errors(handle.clone(), audio_events)
         .context("spawn audio event thread")?;
-    let chime = effects::ChimeHandle::new(chime_player);
+    let chime = effects::ChimeHandle::new(chime_player, persistence.sounds_dir());
 
+    // One logon restore entry for muted notifications and the screen colours; restores pending from a
+    // previous run keep it until their worker has repaired them.
+    let safety_net = safety_net::SafetyNet::new(
+        persistence.has_shields_restore(),
+        persistence.has_tint_restore(),
+    );
     // Shields and Teams reference each other: create both channels before spawning.
     let (shields, shields_rx) = shields::ShieldsHandle::channel(Arc::clone(&bridge));
     let (teams, teams_rx) = teams::TeamsHandle::channel();
     // Popups fall back to toasts through the shields queue; shields report closed launchers as popups.
     let popup =
         popup::PopupHandle::spawn(handle.clone(), shields.clone()).context("spawn popup thread")?;
-    let tint = tint::TintHandle::spawn(handle.clone(), Arc::clone(&config))
-        .context("spawn tint thread")?;
+    let tint = tint::TintHandle::spawn(tint::TintContext {
+        app: handle.clone(),
+        config: Arc::clone(&config),
+        persistence: persistence.clone(),
+        safety_net: safety_net.clone(),
+    })
+    .context("spawn tint thread")?;
     teams::spawn(
         teams::TeamsContext {
             app: handle.clone(),
@@ -230,6 +252,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
             bridge: Arc::clone(&bridge),
             teams: teams.clone(),
             popup: popup.clone(),
+            safety_net,
         },
         &shields,
         shields_rx,
@@ -301,6 +324,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         tint,
         close: close::ClosePrompt::default(),
     });
+    chimes::clean_up_at_startup(&handle);
 
     // The window is created hidden (tauri.conf.json): an autostart launch stays in the tray, and a
     // `--restore-shields` launch exits right after the crash-restore without ever showing it.
@@ -310,17 +334,18 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Stops the session and drops every shield synchronously before the process exits.
-/// Idempotent: runs once for "Zakończ", `ExitRequested` and `Exit`.
+/// Stops the session, drops every shield and restores the screen colours synchronously before the
+/// process exits. Idempotent: runs once for "Zakończ", `ExitRequested` and `Exit`.
 pub(crate) fn shutdown(app: &AppHandle) {
     static DONE: AtomicBool = AtomicBool::new(false);
     if DONE.swap(true, Ordering::SeqCst) {
         return;
     }
-    log::info!("shutting down: stopping the session and lowering shields");
+    log::info!("shutting down: stopping the session, lowering shields, restoring screen colours");
     if let Some(state) = app.try_state::<AppState>() {
         state.actor.shutdown_blocking(ACTOR_SHUTDOWN_TIMEOUT);
         state.shields.exit_blocking(SHIELDS_SHUTDOWN_TIMEOUT);
+        state.tint.exit_blocking(TINT_SHUTDOWN_TIMEOUT);
     }
 }
 
@@ -395,9 +420,20 @@ pub(crate) fn restore_only_launch() -> bool {
     RESTORE_ONLY.load(Ordering::SeqCst) != RESTORE_ONLY_OFF
 }
 
-/// Called by the shields worker after the crash-restore: a `--restore-shields` launch exits now
-/// (through the normal exit path, which also lowers shields). Non-blocking; no-op otherwise.
-pub(crate) fn finish_restore_only(app: &AppHandle) {
+/// Called once by the shields worker and once by the tint worker when their startup crash-restore is done.
+/// After the last one, a `--restore-shields` launch exits ([`finish_restore_only`]). Non-blocking.
+pub(crate) fn crash_restore_done(app: &AppHandle) {
+    let previous = CRASH_RESTORES_LEFT.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+        left.checked_sub(1)
+    });
+    if previous == Ok(1) {
+        finish_restore_only(app);
+    }
+}
+
+/// A `--restore-shields` launch exits now (through the normal exit path, which also lowers shields and
+/// restores the screen colours). Non-blocking; no-op otherwise.
+fn finish_restore_only(app: &AppHandle) {
     if RESTORE_ONLY
         .compare_exchange(
             RESTORE_ONLY_PENDING,
@@ -407,7 +443,7 @@ pub(crate) fn finish_restore_only(app: &AppHandle) {
         )
         .is_ok()
     {
-        log::info!("shields restored at logon; exiting");
+        log::info!("notifications and screen colours restored at logon; exiting");
         app.exit(0);
     }
 }

@@ -1,11 +1,14 @@
 //! Foreground app tracker (std thread, 1 s samples).
 //!
 //! - While focus runs (`Tracking(true)`) and `track_apps` is on, each sample adds the elapsed time to
-//!   the foreground process (or idle / unknown) in a shared `UsageAccumulator`.
+//!   the foreground process (or idle / unknown) in a shared `UsageAccumulator`. Windows shell surfaces
+//!   (taskbar, desktop, Start, search, Alt+Tab, ...) are not counted at all (`stats::is_shell_surface`).
+//!   With `track_titles` on, the window title goes with the sample, so the chart can show each app's
+//!   most-used titles; it stays in memory and in the local history file only, never in the log.
 //! - While the sites shield is up and the browser extension is not connected, the foreground
 //!   browser window title is matched against `websiteblacklist.txt` (domains, then regexes) →
 //!   `focus://nudge`, the main window is brought to front and a "Wracaj do pracy" toast is shown
-//!   (at most once per 30 s per matched entry). Titles are never logged or stored.
+//!   (at most once per 30 s per matched entry). Titles are never logged.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -14,15 +17,16 @@ use std::time::{Duration, Instant};
 
 use focus_core::api::{Nudge, UsageReport, events};
 use focus_core::blocklist::is_browser_process;
-use focus_core::stats::UsageAccumulator;
+use focus_core::stats::{UsageAccumulator, is_shell_surface};
 use focus_core::timing::TimingProfile;
+use focus_platform::PlatformError;
 use focus_platform::foreground::ForegroundInfo;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::blocklist::SharedBlocklist;
 use crate::bridge::SharedBridge;
-use crate::{SharedConfig, lock, read_config, show_main_window, texts};
+use crate::{SharedConfig, lock, show_main_window, texts};
 
 const SAMPLE_EVERY: Duration = Duration::from_millis(1000);
 /// A longer gap between samples (thread starved, machine suspended) is not counted in full.
@@ -114,6 +118,74 @@ pub fn spawn(ctx: TrackerContext) -> anyhow::Result<TrackerHandle> {
     Ok(handle)
 }
 
+/// What a tracking sample saw. No `Debug`: it may hold a window title, which is never logged.
+#[derive(Clone, PartialEq, Eq)]
+enum Seen {
+    /// Counted: the process (`None` = unknown), the window title (only with `track_titles`) and idle.
+    Counted {
+        process: Option<String>,
+        title: Option<String>,
+        idle: bool,
+    },
+    /// A Windows shell surface (taskbar, desktop, Start, search, ...): not counted at all.
+    ShellSurface,
+}
+
+impl Seen {
+    /// Classifies a probe result. Idle time counts as idle whatever is in the foreground (the user is
+    /// away); otherwise a shell surface is skipped. `titles`: keep the window title (`track_titles`).
+    fn of(
+        sample: &Result<ForegroundInfo, PlatformError>,
+        idle_after_secs: u32,
+        titles: bool,
+    ) -> Self {
+        let Ok(info) = sample else {
+            return Self::Counted {
+                process: None,
+                title: None,
+                idle: false,
+            };
+        };
+        let idle = info.idle_secs >= idle_after_secs;
+        if !idle && is_shell_surface(info.process.as_deref(), window_class(info)) {
+            return Self::ShellSurface;
+        }
+        Self::Counted {
+            process: info.process.clone(),
+            title: (titles && !idle).then(|| info.title.clone()),
+            idle,
+        }
+    }
+
+    /// Adds `ms` of this sample to `usage` (nothing for a shell surface); the title only when `titles`
+    /// (`track_titles` may have been switched off since the sample).
+    fn add_to(&self, usage: &mut UsageAccumulator, ms: u64, titles: bool) {
+        if let Self::Counted {
+            process,
+            title,
+            idle,
+        } = self
+        {
+            let title = title.as_deref().filter(|_| titles);
+            usage.add_sample(process.as_deref(), title, *idle, ms);
+        }
+    }
+}
+
+/// `report` without window titles (used when `track_titles` is off, so titles collected before it was
+/// switched off are neither shown nor saved).
+pub fn without_titles(mut report: UsageReport) -> UsageReport {
+    for app in &mut report.apps {
+        app.titles.clear();
+    }
+    report
+}
+
+/// Class name of the foreground window, if the probe knows it.
+fn window_class(info: &ForegroundInfo) -> Option<&str> {
+    Some(info.class_name.as_str()).filter(|class| !class.is_empty())
+}
+
 struct Tracker {
     ctx: TrackerContext,
     probe: Box<dyn focus_platform::foreground::ForegroundProbe>,
@@ -122,8 +194,8 @@ struct Tracker {
     idle_after_secs: u32,
     /// Time of the previous counted sample while tracking.
     last_sample: Option<Instant>,
-    /// What the previous sample saw: `(process, idle)`.
-    last_seen: Option<(Option<String>, bool)>,
+    /// What the previous sample saw.
+    last_seen: Option<Seen>,
     last_nudge: HashMap<String, Instant>,
     probe_failing: bool,
 }
@@ -164,11 +236,11 @@ impl Tracker {
             return;
         }
         if !on {
-            // Attribute the partial second before the pause/break to what was last seen.
-            if let (Some(prev), Some((process, idle))) = (self.last_sample, self.last_seen.clone())
-            {
-                let ms = elapsed_ms(prev);
-                lock(&self.usage).add_sample(process.as_deref(), idle, ms);
+            // Attribute the partial second before the pause/break to what was last seen (nothing when
+            // that was a shell surface).
+            if let (Some(prev), Some(seen)) = (self.last_sample, self.last_seen.as_ref()) {
+                let titles = self.tracking_switches().1;
+                seen.add_to(&mut lock(&self.usage), elapsed_ms(prev), titles);
             }
             self.last_sample = None;
         } else {
@@ -177,8 +249,19 @@ impl Tracker {
         self.enabled = on;
     }
 
+    /// `(track_apps, track_titles)` from the current config (read without cloning it every second).
+    fn tracking_switches(&self) -> (bool, bool) {
+        let config = self
+            .ctx
+            .config
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        (config.track_apps, config.track_titles)
+    }
+
     fn tick(&mut self) {
-        let track = self.enabled && read_config(&self.ctx.config).track_apps;
+        let (track_apps, track_titles) = self.tracking_switches();
+        let track = self.enabled && track_apps;
         let watch_sites = {
             let bridge = lock(&self.ctx.bridge);
             bridge.block_active && !bridge.extension_connected()
@@ -198,11 +281,8 @@ impl Tracker {
         if track {
             let ms = self.last_sample.map_or(0, elapsed_ms);
             self.last_sample = Some(now);
-            let seen = match &sample {
-                Ok(info) => (info.process.clone(), info.idle_secs >= self.idle_after_secs),
-                Err(_) => (None, false),
-            };
-            lock(&self.usage).add_sample(seen.0.as_deref(), seen.1, ms);
+            let seen = Seen::of(&sample, self.idle_after_secs, track_titles);
+            seen.add_to(&mut lock(&self.usage), ms, track_titles);
             self.last_seen = Some(seen);
         }
 
@@ -286,4 +366,99 @@ fn elapsed_ms(since: Instant) -> u64 {
     u64::try_from(since.elapsed().as_millis())
         .unwrap_or(u64::MAX)
         .min(MAX_SAMPLE_MS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const IDLE_AFTER: u32 = 120;
+
+    fn info(process: &str, class: &str, title: &str, idle_secs: u32) -> ForegroundInfo {
+        ForegroundInfo {
+            process: Some(process.to_owned()),
+            title: title.to_owned(),
+            class_name: class.to_owned(),
+            idle_secs,
+        }
+    }
+
+    fn report_of(samples: &[(Seen, u64)], titles: bool) -> UsageReport {
+        let mut usage = UsageAccumulator::new();
+        for (seen, ms) in samples {
+            seen.add_to(&mut usage, *ms, titles);
+        }
+        usage.report()
+    }
+
+    #[test]
+    fn shell_surfaces_are_not_counted() {
+        for (process, class) in [
+            ("explorer.exe", "Shell_TrayWnd"),
+            ("explorer.exe", "Progman"),
+            ("explorer.exe", "WorkerW"),
+            ("ShellExperienceHost.exe", "Windows.UI.Core.CoreWindow"),
+            ("SearchHost.exe", "Windows.UI.Core.CoreWindow"),
+            ("StartMenuExperienceHost.exe", ""),
+        ] {
+            let seen = Seen::of(&Ok(info(process, class, "x", 0)), IDLE_AFTER, true);
+            assert!(seen == Seen::ShellSurface, "{process} / {class}");
+        }
+        // A File Explorer window counts, with its title.
+        let folder = Seen::of(
+            &Ok(info("explorer.exe", "CabinetWClass", "Pobrane", 0)),
+            IDLE_AFTER,
+            true,
+        );
+        let report = report_of(&[(folder, 5000)], true);
+        assert_eq!(report.apps.len(), 1);
+        assert_eq!(report.apps[0].process, "explorer.exe");
+        assert_eq!(report.apps[0].titles[0].title, "Pobrane");
+        // Nothing at all for the taskbar, not even unknown time.
+        let taskbar = Seen::of(
+            &Ok(info("explorer.exe", "Shell_TrayWnd", "", 0)),
+            IDLE_AFTER,
+            true,
+        );
+        assert_eq!(report_of(&[(taskbar, 5000)], true).tracked_secs, 0);
+    }
+
+    #[test]
+    fn idle_time_counts_as_idle_even_on_the_desktop() {
+        let seen = Seen::of(
+            &Ok(info("explorer.exe", "Progman", "", IDLE_AFTER)),
+            IDLE_AFTER,
+            true,
+        );
+        let report = report_of(&[(seen, 3000)], true);
+        assert_eq!(report.idle_secs, 3);
+        assert!(report.apps.is_empty());
+    }
+
+    #[test]
+    fn titles_only_with_track_titles() {
+        let sample = Ok(info("chrome.exe", "Chrome_WidgetWin_1", "Docs - Chrome", 0));
+        let with = Seen::of(&sample, IDLE_AFTER, true);
+        let without = Seen::of(&sample, IDLE_AFTER, false);
+        assert!(
+            report_of(&[(without, 4000)], true).apps[0]
+                .titles
+                .is_empty()
+        );
+        // Switched off after the sample: the title is dropped when it is added.
+        assert!(
+            report_of(&[(with.clone(), 4000)], false).apps[0]
+                .titles
+                .is_empty()
+        );
+        let report = report_of(&[(with, 4000)], true);
+        assert_eq!(report.apps[0].titles[0].title, "Docs - Chrome");
+        assert!(without_titles(report).apps[0].titles.is_empty());
+    }
+
+    #[test]
+    fn probe_failures_count_as_unknown() {
+        let seen = Seen::of(&Err(PlatformError::Os("x".into())), IDLE_AFTER, true);
+        assert_eq!(report_of(&[(seen, 2000)], true).unknown_secs, 2);
+    }
 }

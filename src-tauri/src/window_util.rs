@@ -1,4 +1,4 @@
-//! Helpers shared by the app's extra windows (YouTube media window, phase popup, screen tint).
+//! Helpers shared by the app's extra windows (YouTube media window, phase popup).
 
 use tauri::{AppHandle, PhysicalPosition, PhysicalSize, WebviewWindowBuilder, Wry};
 

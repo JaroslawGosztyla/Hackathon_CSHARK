@@ -1,0 +1,69 @@
+{
+  "collection": "Open Lo-Fi",
+  "author": "btahir",
+  "license": "CC0-1.0",
+  "source": "https://github.com/btahir/open-lofi",
+  "release": "v1.0.0",
+  "tracks": [
+    {
+      "file": "2-am-debug-loop.mp3",
+      "title": "2 AM Debug Loop",
+      "category": "activities"
+    },
+    {
+      "file": "chapter-by-lamplight.mp3",
+      "title": "Chapter By Lamplight",
+      "category": "activities"
+    },
+    {
+      "file": "coffee-ring-notebook.mp3",
+      "title": "Coffee Ring Notebook",
+      "category": "activities"
+    },
+    {
+      "file": "cursor-after-midnight.mp3",
+      "title": "Cursor After Midnight",
+      "category": "activities"
+    },
+    {
+      "file": "dust-on-the-morning-keys.mp3",
+      "title": "Dust on the Morning Keys",
+      "category": "chillhop"
+    },
+    {
+      "file": "hour-between-clicks.mp3",
+      "title": "Hour Between Clicks",
+      "category": "activities"
+    },
+    {
+      "file": "porchlight-golden-hour.mp3",
+      "title": "Porchlight Golden Hour",
+      "category": "chillhop"
+    },
+    {
+      "file": "rain-on-the-boulevard.mp3",
+      "title": "Rain on the Boulevard",
+      "category": "jazzhop"
+    },
+    {
+      "file": "stacks-of-quiet-books.mp3",
+      "title": "Stacks of Quiet Books",
+      "category": "jazzhop"
+    },
+    {
+      "file": "stacks-of-quiet-hours.mp3",
+      "title": "Stacks of Quiet Hours",
+      "category": "activities"
+    },
+    {
+      "file": "terminal-rain.mp3",
+      "title": "Terminal Rain",
+      "category": "activities"
+    },
+    {
+      "file": "window-seat-daydream.mp3",
+      "title": "Window Seat Daydream",
+      "category": "chillhop"
+    }
+  ]
+}
