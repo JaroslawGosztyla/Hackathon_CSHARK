@@ -443,6 +443,15 @@ pub struct Config {
     /// (every install before the wizard) never shows it; only the config the shell creates on a fresh install
     /// (`Config::first_run`) starts with false. "Delete everything" resets to the defaults, so it stays true there.
     pub onboarding_done: bool,
+    /// Beta collection theme (ADR-024), picked in Settings → "Kolekcja". It replaces `theme` on screen only while
+    /// `beta_features` is on and the theme is unlocked in `rewards.json`; `theme` always stays the base theme (the one
+    /// shown without the beta, and the "last base theme" a locked or hidden collection theme falls back to). Default
+    /// `None`. `update_config` refuses to set a theme that is not unlocked (`config.invalid`, field `rewardTheme`);
+    /// "Zacznij od nowa" and deleting the rewards in the privacy panel set it back to `None`.
+    pub reward_theme: Option<RewardTheme>,
+    /// Beta ambience mixer (ADR-024): synthesized background layers over the music. Effective only while
+    /// `beta_features` is on; a layer plays only when it is free or unlocked.
+    pub ambience: AmbienceConfig,
 }
 
 /// Beta: sparks, levels, daily goal, streak, celebrations and small steps (ADR-022). Every switch is effective only
@@ -1535,7 +1544,9 @@ pub enum PrivacyItemKind {
     /// `history.jsonl`; `count` = stored sessions, `includesTitles` = some session keeps window titles.
     History,
     /// `rewards.json` (+ `rewards.json.bak`), beta (ADR-022): sparks, streak and surprises as numbers, day numbers and
-    /// session ids only (no step texts, titles or app names); `count` = stored days. Deleting it equals `reset_rewards`.
+    /// session ids only (no step texts, titles or app names), plus the collection unlocks and seasonal goal days
+    /// (ADR-024: fixed ids, day numbers and years); `count` = stored days. Deleting it equals `reset_rewards` (the
+    /// unlocks go too, and `Config.reward_theme` goes back to `None`).
     Rewards,
     /// `meeting-choices.json` (meeting ids and choices, no subjects); `count` = stored choices.
     MeetingChoices,
@@ -1709,6 +1720,11 @@ pub struct RewardsStatus {
     pub stickers: Vec<StickerId>,
     /// Moments the main window has not acknowledged yet (oldest first, at most 8).
     pub pending: Vec<RewardMoment>,
+    /// The beta collection (ADR-024): every collection theme and ambience layer with its state, rule and progress.
+    /// Filled also while the rewards are off (unlocked items stay usable while the beta is on); the UI hides it
+    /// without the beta. While achievements wait in focus it shows the unlocks as they were before them.
+    #[serde(default)]
+    pub unlocks: UnlocksView,
 }
 
 /// `level` from the total; `into` sparks of `span` towards the next level.
@@ -1935,6 +1951,13 @@ pub struct RewardMoment {
     /// A Developer-page sample built in the frontend (never from the shell, never acked).
     #[serde(default)]
     pub sample: bool,
+    /// Collection themes unlocked by this moment (ADR-024), in catalogue order. Like every achievement they wait for
+    /// the break or Stop ("focus is sacred"); never in the demo preview.
+    #[serde(default)]
+    pub unlocked_themes: Vec<RewardTheme>,
+    /// Ambience layers unlocked by this moment (ADR-024), in catalogue order.
+    #[serde(default)]
+    pub unlocked_ambiences: Vec<AmbienceLayer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1970,6 +1993,252 @@ pub enum RewardSound {
     Sparkle,
     /// ~1.2 s: level up, golden pearl.
     Fanfare,
+}
+
+// ---------------------------------------------------------------------------
+// Beta: collection themes and ambience layers (ADR-024)
+// ---------------------------------------------------------------------------
+
+/// A beta collection theme (ADR-024): earned with the rewards, never bought; the base themes (`Theme`) stay free for
+/// everyone. Visible and applied only while `Config.beta_features` is on. Rules: `focus_core::unlocks::THEME_RULES`.
+/// The serialized name is also the `data-theme` value and the folder `src/lib/themes/<name>/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RewardTheme {
+    /// The axolotl's home: kelp, bubbles, light rays. Level 3.
+    Underwater,
+    /// Rain on glass, city bokeh. Best streak 7.
+    RainyWindow,
+    /// Pines, fireflies, a warm window. Level 6.
+    ForestCabin,
+    /// Blossoms drifting under the moon. Best streak 14.
+    SakuraNight,
+    /// Gentle fireworks over a night skyline. Seasonal: January.
+    NewYear,
+    /// Soft hearts drifting, pink dusk. Seasonal: February.
+    Valentines,
+    /// Spring meadow, pastel eggs, blossoms. Seasonal: around Western Easter (`unlocks::season_window`).
+    Easter,
+    /// Sunset beach, palm silhouettes, gentle waves. Seasonal: July.
+    Summer,
+    /// Moon, fog, bats, a scarecrow, glowing jack-o'-lanterns. Seasonal: October.
+    Halloween,
+    /// Snowfall, a cozy lit window, pines, twinkling string lights. Seasonal: December.
+    Christmas,
+}
+
+impl RewardTheme {
+    /// Catalogue order (the order of `UnlocksView.themes` and of the "Kolekcja" grid).
+    pub const ALL: [Self; 10] = [
+        Self::Underwater,
+        Self::RainyWindow,
+        Self::ForestCabin,
+        Self::SakuraNight,
+        Self::NewYear,
+        Self::Valentines,
+        Self::Easter,
+        Self::Summer,
+        Self::Halloween,
+        Self::Christmas,
+    ];
+}
+
+/// A beta ambience layer (ADR-024), synthesized at runtime in the main window (WebAudio; no audio files). Rules:
+/// `focus_core::unlocks::AMBIENCE_RULES`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum AmbienceLayer {
+    /// Free in the beta.
+    Rain,
+    /// Free in the beta.
+    Wind,
+    /// Distant thunder. Level 2.
+    Thunder,
+    /// Café murmur. Level 4.
+    Cafe,
+    /// Crackling fire. Best streak 5.
+    Fireplace,
+    /// Forest and crickets. Level 5.
+    Forest,
+    /// Ocean waves. Level 7.
+    Ocean,
+    /// Howling wind, distant thunder, owl hoots, creaking wood, a faint drone. With the Halloween theme.
+    SpookyNight,
+    /// Crackling fire and soft sleigh bells now and then. With the Christmas theme.
+    WinterCottage,
+}
+
+impl AmbienceLayer {
+    /// Catalogue order (the order of `UnlocksView.ambiences` and of the mixer).
+    pub const ALL: [Self; 9] = [
+        Self::Rain,
+        Self::Wind,
+        Self::Thunder,
+        Self::Cafe,
+        Self::Fireplace,
+        Self::Forest,
+        Self::Ocean,
+        Self::SpookyNight,
+        Self::WinterCottage,
+    ];
+}
+
+/// A seasonal unlock window (ADR-024, `focus_core::unlocks::season_window`). Windows never overlap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Season {
+    /// January.
+    NewYear,
+    /// February.
+    Valentines,
+    /// The calendar month of Western Easter Sunday, stretched to at least 7 days on both sides of it.
+    Easter,
+    /// July.
+    Summer,
+    /// October.
+    Halloween,
+    /// December.
+    Christmas,
+}
+
+impl Season {
+    pub const ALL: [Self; 6] = [
+        Self::NewYear,
+        Self::Valentines,
+        Self::Easter,
+        Self::Summer,
+        Self::Halloween,
+        Self::Christmas,
+    ];
+}
+
+/// The beta ambience mixer (`Config.ambience`, ADR-024). Remembered per user; nothing ever plays at app start.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct AmbienceConfig {
+    /// Master switch: the layers that are `on` play while the music plays (and alone when the user starts them in the
+    /// mixer). Default false.
+    pub enabled: bool,
+    /// Master volume 0..=1, on top of every layer's own volume (the music volume is separate). Default 0.6.
+    pub volume: f32,
+    /// One entry per layer the user touched, in catalogue order (duplicates dropped, the first wins); a layer without
+    /// an entry is off at `config::DEFAULT_AMBIENCE_LAYER_VOLUME`. Default: rain on.
+    pub layers: Vec<AmbienceMix>,
+}
+
+/// One layer of the ambience mixer.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AmbienceMix {
+    pub layer: AmbienceLayer,
+    /// The user wants it in the mix (a locked layer never plays, whatever this says).
+    pub on: bool,
+    /// 0..=1.
+    pub volume: f32,
+}
+
+/// How a collection item is earned (ADR-024). Internally tagged: `{ "type": "level", "level": 3 }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum UnlockRule {
+    /// In the beta from the start (rain, wind).
+    Free,
+    /// The level (`RewardsStatus.level.level`) reaches `level`.
+    #[serde(rename_all = "camelCase")]
+    Level { level: u32 },
+    /// The best streak ever (`StreakView.best`) reaches `days` (a current streak of `days` counts the same).
+    #[serde(rename_all = "camelCase")]
+    BestStreak { days: u32 },
+    /// The daily goal met on `goal_days` different reward days inside one window of `season` (only then can it unlock).
+    #[serde(rename_all = "camelCase")]
+    Seasonal { season: Season, goal_days: u32 },
+    /// Unlocks together with that collection theme (seasonal ambiences).
+    #[serde(rename_all = "camelCase")]
+    WithTheme { theme: RewardTheme },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum UnlockState {
+    /// Usable from the start of the beta (no rule to meet).
+    Free,
+    /// Earned (kept forever; only "Zacznij od nowa" / the privacy delete clear it).
+    Unlocked,
+    /// Seasonal and its window is open now: it can be earned today (`progress` shows how far).
+    AvailableNow,
+    /// Not earned yet (a seasonal one outside its window says when it opens: `window`).
+    Locked,
+}
+
+/// `have` of `need` towards an unlock (levels, best-streak days, goal days in the open seasonal window).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UnlockProgress {
+    /// Capped at `need`.
+    pub have: u32,
+    pub need: u32,
+}
+
+/// A seasonal window: the open one, or else the next one (this year or the next). Reward days (they start at 04:00).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SeasonWindow {
+    pub season: Season,
+    /// First and last day, `YYYY-MM-DD`, inclusive.
+    pub start: String,
+    pub end: String,
+    /// Today is inside the window.
+    pub open: bool,
+    /// 1..=12 when the window is exactly one calendar month (the UI says "in October"); `None` = show the dates.
+    pub month: Option<u32>,
+}
+
+/// One collection theme in `UnlocksView.themes`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThemeUnlock {
+    pub theme: RewardTheme,
+    pub state: UnlockState,
+    pub rule: UnlockRule,
+    /// `level` / `bestStreak` while locked, `seasonal` while its window is open (`availableNow`); else `None`.
+    pub progress: Option<UnlockProgress>,
+    /// `seasonal` rules only.
+    pub window: Option<SeasonWindow>,
+    /// Reward day it was unlocked (`YYYY-MM-DD`); `None` unless `unlocked`.
+    pub unlocked_on: Option<String>,
+}
+
+/// One ambience layer in `UnlocksView.ambiences`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AmbienceUnlock {
+    pub layer: AmbienceLayer,
+    pub state: UnlockState,
+    pub rule: UnlockRule,
+    /// `level` / `bestStreak` while locked; else `None` (`withTheme`: see that theme).
+    pub progress: Option<UnlockProgress>,
+    /// Reward day it was unlocked (`YYYY-MM-DD`); `None` unless `unlocked`.
+    pub unlocked_on: Option<String>,
+}
+
+/// The beta collection (`RewardsStatus.unlocks`, ADR-024), in catalogue order (`RewardTheme::ALL`, `AmbienceLayer::ALL`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UnlocksView {
+    pub themes: Vec<ThemeUnlock>,
+    pub ambiences: Vec<AmbienceUnlock>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2111,12 +2380,14 @@ pub struct BridgeState {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppCategory, CalendarStatus, CategoryTotals, CelebrationLevel, Config, DailyGoal, DayStats,
-        DevAction, HistoryChanged, MicroStep, MomentKind, Phase, PopupInfo, PopupKind,
-        PopupRewards, PrivacyItemKind, Rarity, RewardKind, RewardLine, RewardMoment, RewardSound,
-        SessionSnapshot, SessionSummary, SmartBreak, SmartBreakKind, StepDraft, StickerId,
-        TimeSpan, TintPause, TintPauseReason, TintSchedule, TintScheduleState, TintStatus, WeekApp,
-        Weekday, WeeklyStats, WorkSource, YoutubeAccount, commands, events,
+        AmbienceLayer, AmbienceMix, AmbienceUnlock, AppCategory, CalendarStatus, CategoryTotals,
+        CelebrationLevel, Config, DailyGoal, DayStats, DevAction, HistoryChanged, MicroStep,
+        MomentKind, Phase, PopupInfo, PopupKind, PopupRewards, PrivacyItemKind, Rarity, RewardKind,
+        RewardLine, RewardMoment, RewardSound, RewardTheme, Season, SeasonWindow, SessionSnapshot,
+        SessionSummary, SmartBreak, SmartBreakKind, StepDraft, StickerId, ThemeUnlock, TimeSpan,
+        TintPause, TintPauseReason, TintSchedule, TintScheduleState, TintStatus, UnlockProgress,
+        UnlockRule, UnlockState, WeekApp, Weekday, WeeklyStats, WorkSource, YoutubeAccount,
+        commands, events,
     };
     use std::fmt::Write as _;
 
@@ -2266,6 +2537,8 @@ mod tests {
             quiet: true,
             preview: false,
             sample: false,
+            unlocked_themes: vec![RewardTheme::Halloween],
+            unlocked_ambiences: vec![AmbienceLayer::SpookyNight],
         };
         let json = serde_json::to_value(&moment).expect("serialize");
         assert_eq!(json["kind"], "breakStart");
@@ -2285,14 +2558,172 @@ mod tests {
             serde_json::from_value::<RewardMoment>(json.clone()).expect("deserialize"),
             moment
         );
+        assert_eq!(json["unlockedThemes"], serde_json::json!(["halloween"]));
+        assert_eq!(
+            json["unlockedAmbiences"],
+            serde_json::json!(["spookyNight"])
+        );
         let mut without_sample = json;
         if let Some(object) = without_sample.as_object_mut() {
             object.remove("sample");
+            object.remove("unlockedThemes");
+            object.remove("unlockedAmbiences");
         }
+        let old = serde_json::from_value::<RewardMoment>(without_sample)
+            .expect("sample and unlocks may be left out");
+        assert!(!old.sample);
+        assert!(old.unlocked_themes.is_empty() && old.unlocked_ambiences.is_empty());
+    }
+
+    #[test]
+    fn config_written_before_adr_024_loads_without_collection_theme_or_ambience() {
+        let old: Config =
+            serde_json::from_str(r#"{"theme":"lunar","betaFeatures":true}"#).expect("old config");
+        assert_eq!(old.theme, super::Theme::Lunar);
+        assert_eq!(old.reward_theme, None);
+        assert!(!old.ambience.enabled);
+        assert_eq!(old.ambience, Config::default().ambience);
+
+        let json = serde_json::to_value(Config::default()).expect("serialize");
+        assert!(json["rewardTheme"].is_null());
+        assert_eq!(json["ambience"]["enabled"], false);
         assert!(
-            !serde_json::from_value::<RewardMoment>(without_sample)
-                .expect("sample may be left out")
-                .sample
+            json["ambience"]["volume"]
+                .as_f64()
+                .is_some_and(|volume| (volume - 0.6).abs() < 1e-6)
+        );
+        assert_eq!(
+            json["ambience"]["layers"],
+            serde_json::json!([ { "layer": "rain", "on": true, "volume": 0.5 } ])
+        );
+        let chosen: Config = serde_json::from_str(
+            r#"{"rewardTheme":"halloween","ambience":{"enabled":true,"layers":[{"layer":"spookyNight","on":true,"volume":0.3}]}}"#,
+        )
+        .expect("collection theme and ambience");
+        assert_eq!(chosen.reward_theme, Some(RewardTheme::Halloween));
+        assert!(chosen.ambience.enabled);
+        assert_eq!(
+            chosen.ambience.layers,
+            [AmbienceMix {
+                layer: AmbienceLayer::SpookyNight,
+                on: true,
+                volume: 0.3
+            }]
+        );
+        assert!(
+            (chosen.ambience.volume - 0.6).abs() < 1e-6,
+            "missing volume → default"
+        );
+    }
+
+    #[test]
+    fn collection_wire_format() {
+        let names: Vec<_> = RewardTheme::ALL
+            .iter()
+            .map(|theme| serde_json::to_value(theme).expect("serialize"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "underwater",
+                "rainyWindow",
+                "forestCabin",
+                "sakuraNight",
+                "newYear",
+                "valentines",
+                "easter",
+                "summer",
+                "halloween",
+                "christmas"
+            ]
+        );
+        let layers: Vec<_> = AmbienceLayer::ALL
+            .iter()
+            .map(|layer| serde_json::to_value(layer).expect("serialize"))
+            .collect();
+        assert_eq!(
+            layers,
+            [
+                "rain",
+                "wind",
+                "thunder",
+                "cafe",
+                "fireplace",
+                "forest",
+                "ocean",
+                "spookyNight",
+                "winterCottage"
+            ]
+        );
+        assert_eq!(Season::ALL.len(), 6);
+        for (rule, json) in [
+            (UnlockRule::Free, serde_json::json!({ "type": "free" })),
+            (
+                UnlockRule::Level { level: 3 },
+                serde_json::json!({ "type": "level", "level": 3 }),
+            ),
+            (
+                UnlockRule::BestStreak { days: 7 },
+                serde_json::json!({ "type": "bestStreak", "days": 7 }),
+            ),
+            (
+                UnlockRule::Seasonal {
+                    season: Season::Halloween,
+                    goal_days: 3,
+                },
+                serde_json::json!({ "type": "seasonal", "season": "halloween", "goalDays": 3 }),
+            ),
+            (
+                UnlockRule::WithTheme {
+                    theme: RewardTheme::Christmas,
+                },
+                serde_json::json!({ "type": "withTheme", "theme": "christmas" }),
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(rule).expect("serialize"), json);
+            assert_eq!(
+                serde_json::from_value::<UnlockRule>(json).expect("deserialize"),
+                rule
+            );
+        }
+        let halloween = ThemeUnlock {
+            theme: RewardTheme::Halloween,
+            state: UnlockState::AvailableNow,
+            rule: UnlockRule::Seasonal {
+                season: Season::Halloween,
+                goal_days: 3,
+            },
+            progress: Some(UnlockProgress { have: 2, need: 3 }),
+            window: Some(SeasonWindow {
+                season: Season::Halloween,
+                start: "2026-10-01".into(),
+                end: "2026-10-31".into(),
+                open: true,
+                month: Some(10),
+            }),
+            unlocked_on: None,
+        };
+        let json = serde_json::to_value(&halloween).expect("serialize");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "theme": "halloween", "state": "availableNow",
+                "rule": { "type": "seasonal", "season": "halloween", "goalDays": 3 },
+                "progress": { "have": 2, "need": 3 },
+                "window": { "season": "halloween", "start": "2026-10-01", "end": "2026-10-31", "open": true, "month": 10 },
+                "unlockedOn": null
+            })
+        );
+        let rain = AmbienceUnlock {
+            layer: AmbienceLayer::Rain,
+            state: UnlockState::Free,
+            rule: UnlockRule::Free,
+            progress: None,
+            unlocked_on: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&rain).expect("serialize"),
+            serde_json::json!({ "layer": "rain", "state": "free", "rule": { "type": "free" }, "progress": null, "unlockedOn": null })
         );
     }
 

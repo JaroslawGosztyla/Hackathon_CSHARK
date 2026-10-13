@@ -8,6 +8,7 @@ import type { StickerId } from "./StickerId";
 import type { StreakView } from "./StreakView";
 import type { SurpriseOdds } from "./SurpriseOdds";
 import type { TodayView } from "./TodayView";
+import type { UnlocksView } from "./UnlocksView";
 
 /**
  * Rewards view state (getter `get_rewards` + event `rewards://changed` with revision, ADR-012). Numbers, dates and
@@ -49,4 +50,10 @@ stickers: Array<StickerId>,
 /**
  * Moments the main window has not acknowledged yet (oldest first, at most 8).
  */
-pending: Array<RewardMoment>, };
+pending: Array<RewardMoment>, 
+/**
+ * The beta collection (ADR-024): every collection theme and ambience layer with its state, rule and progress.
+ * Filled also while the rewards are off (unlocked items stay usable while the beta is on); the UI hides it
+ * without the beta. While achievements wait in focus it shows the unlocks as they were before them.
+ */
+unlocks: UnlocksView, };

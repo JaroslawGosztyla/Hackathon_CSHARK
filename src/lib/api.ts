@@ -241,12 +241,16 @@ export const youtubeSignIn = () => call<void>(COMMANDS.youtubeSignIn);
 /** Deletes the google.com / youtube.com cookies of the app's browser profile (the consent cookies stay). */
 export const youtubeSignOut = () => call<void>(COMMANDS.youtubeSignOut);
 
-// Beta: sparks, streak and small steps (ADR-022).
-/** Sparks, daily goal, level, streak, week and the moments not acknowledged yet (main window only). */
+// Beta: sparks, streak and small steps (ADR-022); the collection of themes and ambience layers (ADR-024).
+/**
+ * Sparks, daily goal, level, streak, week, the moments not acknowledged yet and the collection (`unlocks`, ADR-024).
+ * The main window subscribes (`subscribeRewards`); the popup reads it only to resolve the collection theme on screen
+ * (`effectiveTheme` in `$lib/themes`) and never acks.
+ */
 export const getRewards = () => call<RewardsStatus>(COMMANDS.getRewards);
 /** Removes the pending moments with `id <= upTo` (played or shown). Main window only: the popup never acks. */
 export const ackRewardMoments = (upTo: number) => call<void>(COMMANDS.ackRewardMoments, { upTo });
-/** "Zacznij od nowa": a new ledger (session history stays). Confirm with the user first. */
+/** "Zacznij od nowa": a new ledger (session history stays; the collection unlocks go too). Confirm with the user first. */
 export const resetRewards = () => call<RewardsStatus>(COMMANDS.resetRewards);
 /**
  * A short reward sound (pop / sparkle / fanfare). The shell skips it while rewards or reward sounds are off,
