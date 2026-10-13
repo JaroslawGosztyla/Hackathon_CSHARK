@@ -39,9 +39,18 @@ pub const REWARD_MIN_BLOCK_SECS: u32 = 600;
 pub const DEMO_SPARK_UNIT_SECS: u32 = 1;
 /// Demo profile: the shortest real block in seconds (half the demo focus).
 pub const DEMO_REWARD_MIN_BLOCK_SECS: u32 = 20;
+/// Smart breaks (ADR-023): a focus block may be shortened down to this share (percent) of the focus length, no further.
+pub const SMART_BREAK_MIN_FOCUS_PERCENT: u32 = 60;
+/// Smart breaks (ADR-023): a focus block may be lengthened by at most this share (percent) of the focus length.
+pub const SMART_BREAK_MAX_EXTEND_PERCENT: u32 = 25;
+/// Normal profile: smart breaks never shorten a focus block below this, 10 minutes.
+pub const SMART_BREAK_MIN_FOCUS_SECS: u32 = 600;
+/// Demo profile: the same floor scaled like the demo phases (10 minutes → 10 seconds).
+pub const DEMO_SMART_BREAK_MIN_FOCUS_SECS: u32 = 10;
 
 const SECS_PER_MINUTE: u32 = 60;
 const MS_PER_SEC: u64 = 1000;
+const PERCENT: u64 = 100;
 
 /// Durations used by one session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +124,31 @@ impl TimingProfile {
     pub fn interruption_gap_ms(&self) -> u64 {
         secs_to_ms(self.interruption_gap_secs)
     }
+
+    /// Smart breaks (ADR-023): the shortest focus block in milliseconds, [`SMART_BREAK_MIN_FOCUS_PERCENT`] of the
+    /// focus length (rounded up) and never under [`SMART_BREAK_MIN_FOCUS_SECS`] ([`DEMO_SMART_BREAK_MIN_FOCUS_SECS`]
+    /// in the demo profile). With a focus shorter than that floor no block can be shortened.
+    pub fn smart_min_focus_ms(&self) -> u64 {
+        let share = self
+            .focus_ms()
+            .saturating_mul(u64::from(SMART_BREAK_MIN_FOCUS_PERCENT))
+            .div_ceil(PERCENT);
+        let floor = if self.demo {
+            DEMO_SMART_BREAK_MIN_FOCUS_SECS
+        } else {
+            SMART_BREAK_MIN_FOCUS_SECS
+        };
+        share.max(secs_to_ms(floor))
+    }
+
+    /// Smart breaks (ADR-023): the longest focus block in milliseconds, the focus length plus
+    /// [`SMART_BREAK_MAX_EXTEND_PERCENT`] of it (rounded down).
+    pub fn smart_max_focus_ms(&self) -> u64 {
+        let focus = self.focus_ms();
+        focus.saturating_add(
+            focus.saturating_mul(u64::from(SMART_BREAK_MAX_EXTEND_PERCENT)) / PERCENT,
+        )
+    }
 }
 
 impl Default for TimingProfile {
@@ -177,6 +211,49 @@ mod tests {
     #[test]
     fn meeting_holds_are_capped_at_4_hours() {
         assert_eq!(MAX_MEETING_HOLD_MS, 14_400_000);
+    }
+
+    #[test]
+    fn smart_break_bounds_follow_the_profile() {
+        // 45 min: 27 min (60 %) .. 56 min 15 s (+25 %).
+        let normal = TimingProfile::normal();
+        assert_eq!(normal.smart_min_focus_ms(), 27 * 60_000);
+        assert_eq!(normal.smart_max_focus_ms(), 56 * 60_000 + 15_000);
+        // 25 min: 60 % is 15 min, above the 10-minute floor.
+        let short = TimingProfile {
+            focus_secs: 25 * 60,
+            ..TimingProfile::normal()
+        };
+        assert_eq!(short.smart_min_focus_ms(), 15 * 60_000);
+        // 15 min: 60 % is 9 min, so the floor wins (10 min).
+        let quarter = TimingProfile {
+            focus_secs: 15 * 60,
+            ..TimingProfile::normal()
+        };
+        assert_eq!(quarter.smart_min_focus_ms(), 10 * 60_000);
+        // 5 min: the floor is above the focus itself, so no block can be shortened.
+        let tiny = TimingProfile {
+            focus_secs: 5 * 60,
+            ..TimingProfile::normal()
+        };
+        assert!(tiny.smart_min_focus_ms() > tiny.focus_ms());
+        assert_eq!(tiny.smart_max_focus_ms(), 375_000);
+        // Demo (40 s): 24 s .. 50 s; the scaled floor (10 s) is below 60 %.
+        let demo = TimingProfile::demo();
+        assert_eq!(demo.smart_min_focus_ms(), 24_000);
+        assert_eq!(demo.smart_max_focus_ms(), 50_000);
+        let demo_tiny = TimingProfile {
+            focus_secs: 12,
+            ..TimingProfile::demo()
+        };
+        assert_eq!(demo_tiny.smart_min_focus_ms(), 10_000);
+        // Never overflows.
+        let huge = TimingProfile {
+            focus_secs: u32::MAX,
+            ..TimingProfile::normal()
+        };
+        assert!(huge.smart_min_focus_ms() <= huge.focus_ms());
+        assert!(huge.smart_max_focus_ms() >= huge.focus_ms());
     }
 
     #[test]

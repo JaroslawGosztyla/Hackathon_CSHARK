@@ -27,6 +27,12 @@
 //! Developer mode (ADR-019) can shorten the current phase ([`Input::DevSetRemaining`]): only its deadline
 //! moves (monotonic clock, the profile stays), so the phase still ends on a Tick with the usual effects.
 //!
+//! Smart breaks (ADR-023, [`Input::SetSmartMeetings`]): each focus block is fitted around the calendar's meetings with
+//! [`crate::calendar::fit_break`] (the same function the calendar plans with) when it starts, on Resume and when the
+//! meetings change. A fit only moves the block's deadline (shorter or longer, within the ADR-023 bounds) and is shown by
+//! the snapshot (`smart_break`); the phase still ends on a Tick with the usual effects in the ADR-013 order. A block
+//! extended by an `Extend` hold or shortened on the Developer page keeps its end. Skip, Pause and Stop work as always.
+//!
 //! Beta (ADR-022): the session keeps a plan of small steps ([`Input::SetSteps`], [`Input::SetStepDone`]), shown
 //! by every snapshot. It survives Start; at Stop all steps go into [`SessionTotals::steps`] and the open ones stay
 //! as the next plan (same ids). Every phase start and end, and every tick of a step, is reported as an
@@ -35,9 +41,12 @@
 
 use crate::api::{
     AppError, ChimeKind, Meeting, MeetingChoice, MeetingHoldView, MicroStep, Phase, PhaseChange,
-    SessionGoal, SessionSnapshot, StepDraft,
+    SessionGoal, SessionSnapshot, SmartBreak, StepDraft, TimeSpan,
 };
-use crate::calendar::meeting_hold_allowed;
+use crate::calendar::{
+    BreakWindow, SmartMeeting, fit_break, meeting_hold_allowed, smart_break_view,
+};
+use crate::stats::MAX_FOCUS_SPANS;
 use crate::timing::{MAX_MEETING_HOLD_MS, TimingProfile};
 use crate::work::normalize_goal;
 
@@ -121,6 +130,11 @@ pub enum Input {
     /// Returns no effects; only the snapshot changes.
     /// A focus already extended by a hold stays extended even when that hold is removed.
     SetMeetingHolds(Vec<MeetingHold>),
+    /// Smart breaks (ADR-023): replaces the meetings focus blocks are fitted around (wall clock, every meeting of the
+    /// calendar with whether it may be fitted; empty while `Config.smart_breaks` is off). Idle or running; they survive
+    /// Start and Stop. When the list changed, the current focus block (running or paused) is fitted again at once,
+    /// unless its end is fixed: only its deadline moves. Returns no effects; only the snapshot changes.
+    SetSmartMeetings(Vec<SmartMeeting>),
     /// Replaces the goal of the coming or running session (`None` clears it), cleaned by
     /// [`normalize_goal`] (a goal with neither key nor title counts as `None`). Allowed in every phase;
     /// returns no effects, only the snapshot changes.
@@ -314,6 +328,9 @@ pub struct SessionTotals {
     pub goal: Option<SessionGoal>,
     /// Every small step of the session with its tick (beta, ADR-022); empty without a plan.
     pub steps: Vec<MicroStep>,
+    /// Wall-clock intervals of running focus, oldest first (the weekly heatmaps, ADR-023): no pauses, no gaps; at
+    /// most [`MAX_FOCUS_SPANS`] (beyond that the last one is stretched).
+    pub focus_spans: Vec<TimeSpan>,
 }
 
 /// Side effects the shell executes, in the order given.
@@ -392,6 +409,17 @@ struct Active {
     phase_focused_start_ms: u64,
     /// `break_ms` when the current break began.
     phase_break_start_ms: u64,
+    /// Running focus on the wall clock (ADR-023), see [`SessionTotals::focus_spans`].
+    focus_spans: Vec<TimeSpan>,
+    /// Smart breaks (ADR-023): how much the fit changed the current focus block, in ms (negative = shorter; 0 = not
+    /// fitted). Part of [`Active::phase_total_ms`] in Focus; reset when a phase begins.
+    smart_delta_ms: i64,
+    /// The moved break of the current focus block, or the running break when it is the moved one (the snapshot's
+    /// `smart_break`).
+    smart_view: Option<SmartBreak>,
+    /// The current focus block keeps its end (an `Extend` hold extended it, or the Developer page set its time left):
+    /// it is not fitted again.
+    smart_fixed: bool,
 }
 
 impl Active {
@@ -399,13 +427,73 @@ impl Active {
         matches!(self.clock, Clock::Running { .. })
     }
 
-    /// Length of the current phase in milliseconds, including a meeting extension.
+    /// Length of the current phase in milliseconds, including a smart-break fit and a meeting extension.
     fn phase_total_ms(&self) -> u64 {
         let base_ms = match self.stage {
-            Stage::Focus => self.profile.focus_ms(),
+            Stage::Focus => self
+                .profile
+                .focus_ms()
+                .saturating_add_signed(self.smart_delta_ms),
             Stage::Break => self.profile.break_ms(),
         };
         base_ms.saturating_add(self.extra_ms)
+    }
+
+    /// Smart breaks (ADR-023): fits the current focus block around `meetings` again ([`fit_break`], the nominal end being
+    /// the deadline without the current fit). Only the deadline (or a paused block's time left) moves, by the change of
+    /// the fit; the time so far counts as before and there are no effects. A paused block is fitted as if it resumed
+    /// now. Nothing happens for a fixed block, during a meeting hold or after an unnoticed gap (the next Tick pauses,
+    /// Resume fits again). In a break the moved break keeps its view only while its meeting is still listed.
+    fn refit_smart(&mut self, now: Now, meetings: &[SmartMeeting]) {
+        if self.stage == Stage::Break {
+            if self
+                .smart_view
+                .as_ref()
+                .is_some_and(|view| !meetings.iter().any(|m| m.id == view.meeting_id))
+            {
+                self.smart_view = None;
+            }
+            return;
+        }
+        if self.smart_fixed || self.hold.is_some() || (self.is_running() && self.is_gap(now)) {
+            return;
+        }
+        // Time left until the end without the current fit (negative: the block already runs past that end).
+        let left_ms = match self.clock {
+            Clock::Running { deadline_ms } => {
+                signed_ms(deadline_ms) - signed_ms(now.mono_ms.max(self.last_seen.mono_ms))
+            }
+            Clock::Paused { remaining_ms } => signed_ms(remaining_ms),
+        } - i128::from(self.smart_delta_ms);
+        let nominal_ms = clamp_i64(i128::from(now.wall_ms) + left_ms);
+        let fit = fit_break(now.wall_ms, nominal_ms, &self.profile, meetings);
+        let delta_ms = fit.map_or(0, |fit| fit.delta_ms);
+        let shift = delta_ms.saturating_sub(self.smart_delta_ms);
+        self.clock = match self.clock {
+            Clock::Running { deadline_ms } => Clock::Running {
+                deadline_ms: deadline_ms.saturating_add_signed(shift),
+            },
+            Clock::Paused { remaining_ms } => Clock::Paused {
+                remaining_ms: remaining_ms.saturating_add_signed(shift),
+            },
+        };
+        self.smart_delta_ms = delta_ms;
+        let break_ms = i64::try_from(self.profile.break_ms()).unwrap_or(i64::MAX);
+        self.smart_view = fit.and_then(|fit| {
+            let meeting = meetings.get(fit.meeting)?;
+            let window = BreakWindow {
+                number: self.cycle,
+                start_ms: fit.break_start_ms,
+                end_ms: fit.break_start_ms.saturating_add(break_ms),
+            };
+            Some(smart_break_view(&window, &fit, meeting))
+        });
+    }
+
+    /// A focus block or break begins: no fit yet, nothing fixed (the moved break's view is handled by the caller).
+    fn reset_smart(&mut self) {
+        self.smart_delta_ms = 0;
+        self.smart_fixed = false;
     }
 
     /// Length of the current phase in seconds, including a meeting extension.
@@ -418,6 +506,9 @@ impl Active {
         let remaining_ms = u64::from(secs)
             .saturating_mul(MS_PER_SEC)
             .clamp(MS_PER_SEC, self.phase_total_ms().max(MS_PER_SEC));
+        // Smart breaks (ADR-023): the phase no longer ends at a moved time, and a focus block keeps this end.
+        self.smart_view = None;
+        self.smart_fixed = self.stage == Stage::Focus;
         self.clock = match self.clock {
             Clock::Paused { .. } => Clock::Paused { remaining_ms },
             Clock::Running { .. } => {
@@ -455,7 +546,10 @@ impl Active {
         }
         let elapsed = now.mono_ms.saturating_sub(self.last_seen.mono_ms);
         match self.stage {
-            Stage::Focus => self.focused_ms = self.focused_ms.saturating_add(elapsed),
+            Stage::Focus => {
+                self.focused_ms = self.focused_ms.saturating_add(elapsed);
+                self.record_focus_span(self.last_seen.wall_ms, now.wall_ms);
+            }
             Stage::Break => self.break_ms = self.break_ms.saturating_add(elapsed),
         }
         // A monotonic clock never goes back; if it did, keep the later point so nothing is counted twice.
@@ -463,6 +557,23 @@ impl Active {
             self.last_seen = now;
         }
         Advance::Counted
+    }
+
+    /// Adds `[from_ms, to_ms)` of running focus (ADR-023): it extends the last span when it starts where that one ended
+    /// (every tick), otherwise it starts a new one (after a pause, a gap or a break). At [`MAX_FOCUS_SPANS`] spans the
+    /// last one is stretched instead. A wall clock that went back adds nothing.
+    fn record_focus_span(&mut self, from_ms: i64, to_ms: i64) {
+        if to_ms <= from_ms {
+            return;
+        }
+        let full = self.focus_spans.len() >= MAX_FOCUS_SPANS;
+        match self.focus_spans.last_mut() {
+            Some(last) if full || last.end_ms == from_ms => last.end_ms = last.end_ms.max(to_ms),
+            _ => self.focus_spans.push(TimeSpan {
+                start_ms: from_ms,
+                end_ms: to_ms,
+            }),
+        }
     }
 
     /// Pauses a running phase with the time left at `last_seen` (call [`Active::advance`] first).
@@ -546,6 +657,10 @@ impl Active {
             deadline_ms: now.mono_ms.saturating_add(self.profile.break_ms()),
         };
         self.begin_break(now, clock);
+        if how != PhaseEnd::Deadline {
+            // Skipped: this break starts now, not at the moved time.
+            self.smart_view = None;
+        }
         self.break_effects(
             progress,
             NotifyKind::BreakStarted {
@@ -562,6 +677,7 @@ impl Active {
             remaining_ms: self.profile.break_ms(),
         };
         self.begin_break(now, clock);
+        self.smart_view = None;
         let subject = Some(hold.subject.trim())
             .filter(|subject| !subject.is_empty())
             .map(str::to_owned);
@@ -578,6 +694,7 @@ impl Active {
         self.extra_ms = 0;
         self.hold = None;
         self.phase_break_start_ms = self.break_ms;
+        self.reset_smart();
     }
 
     /// ADR-013 order with the `FocusEnded` fact (ADR-022) right before the toast.
@@ -608,6 +725,9 @@ impl Active {
         };
         self.used_holds.push(hold.id.clone());
         self.hold = Some(hold);
+        // Smart breaks (ADR-023): the meeting decides the end of this block now.
+        self.smart_fixed = true;
+        self.smart_view = None;
     }
 
     /// Break → next Focus (deadline reached or skipped). The toast comes before shields go up; the `BreakEnded`
@@ -623,6 +743,9 @@ impl Active {
         self.extra_ms = 0;
         self.hold = None;
         self.phase_focused_start_ms = self.focused_ms;
+        // The moved break (if any) is over; the session fits this block next (`Session::refit_smart`).
+        self.reset_smart();
+        self.smart_view = None;
         vec![
             Effect::PhaseChanged(PhaseChange {
                 from: Phase::Break,
@@ -663,6 +786,7 @@ impl Active {
             demo: self.profile.demo,
             goal,
             steps,
+            focus_spans: self.focus_spans,
         }
     }
 }
@@ -675,6 +799,8 @@ pub struct Session {
     idle_profile: TimingProfile,
     /// Meeting holds (only usable `Extend` / `PauseAtBreak` ones), independent of the running session.
     holds: Vec<MeetingHold>,
+    /// Smart breaks (ADR-023): the meetings focus blocks are fitted around ([`Input::SetSmartMeetings`]).
+    smart_meetings: Vec<SmartMeeting>,
     /// Goal of the coming (idle) or running session; moved into the totals on Stop.
     goal: Option<SessionGoal>,
     /// Small steps of the coming (idle) or running session (beta, ADR-022).
@@ -698,6 +824,7 @@ impl Session {
             active: None,
             idle_profile: TimingProfile::normal(),
             holds: Vec::new(),
+            smart_meetings: Vec::new(),
             goal: None,
             steps: Vec::new(),
             ever_done: Vec::new(),
@@ -727,6 +854,14 @@ impl Session {
                 self.holds = holds.into_iter().filter(MeetingHold::is_usable).collect();
                 Vec::new()
             }
+            Input::SetSmartMeetings(meetings) => {
+                // The actor re-sends an unchanged list now and then: only a change fits the block again.
+                if meetings != self.smart_meetings {
+                    self.smart_meetings = meetings;
+                    self.refit_smart(now);
+                }
+                Vec::new()
+            }
             Input::SetGoal(goal) => {
                 self.goal = goal.and_then(normalize_goal);
                 Vec::new()
@@ -743,6 +878,18 @@ impl Session {
             }
             Input::SetStepDone { id, done } => self.set_step_done(id, done),
         }
+    }
+
+    /// Smart breaks (ADR-023): fits the current focus block around the meetings again (see [`Active::refit_smart`]).
+    fn refit_smart(&mut self, now: Now) {
+        if let Some(active) = self.active.as_mut() {
+            active.refit_smart(now, &self.smart_meetings);
+        }
+    }
+
+    /// The meetings smart breaks fit focus blocks around ([`Input::SetSmartMeetings`]).
+    pub fn smart_meetings(&self) -> &[SmartMeeting] {
+        &self.smart_meetings
     }
 
     /// [`Input::SetSteps`]: kept ids keep their tick (and "ticked before"), the others get fresh ids.
@@ -849,6 +996,7 @@ impl Session {
                 meeting_hold: None,
                 goal: self.goal.clone(),
                 steps: self.steps.clone(),
+                smart_break: None,
             },
             Some(active) => SessionSnapshot {
                 revision: 0,
@@ -866,6 +1014,12 @@ impl Session {
                 meeting_hold: active.hold.as_ref().map(MeetingHold::view),
                 goal: self.goal.clone(),
                 steps: self.steps.clone(),
+                // A meeting hold decides this phase now: no "moved break" line next to its banner.
+                smart_break: active
+                    .hold
+                    .is_none()
+                    .then(|| active.smart_view.clone())
+                    .flatten(),
             },
         }
     }
@@ -952,8 +1106,13 @@ impl Session {
             used_holds: Vec::new(),
             phase_focused_start_ms: 0,
             phase_break_start_ms: 0,
+            focus_spans: Vec::new(),
+            smart_delta_ms: 0,
+            smart_view: None,
+            smart_fixed: false,
         });
         self.ever_done.clear();
+        self.refit_smart(now);
         vec![
             Effect::PhaseChanged(PhaseChange {
                 from: Phase::Idle,
@@ -999,6 +1158,8 @@ impl Session {
             // The held break now runs; an extended focus keeps its hold until it ends.
             active.hold = None;
         }
+        // Smart breaks (ADR-023): the block may now fit the meetings differently (it was paused a while).
+        active.refit_smart(now, &self.smart_meetings);
         if active.stage == Stage::Focus {
             vec![Effect::Tracking(true)]
         } else {
@@ -1038,7 +1199,10 @@ impl Session {
             return Vec::new();
         };
         active.advance(now);
-        active.next_phase(now, PhaseEnd::Skipped)
+        let effects = active.next_phase(now, PhaseEnd::Skipped);
+        // A new focus block is fitted (no effects; the phase change above keeps its ADR-013 order).
+        active.refit_smart(now, &self.smart_meetings);
+        effects
     }
 
     fn tick(&mut self, now: Now) -> Vec<Effect> {
@@ -1058,7 +1222,9 @@ impl Session {
             return Vec::new();
         }
         if active.stage == Stage::Break {
-            return active.enter_focus(now, PhaseEnd::Deadline);
+            let effects = active.enter_focus(now, PhaseEnd::Deadline);
+            active.refit_smart(now, &self.smart_meetings);
+            return effects;
         }
         // The break that would start now: [now, now + break). `Extend` wins over `PauseAtBreak`.
         let window_end = now.mono_ms.saturating_add(active.profile.break_ms());
@@ -1106,6 +1272,16 @@ fn wall_to_mono(wall_ms: i64, now: Now) -> u64 {
         Ok(ahead) => now.mono_ms.saturating_add(ahead),
         Err(_) => now.mono_ms.saturating_sub(delta.unsigned_abs()),
     }
+}
+
+/// Milliseconds as a wide signed number (differences never overflow).
+fn signed_ms(ms: u64) -> i128 {
+    i128::from(ms)
+}
+
+/// A wide number back to `i64`, saturating.
+fn clamp_i64(value: i128) -> i64 {
+    i64::try_from(value).unwrap_or(if value < 0 { i64::MIN } else { i64::MAX })
 }
 
 /// A phase never has zero length (it would flip on every tick).
@@ -1269,6 +1445,7 @@ mod tests {
                 meeting_hold: None,
                 goal: None,
                 steps: Vec::new(),
+                smart_break: None,
             }
         );
         assert_eq!(session.phase(), Phase::Idle);
@@ -1423,6 +1600,17 @@ mod tests {
             demo: true,
             goal: None,
             steps: Vec::new(),
+            // The two focus phases on the wall clock; the breaks in between are not focus.
+            focus_spans: vec![
+                TimeSpan {
+                    start_ms: WALL0,
+                    end_ms: WALL0 + 40_000,
+                },
+                TimeSpan {
+                    start_ms: WALL0 + 60_000,
+                    end_ms: WALL0 + 100_000,
+                },
+            ],
         };
         assert_eq!(legacy(&effects), stop_effects(Phase::Break, 2, expected));
         assert_eq!(session.phase(), Phase::Idle);
@@ -1546,11 +1734,85 @@ mod tests {
             demo: true,
             goal: None,
             steps: Vec::new(),
+            focus_spans: vec![TimeSpan {
+                start_ms: WALL0,
+                end_ms: WALL0 + 12_700,
+            }],
         };
         assert_eq!(legacy(&effects), stop_effects(Phase::Focus, 1, expected));
         assert_eq!(session.phase(), Phase::Idle);
         assert!(!session.wants_shields());
         assert_eq!(session.snapshot(at(13)).phase, Phase::Idle);
+    }
+
+    fn span(start_ms: i64, end_ms: i64) -> TimeSpan {
+        TimeSpan {
+            start_ms: WALL0 + start_ms,
+            end_ms: WALL0 + end_ms,
+        }
+    }
+
+    #[test]
+    fn focus_spans_leave_out_pauses_gaps_and_a_clock_that_went_back() {
+        let mut session = started(TimingProfile::normal());
+        tick_through(&mut session, 0, 10);
+        session.handle(at(10), Input::Pause);
+        // Paused time is not focus.
+        session.handle(at(25), Input::Resume);
+        tick_through(&mut session, 25, 30);
+        // The wall clock went back by 5 s (e.g. a time sync): that second adds nothing, the next ones go on from there.
+        session.handle(
+            Now {
+                mono_ms: 31_000,
+                wall_ms: WALL0 + 26_000,
+            },
+            Input::Tick,
+        );
+        session.handle(
+            Now {
+                mono_ms: 32_000,
+                wall_ms: WALL0 + 27_000,
+            },
+            Input::Tick,
+        );
+        // A sleep gap: nothing is counted and the session pauses itself.
+        session.handle(
+            Now {
+                mono_ms: 32_000 + 3_600_000,
+                wall_ms: WALL0 + 27_000 + 3_600_000,
+            },
+            Input::Tick,
+        );
+        let totals = only_totals(&session.handle(
+            Now {
+                mono_ms: 33_000 + 3_600_000,
+                wall_ms: WALL0 + 28_000 + 3_600_000,
+            },
+            Input::Stop,
+        ));
+        assert_eq!(
+            totals.focus_spans,
+            vec![span(0, 10_000), span(25_000, 30_000), span(26_000, 27_000)]
+        );
+        assert_eq!(totals.focused_secs, 10 + 5 + 1 + 1);
+    }
+
+    #[test]
+    fn focus_spans_are_capped_by_stretching_the_last_one() {
+        let mut session = started(TimingProfile::normal());
+        let mut t = 0;
+        for _ in 0..300 {
+            session.handle(at(t + 1), Input::Tick);
+            session.handle(at(t + 1), Input::Pause);
+            session.handle(at(t + 2), Input::Resume);
+            t += 2;
+        }
+        let totals = only_totals(&session.handle(at(t), Input::Stop));
+        assert_eq!(totals.focus_spans.len(), MAX_FOCUS_SPANS);
+        assert_eq!(totals.focus_spans[0], span(0, 1_000));
+        assert_eq!(totals.focus_spans[1], span(2_000, 3_000));
+        let last = totals.focus_spans.last().expect("spans");
+        assert_eq!(last.end_ms, WALL0 + 599_000);
     }
 
     #[test]
@@ -3366,5 +3628,397 @@ mod tests {
             );
             assert_eq!(with_steps.phase(), without.phase());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Smart breaks (ADR-023): normal profile 45/15 unless said otherwise
+    // -----------------------------------------------------------------------
+
+    use crate::api::SmartBreakKind;
+
+    const MINUTE: u64 = 60;
+
+    fn smart_meeting(id: &str, start_secs: u64, end_secs: u64, eligible: bool) -> SmartMeeting {
+        SmartMeeting {
+            id: id.to_owned(),
+            start_ms: at(start_secs).wall_ms,
+            end_ms: at(end_secs).wall_ms,
+            eligible,
+        }
+    }
+
+    /// A session started at 0 s with `meetings` set before the start.
+    fn smart_session(profile: TimingProfile, meetings: Vec<SmartMeeting>) -> Session {
+        let mut session = Session::new();
+        assert!(
+            session
+                .handle(at(0), Input::SetSmartMeetings(meetings))
+                .is_empty()
+        );
+        session.handle(at(0), start_input(profile));
+        session
+    }
+
+    /// The expected `SmartBreak`: meeting `(start, end)` and moved break `(start, end)` in seconds after the start.
+    fn moved(
+        id: &str,
+        meeting: (u64, u64),
+        number: u32,
+        kind: SmartBreakKind,
+        delta_secs: i32,
+        window: (u64, u64),
+    ) -> Option<SmartBreak> {
+        Some(SmartBreak {
+            meeting_id: id.to_owned(),
+            meeting_start_ms: at(meeting.0).wall_ms,
+            meeting_end_ms: at(meeting.1).wall_ms,
+            break_number: number,
+            kind,
+            focus_delta_secs: delta_secs,
+            break_start_ms: at(window.0).wall_ms,
+            break_end_ms: at(window.1).wall_ms,
+        })
+    }
+
+    #[test]
+    fn smart_breaks_without_a_colliding_meeting_change_nothing() {
+        // Demo: breaks at 40–60 s and 100–120 s; the meeting at 62–70 s lies inside the second focus block.
+        let mut plain = started(TimingProfile::demo());
+        let mut smart = smart_session(
+            TimingProfile::demo(),
+            vec![smart_meeting("inside", 62, 70, true)],
+        );
+        for secs in 1..=130 {
+            let a = plain.handle(at(secs), Input::Tick);
+            let b = smart.handle(at(secs), Input::Tick);
+            assert_eq!(a, b, "at {secs} s");
+            assert_eq!(plain.snapshot(at(secs)), smart.snapshot(at(secs)));
+            assert_eq!(smart.snapshot(at(secs)).smart_break, None);
+        }
+        // Idle never shows a moved break, whatever the meetings.
+        let mut idle = Session::new();
+        idle.handle(
+            at(0),
+            Input::SetSmartMeetings(vec![smart_meeting("m", 50 * MINUTE, 90 * MINUTE, true)]),
+        );
+        assert_eq!(idle.snapshot(at(0)).smart_break, None);
+        assert_eq!(idle.smart_meetings().len(), 1);
+    }
+
+    #[test]
+    fn a_meeting_in_the_middle_of_the_break_ends_the_break_before_it() {
+        // Meeting 0:57–1:30 after a start at 0:00: the break moves from 0:45 to 0:42 and ends when it starts.
+        let meeting = (57 * MINUTE, 90 * MINUTE);
+        let mut session = smart_session(
+            TimingProfile::normal(),
+            vec![smart_meeting("m", meeting.0, meeting.1, true)],
+        );
+        let expected = moved(
+            "m",
+            meeting,
+            1,
+            SmartBreakKind::EndsBeforeMeeting,
+            -180,
+            (42 * MINUTE, 57 * MINUTE),
+        );
+        let snap = session.snapshot(at(0));
+        assert_eq!((snap.phase_total_secs, snap.remaining_secs), (2520, 2520));
+        assert_eq!(snap.smart_break, expected);
+        assert!(tick_through(&mut session, 0, 42 * MINUTE - 1).is_empty());
+        // At the moved end: exactly the usual Focus → Break effects (ADR-013 order); the fact counts 42 minutes.
+        let effects = session.handle(at(42 * MINUTE), Input::Tick);
+        assert_eq!(legacy(&effects), break_transition(1, 900));
+        assert!(
+            effects.contains(&Effect::Progress(ProgressFact::FocusEnded {
+                session_id: "s1".into(),
+                cycle: 1,
+                ran_secs: 2520,
+                how: PhaseEnd::Deadline,
+                held: false,
+                profile: TimingProfile::normal(),
+            }))
+        );
+        // The running break is the moved one, a normal 15-minute break.
+        let snap = session.snapshot(at(42 * MINUTE));
+        assert_eq!((snap.phase, snap.phase_total_secs), (Phase::Break, 900));
+        assert_eq!(snap.smart_break, expected);
+        // The next block starts with the meeting and holds all of it: a full focus, nothing moved.
+        let effects = tick_through(&mut session, 42 * MINUTE, 57 * MINUTE);
+        assert_eq!(legacy(&effects), focus_transition(2, 2700));
+        let snap = session.snapshot(at(57 * MINUTE));
+        assert_eq!((snap.phase_total_secs, snap.smart_break), (2700, None));
+    }
+
+    #[test]
+    fn a_meeting_in_the_middle_of_the_focus_starts_the_break_with_it() {
+        // 0:40–1:10: ending the break before it would leave a 25-minute block (< 60 %), so the break starts with it.
+        let mut session = smart_session(
+            TimingProfile::normal(),
+            vec![smart_meeting("standup", 40 * MINUTE, 70 * MINUTE, true)],
+        );
+        assert_eq!(
+            session.snapshot(at(0)).smart_break,
+            moved(
+                "standup",
+                (40 * MINUTE, 70 * MINUTE),
+                1,
+                SmartBreakKind::StartsAtMeeting,
+                -300,
+                (40 * MINUTE, 55 * MINUTE)
+            )
+        );
+        assert!(tick_through(&mut session, 0, 40 * MINUTE - 1).is_empty());
+        let effects = session.handle(at(40 * MINUTE), Input::Tick);
+        assert_eq!(legacy(&effects), break_transition(1, 900));
+    }
+
+    #[test]
+    fn a_block_may_be_lengthened_by_a_quarter_at_most() {
+        // 0:50–1:20: the break starts with it, the block is 5 minutes longer (smaller than ending it 10 min early).
+        let mut session = smart_session(
+            TimingProfile::normal(),
+            vec![smart_meeting("m", 50 * MINUTE, 80 * MINUTE, true)],
+        );
+        let snap = session.snapshot(at(0));
+        assert_eq!(snap.phase_total_secs, 3000);
+        assert_eq!(
+            snap.smart_break
+                .as_ref()
+                .map(|moved| moved.focus_delta_secs),
+            Some(300)
+        );
+        // Nothing happens at the usual end.
+        assert!(tick_through(&mut session, 0, 50 * MINUTE - 1).is_empty());
+        assert_eq!(
+            legacy(&session.handle(at(50 * MINUTE), Input::Tick)),
+            break_transition(1, 900)
+        );
+
+        // 0:58: starting the break with it would be +13 min (more than 25 %, 11 min 15 s): it ends 2 min early instead.
+        let session = smart_session(
+            TimingProfile::normal(),
+            vec![smart_meeting("late", 58 * MINUTE, 80 * MINUTE, true)],
+        );
+        assert_eq!(
+            session
+                .snapshot(at(0))
+                .smart_break
+                .map(|moved| (moved.kind, moved.focus_delta_secs)),
+            Some((SmartBreakKind::EndsBeforeMeeting, -120))
+        );
+    }
+
+    #[test]
+    fn ask_me_instead_gives_back_the_unfitted_end() {
+        let meeting = |eligible| vec![smart_meeting("m", 57 * MINUTE, 90 * MINUTE, eligible)];
+        let mut session = smart_session(TimingProfile::normal(), meeting(true));
+        tick_through(&mut session, 0, 10 * MINUTE);
+        assert_eq!(session.snapshot(at(10 * MINUTE)).remaining_secs, 32 * 60);
+        // "Ask me instead": the meeting may no longer be fitted. No effects; the block is 45 minutes again.
+        assert!(
+            session
+                .handle(at(10 * MINUTE), Input::SetSmartMeetings(meeting(false)))
+                .is_empty()
+        );
+        let snap = session.snapshot(at(10 * MINUTE));
+        assert_eq!(
+            (snap.remaining_secs, snap.phase_total_secs, snap.smart_break),
+            (35 * 60, 2700, None)
+        );
+        // The same list again changes nothing; "fit it again" brings the fit back.
+        assert!(
+            session
+                .handle(at(10 * MINUTE), Input::SetSmartMeetings(meeting(false)))
+                .is_empty()
+        );
+        session.handle(at(10 * MINUTE), Input::SetSmartMeetings(meeting(true)));
+        assert_eq!(session.snapshot(at(10 * MINUTE)).remaining_secs, 32 * 60);
+        // Smart breaks switched off (an empty list): the plain end again.
+        session.handle(at(10 * MINUTE), Input::SetSmartMeetings(Vec::new()));
+        assert_eq!(session.snapshot(at(10 * MINUTE)).remaining_secs, 35 * 60);
+    }
+
+    #[test]
+    fn undoing_a_lengthened_block_after_its_usual_end_starts_the_break_at_once() {
+        let meeting = |eligible| vec![smart_meeting("m", 50 * MINUTE, 80 * MINUTE, eligible)];
+        let mut session = smart_session(TimingProfile::normal(), meeting(true));
+        assert!(tick_through(&mut session, 0, 47 * MINUTE).is_empty());
+        session.handle(at(47 * MINUTE), Input::SetSmartMeetings(meeting(false)));
+        assert_eq!(session.snapshot(at(47 * MINUTE)).remaining_secs, 0);
+        let effects = session.handle(at(47 * MINUTE + 1), Input::Tick);
+        assert_eq!(legacy(&effects), break_transition(1, 900));
+        assert_eq!(session.snapshot(at(47 * MINUTE + 1)).smart_break, None);
+    }
+
+    #[test]
+    fn smart_breaks_never_block_pause_skip_or_stop() {
+        let meeting = (57 * MINUTE, 90 * MINUTE);
+        let mut session = smart_session(
+            TimingProfile::normal(),
+            vec![smart_meeting("m", meeting.0, meeting.1, true)],
+        );
+        tick_through(&mut session, 0, 10 * MINUTE);
+        assert_eq!(
+            session.handle(at(10 * MINUTE), Input::Pause),
+            vec![Effect::Tracking(false)]
+        );
+        // Paused two minutes: Resume fits the block again, so the break still ends when the meeting starts (0:57),
+        // now 5 minutes shorter instead of 3.
+        assert_eq!(
+            session.handle(at(12 * MINUTE), Input::Resume),
+            vec![Effect::Tracking(true)]
+        );
+        let snap = session.snapshot(at(12 * MINUTE));
+        assert_eq!(snap.remaining_secs, 30 * 60);
+        assert_eq!(
+            snap.smart_break,
+            moved(
+                "m",
+                meeting,
+                1,
+                SmartBreakKind::EndsBeforeMeeting,
+                -300,
+                (42 * MINUTE, 57 * MINUTE)
+            )
+        );
+        // Skip: the break starts now (the usual effects) and is not the moved one.
+        let effects = session.handle(at(13 * MINUTE), Input::SkipPhase);
+        assert_eq!(legacy(&effects), break_transition(1, 900));
+        assert_eq!(session.snapshot(at(13 * MINUTE)).smart_break, None);
+        // Stop works as always.
+        let effects = session.handle(at(14 * MINUTE), Input::Stop);
+        assert_eq!(
+            legacy(&effects),
+            stop_effects(Phase::Break, 1, only_totals(&effects))
+        );
+        assert_eq!(session.phase(), Phase::Idle);
+    }
+
+    #[test]
+    fn a_paused_block_is_fitted_as_if_it_resumed_now() {
+        let mut session = started(TimingProfile::normal());
+        tick_through(&mut session, 0, 10 * MINUTE);
+        session.handle(at(10 * MINUTE), Input::Pause);
+        // The calendar reports a meeting while paused: planned as if resumed now, the break is due at 0:50; the
+        // meeting at 1:02 is 12 min into it, so the frozen time left shrinks by 3 minutes.
+        session.handle(
+            at(15 * MINUTE),
+            Input::SetSmartMeetings(vec![smart_meeting("m", 62 * MINUTE, 90 * MINUTE, true)]),
+        );
+        let snap = session.snapshot(at(20 * MINUTE));
+        assert!(snap.paused);
+        assert_eq!(snap.remaining_secs, 32 * 60);
+        assert_eq!(snap.phase_total_secs, 42 * 60);
+    }
+
+    #[test]
+    fn a_fixed_block_keeps_its_end() {
+        let fitted = |eligible| vec![smart_meeting("m", 57 * MINUTE, 90 * MINUTE, eligible)];
+        // Developer page: the time left was set; a later change of the meetings does not move it.
+        let mut session = smart_session(TimingProfile::normal(), fitted(true));
+        session.handle(at(60), Input::DevSetRemaining { secs: 120 });
+        session.handle(at(60), Input::SetSmartMeetings(fitted(false)));
+        let snap = session.snapshot(at(60));
+        assert_eq!((snap.remaining_secs, snap.smart_break), (120, None));
+
+        // An `Extend` hold reaching the moved break (only with inconsistent inputs) extends the block as usual and
+        // decides its end from then on.
+        let mut session = smart_session(TimingProfile::normal(), fitted(true));
+        session.handle(
+            at(0),
+            Input::SetMeetingHolds(vec![hold("h", Extend, 42 * MINUTE, 50 * MINUTE)]),
+        );
+        assert!(tick_through(&mut session, 0, 42 * MINUTE).is_empty());
+        let snap = session.snapshot(at(42 * MINUTE));
+        assert_eq!(snap.phase, Phase::Focus);
+        assert_eq!(snap.smart_break, None);
+        assert!(snap.meeting_hold.is_some());
+        session.handle(at(43 * MINUTE), Input::SetSmartMeetings(fitted(false)));
+        assert_eq!(session.snapshot(at(43 * MINUTE)).remaining_secs, 7 * 60);
+        let effects = tick_through(&mut session, 43 * MINUTE, 50 * MINUTE);
+        assert_eq!(legacy(&effects), break_transition(1, 900));
+    }
+
+    #[test]
+    fn back_to_back_blocks_are_fitted_one_by_one_in_the_demo_profile() {
+        // Demo 40/20: blocks of 24..=50 s. "a" at 50–60 s moves break 1 to 30–50 s; "b" at 100–130 s moves break 2
+        // (nominally 90–110 s) to 80–100 s. Both times −10 s and +10 s tie: the break before the meeting wins.
+        let mut session = smart_session(
+            TimingProfile::demo(),
+            vec![
+                smart_meeting("a", 50, 60, true),
+                smart_meeting("b", 100, 130, true),
+            ],
+        );
+        assert_eq!(
+            session.snapshot(at(0)).smart_break,
+            moved(
+                "a",
+                (50, 60),
+                1,
+                SmartBreakKind::EndsBeforeMeeting,
+                -10,
+                (30, 50)
+            )
+        );
+        let effects = tick_through(&mut session, 0, 30);
+        assert_eq!(legacy(&effects), break_transition(1, 20));
+        let effects = tick_through(&mut session, 30, 50);
+        assert_eq!(legacy(&effects), focus_transition(2, 40));
+        let snap = session.snapshot(at(50));
+        assert_eq!(snap.phase_total_secs, 30);
+        assert_eq!(
+            snap.smart_break,
+            moved(
+                "b",
+                (100, 130),
+                2,
+                SmartBreakKind::EndsBeforeMeeting,
+                -10,
+                (80, 100)
+            )
+        );
+        let effects = tick_through(&mut session, 50, 80);
+        assert_eq!(legacy(&effects), break_transition(2, 20));
+    }
+
+    #[test]
+    fn an_answered_or_day_long_meeting_is_left_to_the_question() {
+        for meetings in [
+            vec![smart_meeting("answered", 57 * MINUTE, 90 * MINUTE, false)],
+            // A day-long block (an all-day event that slipped through as timed).
+            vec![smart_meeting("all-day", 0, 24 * 60 * MINUTE, true)],
+        ] {
+            let session = smart_session(TimingProfile::normal(), meetings);
+            let snap = session.snapshot(at(0));
+            assert_eq!((snap.phase_total_secs, snap.smart_break), (2700, None));
+        }
+    }
+
+    #[test]
+    fn after_a_sleep_gap_the_block_is_fitted_on_resume() {
+        let meeting = vec![smart_meeting("m", 57 * MINUTE, 90 * MINUTE, true)];
+        let mut session = smart_session(TimingProfile::normal(), meeting);
+        tick_through(&mut session, 0, 5 * MINUTE);
+        // Asleep 10 minutes: the Tick pauses with the time left at 0:05 (no time counted).
+        let after = at(15 * MINUTE);
+        assert_eq!(
+            session.handle(after, Input::Tick),
+            vec![
+                Effect::Tracking(false),
+                Effect::Notify(NotifyKind::Interrupted)
+            ]
+        );
+        assert_eq!(session.snapshot(after).remaining_secs, 37 * 60);
+        // Resume: the unfitted break is due at 0:55 now and the meeting at 0:57 is 2 minutes into it; starting the
+        // break with it (+2 min) is a smaller change than ending it before (−13 min).
+        session.handle(after, Input::Resume);
+        let snap = session.snapshot(after);
+        assert_eq!(
+            snap.smart_break
+                .map(|moved| (moved.kind, moved.focus_delta_secs)),
+            Some((SmartBreakKind::StartsAtMeeting, 120))
+        );
+        assert_eq!(snap.remaining_secs, 42 * 60);
     }
 }

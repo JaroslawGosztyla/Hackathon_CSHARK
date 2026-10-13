@@ -130,7 +130,7 @@ fn is_leap(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-fn days_in_month(year: i32, month: u32) -> u32 {
+pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
         2 if is_leap(year) => 29,
         2 => 28,
@@ -140,7 +140,7 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 }
 
 /// Days since 1970-01-01 of a valid civil date (Howard Hinnant's `days_from_civil`).
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+pub(crate) fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let year = if month <= 2 { year - 1 } else { year };
     let era = year.div_euclid(400);
     let year_of_era = year - era * 400;
@@ -151,7 +151,7 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 }
 
 /// The civil date of a day number (Howard Hinnant's `civil_from_days`).
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let day_of_era = z - era * 146_097;

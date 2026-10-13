@@ -225,6 +225,7 @@ mod tests {
             goal_done: None,
             steps: Vec::new(),
             sparks: None,
+            focus_spans: Vec::new(),
         };
         assert!(!includes_titles(&summary));
         summary.usage.apps[0].titles.push(TitleUsage {

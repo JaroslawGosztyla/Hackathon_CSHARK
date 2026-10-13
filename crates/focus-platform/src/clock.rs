@@ -7,6 +7,62 @@
 //! * Windows: `GetLocalTime` (local time zone and daylight saving time applied by the OS).
 //! * Elsewhere: `None` (the standard library has no local time zone, and we do not add a time zone database
 //!   just for the tint, which is a Windows feature anyway).
+//!
+//! [`utc_offset_minutes_at`] gives the UTC offset of the user's time zone at any instant, past ones included, for the
+//! weekly stats (ADR-023: `focus_core::stats::WeekAggregator` places stored sessions by local hour).
+
+/// Milliseconds between 1601-01-01 (the `FILETIME` epoch) and 1970-01-01.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const FILETIME_EPOCH_OFFSET_MS: i64 = 11_644_473_600_000;
+/// `FILETIME` ticks (100 ns) per millisecond.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const FILETIME_TICKS_PER_MS: i64 = 10_000;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const MS_PER_MINUTE: i64 = 60_000;
+
+/// The UTC offset of the local time zone at the instant `utc_ms` (Unix epoch milliseconds), in minutes east of UTC
+/// (Warsaw in summer → `120`, in winter → `60`), with the daylight-saving rule of that date; `None` when unknown
+/// (outside Windows, or an instant before 1601 or after 30827).
+pub fn utc_offset_minutes_at(utc_ms: i64) -> Option<i32> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+        use windows::Win32::System::Time::{
+            FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime,
+        };
+
+        let ticks = utc_ms
+            .checked_add(FILETIME_EPOCH_OFFSET_MS)?
+            .checked_mul(FILETIME_TICKS_PER_MS)?;
+        let ticks = u64::try_from(ticks).ok()?;
+        let utc_file = FILETIME {
+            // Low and high halves of the 64-bit tick count.
+            dwLowDateTime: (ticks & u64::from(u32::MAX)) as u32,
+            dwHighDateTime: (ticks >> 32) as u32,
+        };
+        let mut utc = SYSTEMTIME::default();
+        let mut local = SYSTEMTIME::default();
+        let mut local_file = FILETIME::default();
+        // SAFETY: every pointer refers to a live local of the expected type; `None` = the current time zone.
+        unsafe {
+            FileTimeToSystemTime(&utc_file, &mut utc).ok()?;
+            SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).ok()?;
+            SystemTimeToFileTime(&local, &mut local_file).ok()?;
+        }
+        let local_ticks =
+            (u64::from(local_file.dwHighDateTime) << 32) | u64::from(local_file.dwLowDateTime);
+        let local_ticks = i64::try_from(local_ticks).ok()?;
+        let delta_ms = (local_ticks / FILETIME_TICKS_PER_MS)
+            .checked_sub(FILETIME_EPOCH_OFFSET_MS)?
+            .checked_sub(utc_ms)?;
+        i32::try_from(delta_ms.div_euclid(MS_PER_MINUTE)).ok()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = utc_ms;
+        None
+    }
+}
 
 /// Minutes since local midnight, with the fraction from seconds and milliseconds (`18:15:30` → `1095.5`),
 /// always in `0.0..1440.0`; `None` when the local time is unavailable.
@@ -130,6 +186,25 @@ mod tests {
         );
         #[cfg(not(target_os = "windows"))]
         assert_eq!(now, None);
+    }
+
+    #[test]
+    fn platform_utc_offset() {
+        let max_minutes = 18 * 60;
+        #[cfg(target_os = "windows")]
+        for at in [0, 1_760_000_000_000, 1_790_000_000_000] {
+            let offset = utc_offset_minutes_at(at);
+            assert!(
+                offset.is_some_and(|m| (-max_minutes..=max_minutes).contains(&m)),
+                "{at}: {offset:?}"
+            );
+        }
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(utc_offset_minutes_at(0), None);
+        // Out of the FILETIME range.
+        assert_eq!(utc_offset_minutes_at(i64::MAX), None);
+        assert_eq!(utc_offset_minutes_at(i64::MIN), None);
+        assert_eq!(utc_offset_minutes_at(-FILETIME_EPOCH_OFFSET_MS - 1), None);
     }
 
     #[test]

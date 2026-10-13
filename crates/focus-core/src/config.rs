@@ -1,12 +1,13 @@
 //! Config defaults and validation. The shell persists only configs that passed
 //! [`Config::normalized`]; the UI shows the returned `AppError.field` next to the input.
 
+use std::collections::{BTreeMap, HashSet};
 use std::ops::RangeInclusive;
 
 use crate::api::{
-    AppError, CalendarConfig, CelebrationLevel, ChimeKind, ChimeSound, Config, CustomChimes,
-    DailyGoal, Language, MusicConfig, MusicSourceKind, NoiseColor, RewardsConfig, ShieldsConfig,
-    Theme, TintConfig, Weekday, WorkConfig,
+    AppCategory, AppError, CalendarConfig, CelebrationLevel, ChimeKind, ChimeSound, Config,
+    CustomChimes, DailyGoal, Language, MusicConfig, MusicSourceKind, NoiseColor, RewardsConfig,
+    ShieldsConfig, Theme, TintConfig, TintLocation, Weekday, WorkConfig,
 };
 use crate::blocklist::normalize_domain;
 use crate::launchers;
@@ -62,6 +63,18 @@ pub const MAX_JIRA_EMAIL_LEN: usize = 254;
 pub const MAX_AZURE_ORG_LEN: usize = 64;
 /// Most days off per week for the streak (`rewards.restWeekdays`, ADR-022).
 pub const MAX_REST_WEEKDAYS: usize = 6;
+/// Most colour-critical apps in `tint.pauseApps` (ADR-023).
+pub const MAX_PAUSE_APPS: usize = 64;
+/// Longest exe name accepted in `tint.pauseApps` and as an `appCategories` key (ADR-023).
+pub const MAX_PROCESS_NAME_CHARS: usize = 128;
+/// Longest `tint.location.city` id (ADR-023).
+pub const MAX_CITY_ID_CHARS: usize = 64;
+/// Allowed `tint.location.latitude` in degrees (ADR-023).
+pub const LATITUDE_RANGE: RangeInclusive<f64> = -90.0..=90.0;
+/// Allowed `tint.location.longitude` in degrees (ADR-023).
+pub const LONGITUDE_RANGE: RangeInclusive<f64> = -180.0..=180.0;
+/// Most labelled apps in `appCategories` (ADR-023).
+pub const MAX_APP_CATEGORIES: usize = 500;
 
 const MAX_TENANT_LEN: usize = 253;
 const MAX_HOST_LEN: usize = 253;
@@ -103,6 +116,10 @@ impl Default for Config {
             developer_mode: false,
             beta_features: false,
             rewards: RewardsConfig::default(),
+            smart_breaks: false,
+            app_categories: BTreeMap::new(),
+            // A config that exists (or lacks the field) belongs to a user who never needs the wizard (ADR-023).
+            onboarding_done: true,
         }
     }
 }
@@ -200,7 +217,9 @@ impl Config {
     /// Out-of-range values are never clamped silently: they return `Err` with code
     /// `config.invalid` and `field` set to the camelCase path (`focusMinutes`, `music.volume`,
     /// `tint.startMinutes`, `breakReminders`, `customChimes.breakFile`, `calendar.horizonHours`,
-    /// `work.jiraUrl`).
+    /// `work.jiraUrl`, `tint.pauseApps`, `tint.location.latitude`, `appCategories`).
+    /// The colour-critical apps and the app labels are trimmed (ADR-023, [`TintConfig::normalized`],
+    /// [`normalize_app_categories`]).
     pub fn normalized(self) -> Result<Config, AppError> {
         let Config {
             focus_minutes,
@@ -227,6 +246,9 @@ impl Config {
             developer_mode,
             beta_features,
             rewards,
+            smart_breaks,
+            app_categories,
+            onboarding_done,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -258,7 +280,19 @@ impl Config {
             developer_mode,
             beta_features,
             rewards: rewards.normalized()?,
+            smart_breaks,
+            app_categories: normalize_app_categories(app_categories)?,
+            onboarding_done,
         })
+    }
+
+    /// The config the shell creates on a fresh install (no `config.json` yet): the defaults with the first-run
+    /// wizard still to show (`onboarding_done: false`, ADR-023).
+    pub fn first_run() -> Config {
+        Config {
+            onboarding_done: false,
+            ..Config::default()
+        }
     }
 
     /// Beta rewards (ADR-022) are on: sparks, levels, daily goal, streak and celebrations.
@@ -813,7 +847,9 @@ impl ShieldsConfig {
 impl TintConfig {
     /// Tint part of [`Config::normalized`] (checked also while disabled); errors use `tint.*`
     /// field paths. Times are `0..1440` and must differ, strength is `0..=100`, fades `0..=180`
-    /// minutes.
+    /// minutes. ADR-023: the location must be finite and within [`LATITUDE_RANGE`] / [`LONGITUDE_RANGE`]
+    /// (`tint.location.latitude` / `tint.location.longitude`; its city id is trimmed, empty → `None`, at most
+    /// [`MAX_CITY_ID_CHARS`], else `tint.location.city`); the colour-critical apps go through [`normalize_pause_apps`].
     pub fn normalized(self) -> Result<TintConfig, AppError> {
         let TintConfig {
             enabled,
@@ -822,6 +858,11 @@ impl TintConfig {
             strength,
             transition_minutes,
             mode,
+            schedule,
+            location,
+            pause_for_apps,
+            pause_apps,
+            pause_for_fullscreen,
         } = self;
 
         let last_minute = MINUTES_PER_DAY.saturating_sub(1);
@@ -839,6 +880,8 @@ impl TintConfig {
             transition_minutes,
             0..=MAX_TRANSITION_MINUTES,
         )?;
+        let location = location.map(normalize_location).transpose()?;
+        let pause_apps = normalize_pause_apps(pause_apps)?;
 
         Ok(TintConfig {
             enabled,
@@ -847,8 +890,131 @@ impl TintConfig {
             strength,
             transition_minutes,
             mode,
+            schedule,
+            location,
+            pause_for_apps,
+            pause_apps,
+            pause_for_fullscreen,
         })
     }
+}
+
+/// `tint.location` as stored (see [`TintConfig::normalized`]).
+fn normalize_location(location: TintLocation) -> Result<TintLocation, AppError> {
+    let TintLocation {
+        latitude,
+        longitude,
+        city,
+    } = location;
+    check_degrees("tint.location.latitude", latitude, LATITUDE_RANGE)?;
+    check_degrees("tint.location.longitude", longitude, LONGITUDE_RANGE)?;
+    let city = city
+        .map(|id| id.trim().to_owned())
+        .filter(|id| !id.is_empty());
+    if let Some(id) = &city
+        && (id.chars().count() > MAX_CITY_ID_CHARS || id.chars().any(char::is_control))
+    {
+        return Err(invalid(
+            "tint.location.city",
+            format!("tint.location.city must be at most {MAX_CITY_ID_CHARS} printable characters"),
+        ));
+    }
+    Ok(TintLocation {
+        latitude,
+        longitude,
+        city,
+    })
+}
+
+fn check_degrees(field: &str, value: f64, range: RangeInclusive<f64>) -> Result<(), AppError> {
+    if value.is_finite() && range.contains(&value) {
+        return Ok(());
+    }
+    let (min, max) = (*range.start(), *range.end());
+    Err(invalid(
+        field,
+        format!("{field} must be between {min} and {max}, got {value}"),
+    ))
+}
+
+/// `tint.pauseApps` as stored (ADR-023): names trimmed, empty ones dropped, case-insensitive duplicates dropped (the
+/// first spelling stays), order kept. More than [`MAX_PAUSE_APPS`] names, a name longer than
+/// [`MAX_PROCESS_NAME_CHARS`] or one that is not a plain file name ([`is_process_name`]) → `config.invalid` with
+/// field `tint.pauseApps`.
+pub fn normalize_pause_apps(apps: Vec<String>) -> Result<Vec<String>, AppError> {
+    const FIELD: &str = "tint.pauseApps";
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for app in apps {
+        let name = app.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if !is_process_name(name) {
+            return Err(invalid(
+                FIELD,
+                format!(
+                    "{FIELD} entries must be exe names of at most {MAX_PROCESS_NAME_CHARS} characters"
+                ),
+            ));
+        }
+        if seen.insert(name.to_lowercase()) {
+            out.push(name.to_owned());
+        }
+    }
+    if out.len() > MAX_PAUSE_APPS {
+        return Err(invalid(
+            FIELD,
+            format!("at most {MAX_PAUSE_APPS} apps, got {}", out.len()),
+        ));
+    }
+    Ok(out)
+}
+
+/// `appCategories` as stored (ADR-023): keys trimmed and lowercased, empty keys dropped (on a clash after lowercasing
+/// the later key in map order wins). More than [`MAX_APP_CATEGORIES`] labels or a key that is not a plain file name
+/// ([`is_process_name`]) → `config.invalid` with field `appCategories`.
+pub fn normalize_app_categories(
+    categories: BTreeMap<String, AppCategory>,
+) -> Result<BTreeMap<String, AppCategory>, AppError> {
+    const FIELD: &str = "appCategories";
+    let mut out = BTreeMap::new();
+    for (process, category) in categories {
+        let name = process.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if !is_process_name(name) {
+            return Err(invalid(
+                FIELD,
+                format!(
+                    "{FIELD} keys must be exe names of at most {MAX_PROCESS_NAME_CHARS} characters"
+                ),
+            ));
+        }
+        out.insert(name.to_lowercase(), category);
+    }
+    if out.len() > MAX_APP_CATEGORIES {
+        return Err(invalid(
+            FIELD,
+            format!(
+                "at most {MAX_APP_CATEGORIES} labelled apps, got {}",
+                out.len()
+            ),
+        ));
+    }
+    Ok(out)
+}
+
+/// A trimmed process executable name as the tracker reports it (`Code.exe`, `Adobe Premiere Pro.exe`): at most
+/// [`MAX_PROCESS_NAME_CHARS`] characters, no path separators, drive colons or control characters.
+pub fn is_process_name(name: &str) -> bool {
+    !name.is_empty()
+        && name == name.trim()
+        && name.chars().count() <= MAX_PROCESS_NAME_CHARS
+        && !name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\\' | '/' | ':'))
 }
 
 fn invalid(field: &str, message: impl Into<String>) -> AppError {
@@ -964,7 +1130,7 @@ fn is_guid(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{GameLauncher, TintMode};
+    use crate::api::{GameLauncher, TintMode, TintSchedule};
 
     fn field_of(result: Result<Config, AppError>) -> Option<String> {
         let err = result.expect_err("config should be rejected");
@@ -1045,6 +1211,7 @@ mod tests {
                 strength: 45,
                 transition_minutes: 30,
                 mode: TintMode::NightLight,
+                ..TintConfig::default()
             }
         );
 
@@ -1918,6 +2085,7 @@ mod tests {
                     strength: 80,
                     transition_minutes: 0,
                     mode: TintMode::Gamma,
+                    ..TintConfig::default()
                 },
                 shields: ShieldsConfig {
                     close_launchers: true,
@@ -2572,6 +2740,219 @@ mod tests {
         assert_eq!(
             field_of(with_days(all).normalized()).as_deref(),
             Some("rewards.restWeekdays")
+        );
+    }
+
+    #[test]
+    fn config_written_before_adr_023_skips_the_wizard_and_keeps_old_behaviour() {
+        let old: Config =
+            serde_json::from_str(r#"{"focusMinutes":30,"tint":{"enabled":true,"strength":60}}"#)
+                .expect("old config");
+        assert!(old.onboarding_done, "existing users never see the wizard");
+        assert!(!old.smart_breaks);
+        assert!(old.app_categories.is_empty());
+        assert!(old.tint.enabled);
+        assert_eq!(old.tint.strength, 60);
+        assert_eq!(old.tint.schedule, TintSchedule::Fixed);
+        assert_eq!(old.tint.location, None);
+        assert!(old.tint.pause_for_apps && !old.tint.pause_for_fullscreen);
+        assert_eq!(old.tint.pause_apps, crate::tint::DEFAULT_PAUSE_APPS);
+
+        assert!(Config::default().onboarding_done);
+        let fresh = Config::first_run();
+        assert!(!fresh.onboarding_done);
+        assert_eq!(
+            Config {
+                onboarding_done: true,
+                ..fresh
+            },
+            Config::default()
+        );
+
+        let json = serde_json::to_value(Config::first_run()).expect("serialize");
+        assert_eq!(json["onboardingDone"], false);
+        assert_eq!(json["smartBreaks"], false);
+        assert_eq!(json["appCategories"], serde_json::json!({}));
+        assert_eq!(json["tint"]["schedule"], "fixed");
+        assert_eq!(json["tint"]["location"], serde_json::Value::Null);
+        assert_eq!(json["tint"]["pauseForApps"], true);
+        assert_eq!(json["tint"]["pauseForFullscreen"], false);
+        assert_eq!(json["tint"]["pauseApps"][0], "Photoshop.exe");
+    }
+
+    #[test]
+    fn first_run_wizard_flag_survives_validation_and_a_round_trip() {
+        // The UI saves settings changed in the wizard before it is finished: the wizard stays due.
+        let fresh = Config::first_run().normalized().expect("valid");
+        assert!(!fresh.onboarding_done);
+        let json = serde_json::to_string(&fresh).expect("serialize");
+        let back: Config = serde_json::from_str(&json).expect("parse");
+        assert!(!back.onboarding_done);
+        assert_eq!(back, fresh);
+
+        // Finished or skipped: stored as true and kept by validation.
+        let done = Config {
+            onboarding_done: true,
+            ..back
+        }
+        .normalized()
+        .expect("valid");
+        assert!(done.onboarding_done);
+        assert_eq!(done, Config::default());
+    }
+
+    #[test]
+    fn pause_apps_are_trimmed_and_deduplicated_case_insensitively() {
+        let with_apps = |apps: &[&str]| Config {
+            tint: TintConfig {
+                pause_apps: apps.iter().map(|&a| a.to_owned()).collect(),
+                ..TintConfig::default()
+            },
+            ..Config::default()
+        };
+        let cfg = with_apps(&[
+            " Photoshop.exe ",
+            "",
+            "lightroom.exe",
+            "Lightroom.exe",
+            "PHOTOSHOP.EXE",
+        ])
+        .normalized()
+        .expect("valid apps");
+        assert_eq!(cfg.tint.pause_apps, ["Photoshop.exe", "lightroom.exe"]);
+        assert!(
+            with_apps(&[])
+                .normalized()
+                .expect("empty list")
+                .tint
+                .pause_apps
+                .is_empty()
+        );
+
+        for bad in [r"C:\Tools\app.exe", "bin/app.exe", "a\u{7}.exe"] {
+            assert_eq!(
+                field_of(with_apps(&[bad]).normalized()).as_deref(),
+                Some("tint.pauseApps"),
+                "{bad:?}"
+            );
+        }
+        let long = "x".repeat(MAX_PROCESS_NAME_CHARS + 1);
+        assert_eq!(
+            field_of(with_apps(&[long.as_str()]).normalized()).as_deref(),
+            Some("tint.pauseApps")
+        );
+        let many: Vec<String> = (0..=MAX_PAUSE_APPS)
+            .map(|i| format!("app{i}.exe"))
+            .collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        assert_eq!(
+            field_of(with_apps(&many).normalized()).as_deref(),
+            Some("tint.pauseApps")
+        );
+    }
+
+    #[test]
+    fn tint_location_is_checked_and_city_trimmed() {
+        let with_location = |latitude: f64, longitude: f64, city: Option<&str>| Config {
+            tint: TintConfig {
+                schedule: TintSchedule::Sun,
+                location: Some(TintLocation {
+                    latitude,
+                    longitude,
+                    city: city.map(str::to_owned),
+                }),
+                ..TintConfig::default()
+            },
+            ..Config::default()
+        };
+        let warsaw = with_location(52.2297, 21.0122, Some(" pl-warszawa "))
+            .normalized()
+            .expect("valid location");
+        assert_eq!(
+            warsaw.tint.location,
+            Some(TintLocation {
+                latitude: 52.2297,
+                longitude: 21.0122,
+                city: Some("pl-warszawa".into()),
+            })
+        );
+        let typed = with_location(-90.0, 180.0, Some("  "))
+            .normalized()
+            .expect("edges");
+        assert_eq!(typed.tint.location.and_then(|l| l.city), None);
+
+        for (latitude, longitude, field) in [
+            (90.5, 0.0, "tint.location.latitude"),
+            (f64::NAN, 0.0, "tint.location.latitude"),
+            (0.0, -180.01, "tint.location.longitude"),
+            (0.0, f64::INFINITY, "tint.location.longitude"),
+        ] {
+            assert_eq!(
+                field_of(with_location(latitude, longitude, None).normalized()).as_deref(),
+                Some(field)
+            );
+        }
+        let long_id = "c".repeat(MAX_CITY_ID_CHARS + 1);
+        assert_eq!(
+            field_of(with_location(0.0, 0.0, Some(&long_id)).normalized()).as_deref(),
+            Some("tint.location.city")
+        );
+        // A sun schedule without a location is valid: the fixed hours are used until one is set.
+        let no_location = Config {
+            tint: TintConfig {
+                schedule: TintSchedule::Sun,
+                ..TintConfig::default()
+            },
+            ..Config::default()
+        };
+        assert!(no_location.normalized().is_ok());
+    }
+
+    #[test]
+    fn app_categories_are_lowercased_and_limited() {
+        let labels = |pairs: &[(&str, AppCategory)]| Config {
+            app_categories: pairs
+                .iter()
+                .map(|(process, category)| ((*process).to_owned(), *category))
+                .collect(),
+            ..Config::default()
+        };
+        let cfg = labels(&[
+            (" Code.exe ", AppCategory::Productive),
+            ("Discord.exe", AppCategory::Distracting),
+            ("", AppCategory::Neutral),
+        ])
+        .normalized()
+        .expect("valid labels");
+        assert_eq!(
+            cfg.app_categories.into_iter().collect::<Vec<_>>(),
+            [
+                ("code.exe".to_owned(), AppCategory::Productive),
+                ("discord.exe".to_owned(), AppCategory::Distracting)
+            ]
+        );
+        let json = serde_json::to_value(
+            labels(&[("code.exe", AppCategory::Productive)])
+                .normalized()
+                .expect("valid"),
+        )
+        .expect("serialize");
+        assert_eq!(
+            json["appCategories"],
+            serde_json::json!({ "code.exe": "productive" })
+        );
+
+        assert_eq!(
+            field_of(labels(&[(r"C:\x.exe", AppCategory::Neutral)]).normalized()).as_deref(),
+            Some("appCategories")
+        );
+        let many: Vec<(String, AppCategory)> = (0..=MAX_APP_CATEGORIES)
+            .map(|i| (format!("app{i}.exe"), AppCategory::Neutral))
+            .collect();
+        let many: Vec<(&str, AppCategory)> = many.iter().map(|(p, c)| (p.as_str(), *c)).collect();
+        assert_eq!(
+            field_of(labels(&many).normalized()).as_deref(),
+            Some("appCategories")
         );
     }
 }

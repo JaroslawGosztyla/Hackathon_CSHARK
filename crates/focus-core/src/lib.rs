@@ -21,6 +21,7 @@ pub mod privacy;
 pub mod rewards;
 pub mod session;
 pub mod stats;
+pub mod sun;
 pub mod timing;
 pub mod tint;
 pub mod work;
