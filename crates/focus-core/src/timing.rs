@@ -17,6 +17,12 @@ pub const DEMO_FOCUS_SECS: u32 = 40;
 pub const DEMO_BREAK_SECS: u32 = 20;
 /// Demo profile: idle threshold in seconds.
 pub const DEMO_IDLE_AFTER_SECS: u32 = 30;
+/// "Remind later" for a meeting that collides with a break: the reminders are due this many minutes
+/// before the meeting, in this order; the last one offers no "remind later" (owner's 30 → 20 → 10 rule).
+pub const MEETING_REMINDER_LEAD_MINUTES: [u32; 3] = [30, 20, 10];
+/// A meeting longer than this never extends a focus or holds a break (`Extend` / `PauseAtBreak` are ignored):
+/// a day-long "meeting" (a conference, a blocked afternoon) must not stop the breaks for hours. 4 hours.
+pub const MAX_MEETING_HOLD_MS: u64 = 4 * 60 * 60 * MS_PER_SEC;
 
 const SECS_PER_MINUTE: u32 = 60;
 const MS_PER_SEC: u64 = 1000;
@@ -126,6 +132,16 @@ mod tests {
         assert_eq!(p.focus_ms(), 40_000);
         assert_eq!(p.break_ms(), 20_000);
         assert_eq!(p.interruption_gap_ms(), 90_000);
+    }
+
+    #[test]
+    fn meeting_reminders_are_30_20_10_minutes_before() {
+        assert_eq!(MEETING_REMINDER_LEAD_MINUTES, [30, 20, 10]);
+    }
+
+    #[test]
+    fn meeting_holds_are_capped_at_4_hours() {
+        assert_eq!(MAX_MEETING_HOLD_MS, 14_400_000);
     }
 
     #[test]

@@ -4,8 +4,8 @@
 use std::ops::RangeInclusive;
 
 use crate::api::{
-    AppError, ChimeKind, ChimeSound, Config, CustomChimes, Language, MusicConfig, MusicSourceKind,
-    NoiseColor, ShieldsConfig, Theme, TintConfig,
+    AppError, CalendarConfig, ChimeKind, ChimeSound, Config, CustomChimes, Language, MusicConfig,
+    MusicSourceKind, NoiseColor, ShieldsConfig, Theme, TintConfig,
 };
 use crate::blocklist::normalize_domain;
 use crate::launchers;
@@ -41,8 +41,19 @@ pub const MAX_CHIME_FILE_NAME_CHARS: usize = 100;
 pub const MAX_CUSTOM_CHIME_BYTES: u64 = 10 * 1024 * 1024;
 /// Audio file extensions accepted as custom chimes (lowercase, without the dot).
 pub const CUSTOM_CHIME_EXTENSIONS: [&str; 5] = ["mp3", "wav", "ogg", "flac", "m4a"];
+/// Default calendar look-ahead (`calendar.horizonHours`).
+pub const DEFAULT_CALENDAR_HORIZON_HOURS: u32 = 10;
+/// Allowed calendar look-ahead in hours.
+pub const CALENDAR_HORIZON_HOURS_RANGE: RangeInclusive<u32> = 1..=24;
+/// Every Google OAuth client id ends with this (`<number>-<hash>.apps.googleusercontent.com`).
+pub const GOOGLE_CLIENT_ID_SUFFIX: &str = ".apps.googleusercontent.com";
+/// Longest Google OAuth client id accepted.
+pub const MAX_GOOGLE_CLIENT_ID_LEN: usize = 255;
+/// Longest Google OAuth client secret accepted (they look like `GOCSPX-` + 28 characters).
+pub const MAX_GOOGLE_CLIENT_SECRET_LEN: usize = 100;
 
 const MAX_TENANT_LEN: usize = 253;
+const MS_PER_HOUR: i64 = 60 * 60 * 1000;
 /// Characters Windows does not allow in file names (besides separators and control characters).
 const FORBIDDEN_FILE_NAME_CHARS: [char; 7] = ['<', '>', ':', '"', '|', '?', '*'];
 /// Windows device names that cannot be used as a file name stem (`nul.mp3`).
@@ -74,6 +85,20 @@ impl Default for Config {
             repeat_reminders: false,
             track_titles: true,
             keep_history: true,
+            calendar: CalendarConfig::default(),
+        }
+    }
+}
+
+impl Default for CalendarConfig {
+    fn default() -> Self {
+        Self {
+            microsoft: false,
+            google: false,
+            google_client_id: String::new(),
+            google_client_secret: String::new(),
+            ics: false,
+            horizon_hours: DEFAULT_CALENDAR_HORIZON_HOURS,
         }
     }
 }
@@ -119,9 +144,10 @@ impl Config {
     /// Break reminders are trimmed (control characters become spaces); empty ones stay as
     /// "no reminder for that break" placeholders. Custom chime names are trimmed (empty → `None`)
     /// and must be plain audio file names ([`is_chime_file_name`]).
+    /// The Google client id and secret are trimmed ([`CalendarConfig::normalized`]).
     /// Out-of-range values are never clamped silently: they return `Err` with code
     /// `config.invalid` and `field` set to the camelCase path (`focusMinutes`, `music.volume`,
-    /// `tint.startMinutes`, `breakReminders`, `customChimes.breakFile`).
+    /// `tint.startMinutes`, `breakReminders`, `customChimes.breakFile`, `calendar.horizonHours`).
     pub fn normalized(self) -> Result<Config, AppError> {
         let Config {
             focus_minutes,
@@ -142,6 +168,7 @@ impl Config {
             repeat_reminders,
             track_titles,
             keep_history,
+            calendar,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -167,8 +194,95 @@ impl Config {
             repeat_reminders,
             track_titles,
             keep_history,
+            calendar: calendar.normalized()?,
         })
     }
+}
+
+impl CalendarConfig {
+    /// Calendar part of [`Config::normalized`] (checked also while every source is off); errors use
+    /// `calendar.*` field paths. `horizonHours` is `1..=24`; the Google client id is trimmed and must be
+    /// empty or a Google OAuth client id ([`is_google_client_id`]); the client secret is trimmed and must be
+    /// empty or pass [`is_google_client_secret`]. `google: true` with an empty id is accepted (the shell
+    /// reports the source as not configured); an empty secret too (it is then not sent).
+    pub fn normalized(self) -> Result<CalendarConfig, AppError> {
+        let CalendarConfig {
+            microsoft,
+            google,
+            google_client_id,
+            google_client_secret,
+            ics,
+            horizon_hours,
+        } = self;
+
+        check_range(
+            "calendar.horizonHours",
+            horizon_hours,
+            CALENDAR_HORIZON_HOURS_RANGE,
+        )?;
+        let google_client_id = google_client_id.trim();
+        if !google_client_id.is_empty() && !is_google_client_id(google_client_id) {
+            return Err(invalid(
+                "calendar.googleClientId",
+                format!(
+                    "Google client id must look like 123-abc{GOOGLE_CLIENT_ID_SUFFIX} \
+                     (letters, digits, '.', '-', '_'; at most {MAX_GOOGLE_CLIENT_ID_LEN} characters)"
+                ),
+            ));
+        }
+        let google_client_secret = google_client_secret.trim();
+        if !google_client_secret.is_empty() && !is_google_client_secret(google_client_secret) {
+            // The secret itself is never echoed back (it ends up in the log with the error).
+            return Err(invalid(
+                "calendar.googleClientSecret",
+                format!(
+                    "Google client secret may contain only letters, digits, '-' and '_' \
+                     (at most {MAX_GOOGLE_CLIENT_SECRET_LEN} characters)"
+                ),
+            ));
+        }
+
+        Ok(CalendarConfig {
+            microsoft,
+            google,
+            google_client_id: google_client_id.to_owned(),
+            google_client_secret: google_client_secret.to_owned(),
+            ics,
+            horizon_hours,
+        })
+    }
+
+    /// The look-ahead in milliseconds (for [`crate::calendar::plan_breaks`] and the calendar fetch).
+    pub fn horizon_ms(&self) -> i64 {
+        i64::from(self.horizon_hours).saturating_mul(MS_PER_HOUR)
+    }
+}
+
+/// `true` for a Google OAuth client id: at most [`MAX_GOOGLE_CLIENT_ID_LEN`] characters of
+/// `[A-Za-z0-9._-]`, ending in [`GOOGLE_CLIENT_ID_SUFFIX`] after a non-empty prefix that does not
+/// start with `.` or `-`. It ends up in an OAuth URL query, so nothing else is allowed.
+pub fn is_google_client_id(id: &str) -> bool {
+    let Some(prefix) = id.strip_suffix(GOOGLE_CLIENT_ID_SUFFIX) else {
+        return false;
+    };
+    id.len() <= MAX_GOOGLE_CLIENT_ID_LEN
+        && !prefix.is_empty()
+        && !prefix.starts_with(['.', '-'])
+        && !prefix.ends_with('.')
+        && !prefix.contains("..")
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+}
+
+/// `true` for a plausible Google OAuth client secret: 1..=[`MAX_GOOGLE_CLIENT_SECRET_LEN`] characters of
+/// `[A-Za-z0-9_-]` (e.g. `GOCSPX-…`). It ends up in a token request form, so nothing else is allowed.
+pub fn is_google_client_secret(secret: &str) -> bool {
+    !secret.is_empty()
+        && secret.len() <= MAX_GOOGLE_CLIENT_SECRET_LEN
+        && secret
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
 /// The user's reminder for the `break_number`-th break of a session (1-based: the break after
@@ -648,6 +762,195 @@ mod tests {
         assert!(!cfg.repeat_reminders);
         assert!(cfg.track_titles);
         assert!(cfg.keep_history);
+        assert_eq!(
+            cfg.calendar,
+            CalendarConfig {
+                microsoft: false,
+                google: false,
+                google_client_id: String::new(),
+                google_client_secret: String::new(),
+                ics: false,
+                horizon_hours: 10,
+            }
+        );
+        assert_eq!(cfg.calendar.horizon_ms(), 10 * 3_600_000);
+    }
+
+    #[test]
+    fn config_written_before_calendars_loads_with_calendars_off() {
+        let old: Config = serde_json::from_str(
+            r#"{"focusMinutes": 50, "theme": "lunar", "keepHistory": false, "trackTitles": false}"#,
+        )
+        .expect("old config");
+        assert_eq!(old.calendar, CalendarConfig::default());
+        assert_eq!(old.clone().normalized(), Ok(old));
+
+        let partial: Config =
+            serde_json::from_str(r#"{"calendar":{"ics":true}}"#).expect("partial calendar");
+        assert!(partial.calendar.ics);
+        assert!(!partial.calendar.microsoft);
+        assert_eq!(partial.calendar.horizon_hours, 10);
+
+        // Written before the Google client secret: loads with an empty one.
+        let before_secret: Config = serde_json::from_str(
+            r#"{"calendar":{"microsoft":false,"google":true,
+                "googleClientId":"1-x.apps.googleusercontent.com","ics":false,"horizonHours":8}}"#,
+        )
+        .expect("calendar without the secret");
+        assert_eq!(before_secret.calendar.google_client_secret, "");
+        assert_eq!(
+            before_secret.calendar.google_client_id,
+            "1-x.apps.googleusercontent.com"
+        );
+        assert_eq!(
+            before_secret.clone().normalized(),
+            Ok(before_secret.clone())
+        );
+        let json = serde_json::to_string(&before_secret).expect("serialize");
+        assert!(json.contains(r#""googleClientSecret":"""#), "{json}");
+    }
+
+    #[test]
+    fn validates_google_client_secret() {
+        let with_secret = |secret: &str| Config {
+            calendar: CalendarConfig {
+                google: true,
+                google_client_secret: secret.to_owned(),
+                ..CalendarConfig::default()
+            },
+            ..Config::default()
+        };
+        let secret = "GOCSPX-abcDEF123_ghi-JKL456mno789pq";
+        assert_eq!(
+            with_secret(&format!(" {secret}\n"))
+                .normalized()
+                .expect("valid")
+                .calendar
+                .google_client_secret,
+            secret
+        );
+        assert_eq!(
+            with_secret("  ")
+                .normalized()
+                .expect("empty is allowed")
+                .calendar
+                .google_client_secret,
+            ""
+        );
+        let longest = "a".repeat(MAX_GOOGLE_CLIENT_SECRET_LEN);
+        assert!(is_google_client_secret(&longest));
+        let too_long = "a".repeat(MAX_GOOGLE_CLIENT_SECRET_LEN + 1);
+        for bad in [
+            too_long.as_str(),
+            "GOCSPX abc",
+            "GOCSPX.abc",
+            "GOCSPX/abc",
+            "abc&client_id=x",
+            "abc=",
+            "sekret-żółw",
+            "abc\tdef",
+        ] {
+            assert!(!is_google_client_secret(bad), "{bad}");
+            let err = with_secret(bad)
+                .normalized()
+                .expect_err("invalid secret is rejected");
+            assert_eq!(err.code, CONFIG_INVALID);
+            assert_eq!(
+                err.field.as_deref(),
+                Some("calendar.googleClientSecret"),
+                "{bad}"
+            );
+            assert!(!err.message.contains(bad), "the secret is not echoed");
+        }
+        assert!(!is_google_client_secret(""));
+    }
+
+    #[test]
+    fn validates_calendar() {
+        let with_calendar = |calendar: CalendarConfig| Config {
+            calendar,
+            ..Config::default()
+        };
+        for hours in [0, 25, u32::MAX] {
+            let cfg = with_calendar(CalendarConfig {
+                horizon_hours: hours,
+                ..CalendarConfig::default()
+            });
+            assert_eq!(
+                field_of(cfg.normalized()).as_deref(),
+                Some("calendar.horizonHours"),
+                "{hours}"
+            );
+        }
+        for hours in [1, 10, 24] {
+            let cfg = with_calendar(CalendarConfig {
+                horizon_hours: hours,
+                ..CalendarConfig::default()
+            });
+            let calendar = cfg.normalized().expect("valid").calendar;
+            assert_eq!(calendar.horizon_hours, hours);
+            assert_eq!(calendar.horizon_ms(), i64::from(hours) * 3_600_000);
+        }
+
+        let id = "123456789012-abc_DEF.ghi-jkl.apps.googleusercontent.com";
+        let ok = with_calendar(CalendarConfig {
+            google: true,
+            google_client_id: format!("  {id}\t"),
+            ..CalendarConfig::default()
+        });
+        assert_eq!(
+            ok.normalized().expect("valid").calendar.google_client_id,
+            id
+        );
+
+        // Google on without a client id is stored as it is (the source is just not configured).
+        let unconfigured = with_calendar(CalendarConfig {
+            google: true,
+            google_client_id: "   ".to_owned(),
+            ..CalendarConfig::default()
+        });
+        let calendar = unconfigured.normalized().expect("valid").calendar;
+        assert!(calendar.google);
+        assert_eq!(calendar.google_client_id, "");
+
+        let too_long = format!(
+            "{}{GOOGLE_CLIENT_ID_SUFFIX}",
+            "a".repeat(MAX_GOOGLE_CLIENT_ID_LEN + 1 - GOOGLE_CLIENT_ID_SUFFIX.len())
+        );
+        let longest = format!(
+            "{}{GOOGLE_CLIENT_ID_SUFFIX}",
+            "a".repeat(MAX_GOOGLE_CLIENT_ID_LEN - GOOGLE_CLIENT_ID_SUFFIX.len())
+        );
+        assert!(is_google_client_id(&longest));
+        for bad in [
+            "abc",
+            "123-abc",
+            ".apps.googleusercontent.com",
+            "apps.googleusercontent.com",
+            "123-abc.apps.googleusercontent.com.evil.example",
+            "123-abc.APPS.GOOGLEUSERCONTENT.COM",
+            "123 abc.apps.googleusercontent.com",
+            "123/abc.apps.googleusercontent.com",
+            "123?x=1&abc.apps.googleusercontent.com",
+            "123#abc.apps.googleusercontent.com",
+            "żółw.apps.googleusercontent.com",
+            "-123.apps.googleusercontent.com",
+            ".123.apps.googleusercontent.com",
+            "123..abc.apps.googleusercontent.com",
+            "123..apps.googleusercontent.com",
+            too_long.as_str(),
+        ] {
+            assert!(!is_google_client_id(bad), "{bad}");
+            let cfg = with_calendar(CalendarConfig {
+                google_client_id: bad.to_owned(),
+                ..CalendarConfig::default()
+            });
+            assert_eq!(
+                field_of(cfg.normalized()).as_deref(),
+                Some("calendar.googleClientId"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
@@ -1034,6 +1337,14 @@ mod tests {
                 repeat_reminders: true,
                 track_titles: false,
                 keep_history: false,
+                calendar: CalendarConfig {
+                    microsoft: true,
+                    google: true,
+                    google_client_id: "42-x.apps.googleusercontent.com".to_owned(),
+                    google_client_secret: "GOCSPX-test_Secret-42".to_owned(),
+                    ics: true,
+                    horizon_hours: 24,
+                },
                 ..Config::default()
             };
             let json = serde_json::to_string(&cfg).expect("serialize");
@@ -1116,6 +1427,17 @@ mod tests {
         assert_eq!(json["repeatReminders"], false);
         assert_eq!(json["trackTitles"], true);
         assert_eq!(json["keepHistory"], true);
+        assert_eq!(
+            json["calendar"],
+            serde_json::json!({
+                "microsoft": false,
+                "google": false,
+                "googleClientId": "",
+                "googleClientSecret": "",
+                "ics": false,
+                "horizonHours": 10,
+            })
+        );
 
         let gamma = serde_json::to_value(TintMode::Gamma).expect("serialize");
         assert_eq!(gamma, "gamma");
