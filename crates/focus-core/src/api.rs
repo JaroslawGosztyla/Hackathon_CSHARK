@@ -39,6 +39,7 @@ pub mod commands {
     /// `() -> TeamsStatus`
     pub const GET_TEAMS_STATUS: &str = "get_teams_status";
     /// `() -> DeviceCodePrompt` starts the device code login; progress arrives as `teams://status`.
+    /// Asks for `Calendars.Read` too only while `calendar.microsoft` is on (also to reconnect a sign-in without it).
     pub const TEAMS_CONNECT: &str = "teams_connect";
     /// `() -> ()` forgets the stored token.
     pub const TEAMS_DISCONNECT: &str = "teams_disconnect";
@@ -87,6 +88,23 @@ pub mod commands {
     pub const LIST_LIBRARY_TRACKS: &str = "list_library_tracks";
     /// `() -> ()` deletes the whole session history (history file and the last summary). The UI confirms first.
     pub const CLEAR_HISTORY: &str = "clear_history";
+    /// `() -> CalendarStatus` meetings of the next hours from all connected calendars and their collisions with
+    /// the planned breaks (of the running session, or of a session that would start now).
+    pub const GET_CALENDAR: &str = "get_calendar";
+    /// `() -> CalendarStatus` fetches all calendars now.
+    pub const REFRESH_CALENDAR: &str = "refresh_calendar";
+    /// `{ meetingId: string, choice: MeetingChoice } -> CalendarStatus` how a meeting that collides with a break is handled.
+    pub const SET_MEETING_CHOICE: &str = "set_meeting_choice";
+    /// `() -> ()` starts the Google sign-in in the system browser (OAuth loopback + PKCE); progress via `calendar://changed`.
+    pub const CONNECT_GOOGLE: &str = "connect_google";
+    /// `{ source: CalendarSource } -> CalendarStatus` forgets the stored credentials / links of that source.
+    /// `microsoft` keeps the Teams sign-in (Teams presence goes on): it only turns `calendar.microsoft` off
+    /// (config saved as by `update_config`) and drops the Microsoft meetings.
+    pub const DISCONNECT_CALENDAR: &str = "disconnect_calendar";
+    /// `{ urls: string[] } -> CalendarStatus` replaces the ICS subscription links (stored encrypted, never in config.json).
+    pub const SET_ICS_URLS: &str = "set_ics_urls";
+    /// `() -> string[]` the stored ICS links (to edit them in Settings).
+    pub const GET_ICS_URLS: &str = "get_ics_urls";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -116,6 +134,8 @@ pub mod events {
     pub const POPUP_SHOW: &str = "popup://show";
     /// `TintStatus`, whenever the tint level, preview or overlay state changes.
     pub const TINT_CHANGED: &str = "tint://changed";
+    /// `CalendarStatus`, after every sync, choice or connection change.
+    pub const CALENDAR_CHANGED: &str = "calendar://changed";
 }
 
 /// Loopback port of the browser-extension bridge (`GET http://127.0.0.1:{BRIDGE_PORT}/v1/state` → `BridgeState`).
@@ -181,6 +201,12 @@ pub struct SessionSnapshot {
     pub focused_secs: u32,
     /// Demo profile active (`--demo` / `FOCUSMODE_DEMO=1`).
     pub demo: bool,
+    /// Music must be silent now (focus extended through a meeting).
+    #[serde(default)]
+    pub music_muted: bool,
+    /// A meeting currently extends the focus or holds the break.
+    #[serde(default)]
+    pub meeting_hold: Option<MeetingHoldView>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -247,6 +273,29 @@ pub struct Config {
     pub track_titles: bool,
     /// Save finished sessions to the history file. Default true; when off, the summary is shown but not stored.
     pub keep_history: bool,
+    /// Calendar integrations (meeting / break collisions). All off by default.
+    pub calendar: CalendarConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct CalendarConfig {
+    /// Microsoft 365 / Outlook calendar through the Microsoft account used for Teams (Graph, Calendars.Read;
+    /// the Teams sign-in asks for that scope only while this is on).
+    pub microsoft: bool,
+    /// Google Calendar (OAuth desktop flow); needs `google_client_id`.
+    pub google: bool,
+    /// OAuth client id of a Google Cloud "Desktop app" client.
+    pub google_client_id: String,
+    /// Client secret of the same "Desktop app" client, or empty. Google's token endpoint requires it for such
+    /// clients; Google documents it as non-confidential for installed apps, so it lives in `config.json`
+    /// (never in the log). Default "".
+    pub google_client_secret: String,
+    /// ICS / iCal subscription links (stored separately, encrypted).
+    pub ics: bool,
+    /// How far ahead meetings are read, 1..=24 hours. Default 10.
+    pub horizon_hours: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -678,6 +727,10 @@ pub enum PopupKind {
     Interrupted,
     /// Game launchers were closed at focus start (`launchers`).
     LaunchersClosed,
+    /// A meeting collides with a break: ask how to handle it (`meeting`).
+    MeetingReminder,
+    /// The break started paused because of a meeting (`meeting`).
+    BreakHeld,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -694,6 +747,9 @@ pub struct PopupInfo {
     pub launchers: Vec<GameLauncher>,
     /// The user's own reminder for the break that just started (`break_reminders`), if any.
     pub reminder: Option<String>,
+    /// The meeting for `MeetingReminder` / `BreakHeld`.
+    #[serde(default)]
+    pub meeting: Option<MeetingConflict>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -726,6 +782,114 @@ pub struct TintStatus {
     pub capped: bool,
     /// The mechanism failed or is unavailable (English detail); the schedule keeps trying.
     pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Calendars: meetings that collide with planned breaks
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CalendarSource {
+    Microsoft,
+    Google,
+    Ics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum MeetingChoice {
+    /// Keep focusing through the meeting with the music muted; the break starts when the meeting ends.
+    Extend,
+    /// When the break is due during the meeting, it starts paused (timer frozen, music silent) until Resume.
+    PauseAtBreak,
+    /// Change nothing.
+    Ignore,
+    /// Ask again 30 / 20 / 10 minutes before the meeting (the last reminder offers no "later").
+    RemindLater,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Meeting {
+    /// Stable id: source + event id + start.
+    pub id: String,
+    pub source: CalendarSource,
+    pub subject: String,
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    /// Teams / Meet / Zoom / Webex link present.
+    pub online: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MeetingConflict {
+    pub meeting: Meeting,
+    /// 1-based number of the colliding break in the (planned) session.
+    pub break_number: u32,
+    #[ts(type = "number")]
+    pub break_start_ms: i64,
+    #[ts(type = "number")]
+    pub break_end_ms: i64,
+    pub choice: Option<MeetingChoice>,
+    /// When the next "remind later" popup is due (wall clock), if any.
+    #[ts(type = "number | null")]
+    pub next_reminder_ms: Option<i64>,
+    /// `false` for the last reminder (10 minutes before).
+    pub remind_later_allowed: bool,
+    /// The meeting is longer than `timing::MAX_MEETING_HOLD_MS` (4 h): `Extend` / `PauseAtBreak` are not
+    /// offered and the session ignores them.
+    #[serde(default)]
+    pub too_long: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CalendarSourceStatus {
+    pub source: CalendarSource,
+    pub state: IntegrationState,
+    /// English detail for the settings screen (error or state).
+    pub detail: Option<String>,
+    /// Signed-in account or number of ICS links.
+    pub account: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CalendarStatus {
+    /// Set by the shell; grows with every emitted status.
+    pub revision: u32,
+    pub sources: Vec<CalendarSourceStatus>,
+    /// Meetings of the next `horizon_hours` (sorted by start), declined / cancelled / "free" ones excluded.
+    pub meetings: Vec<Meeting>,
+    /// Meetings that overlap a planned break.
+    pub conflicts: Vec<MeetingConflict>,
+    /// `true` = breaks of a session that would start now (idle); `false` = breaks of the running session.
+    pub planned: bool,
+    #[ts(type = "number | null")]
+    pub last_sync_ms: Option<i64>,
+    /// Google sign-in in progress (browser opened).
+    pub google_pending: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MeetingHoldView {
+    pub subject: String,
+    /// Focus extended / break held until this moment (meeting end), wall clock.
+    #[ts(type = "number")]
+    pub until_ms: i64,
+    pub choice: MeetingChoice,
 }
 
 // ---------------------------------------------------------------------------
@@ -803,6 +967,13 @@ mod tests {
             ("removeCustomChime", commands::REMOVE_CUSTOM_CHIME),
             ("listLibraryTracks", commands::LIST_LIBRARY_TRACKS),
             ("clearHistory", commands::CLEAR_HISTORY),
+            ("getCalendar", commands::GET_CALENDAR),
+            ("refreshCalendar", commands::REFRESH_CALENDAR),
+            ("setMeetingChoice", commands::SET_MEETING_CHOICE),
+            ("connectGoogle", commands::CONNECT_GOOGLE),
+            ("disconnectCalendar", commands::DISCONNECT_CALENDAR),
+            ("setIcsUrls", commands::SET_ICS_URLS),
+            ("getIcsUrls", commands::GET_ICS_URLS),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),
@@ -817,6 +988,7 @@ mod tests {
             ("appCloseRequested", events::APP_CLOSE_REQUESTED),
             ("popupShow", events::POPUP_SHOW),
             ("tintChanged", events::TINT_CHANGED),
+            ("calendarChanged", events::CALENDAR_CHANGED),
         ];
         let mut out = String::from(
             "// This file was generated by `cargo test -p focus-core` (api.rs). Do not edit this file manually.\n\n",

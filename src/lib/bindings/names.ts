@@ -36,6 +36,13 @@ export const COMMANDS = {
   removeCustomChime: "remove_custom_chime",
   listLibraryTracks: "list_library_tracks",
   clearHistory: "clear_history",
+  getCalendar: "get_calendar",
+  refreshCalendar: "refresh_calendar",
+  setMeetingChoice: "set_meeting_choice",
+  connectGoogle: "connect_google",
+  disconnectCalendar: "disconnect_calendar",
+  setIcsUrls: "set_ics_urls",
+  getIcsUrls: "get_ics_urls",
 } as const;
 
 export const EVENTS = {
@@ -51,6 +58,7 @@ export const EVENTS = {
   appCloseRequested: "app://close-requested",
   popupShow: "popup://show",
   tintChanged: "tint://changed",
+  calendarChanged: "calendar://changed",
 } as const;
 
 export const BRIDGE_PORT = 47615;
