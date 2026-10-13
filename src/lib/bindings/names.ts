@@ -49,6 +49,14 @@ export const COMMANDS = {
   setSessionGoal: "set_session_goal",
   markGoalDone: "mark_goal_done",
   devTrigger: "dev_trigger",
+  getPrivacyReport: "get_privacy_report",
+  openDataFolder: "open_data_folder",
+  exportPrivacyData: "export_privacy_data",
+  deletePrivacyData: "delete_privacy_data",
+  deleteAllData: "delete_all_data",
+  getYoutubeAccount: "get_youtube_account",
+  youtubeSignIn: "youtube_sign_in",
+  youtubeSignOut: "youtube_sign_out",
 } as const;
 
 export const EVENTS = {
@@ -66,6 +74,8 @@ export const EVENTS = {
   tintChanged: "tint://changed",
   calendarChanged: "calendar://changed",
   workChanged: "work://changed",
+  privacyChanged: "privacy://changed",
+  youtubeAccount: "youtube://account",
 } as const;
 
 export const BRIDGE_PORT = 47615;

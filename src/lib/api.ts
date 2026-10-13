@@ -3,7 +3,7 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { disable as autostartDisable, enable as autostartEnable, isEnabled as autostartIsEnabled } from "@tauri-apps/plugin-autostart";
-import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
+import { open as dialogOpen, save as dialogSave } from "@tauri-apps/plugin-dialog";
 import { openUrl as openerOpenUrl } from "@tauri-apps/plugin-opener";
 import { COMMANDS, EVENTS } from "./bindings/names";
 import type {
@@ -24,6 +24,8 @@ import type {
   PhaseChange,
   PopupAction,
   PopupInfo,
+  PrivacyItemKind,
+  PrivacyReport,
   SessionGoal,
   SessionSnapshot,
   SessionSummary,
@@ -34,6 +36,7 @@ import type {
   UsageReport,
   WorkSource,
   WorkStatus,
+  YoutubeAccount,
 } from "./types";
 
 export type { UnlistenFn };
@@ -198,6 +201,40 @@ export const markGoalDone = (sessionId: string, done: boolean) =>
  */
 export const devTrigger = (action: DevAction) => call<void>(COMMANDS.devTrigger, { action });
 
+/**
+ * What FocusMode stores on this computer, item by item (ADR-020): presence, size, count. Never the contents of a token,
+ * an ICS link or a cookie.
+ */
+export const getPrivacyReport = () => call<PrivacyReport>(COMMANDS.getPrivacyReport);
+/** Opens the app data folder (`PrivacyReport.folders[0]`) in the file manager. */
+export const openDataFolder = () => call<void>(COMMANDS.openDataFolder);
+/**
+ * Writes one JSON file at `path` (from `pickSaveFile`): config without secrets, history, meeting choices, seen work items.
+ * Never tokens, ICS links, cookies or other secrets.
+ */
+export const exportPrivacyData = (path: string) => call<void>(COMMANDS.exportPrivacyData, { path });
+/**
+ * Deletes those items (only `deletable` ones, else `privacy.notDeletable`). A running session is stopped first. Resolves
+ * with the stored config (deleting the custom chimes changes it); the report follows as `privacy://changed`.
+ * Confirm with the user first.
+ */
+export const deletePrivacyData = (kinds: PrivacyItemKind[]) => call<Config>(COMMANDS.deletePrivacyData, { kinds });
+/**
+ * "Delete everything": stops a running session, deletes every deletable item and resets the settings to the defaults
+ * (resolves with them). The app stays installed. Confirm with the user first (list what goes).
+ */
+export const deleteAllData = () => call<Config>(COMMANDS.deleteAllData);
+
+/** YouTube sign-in state of the app's embedded browser profile (ADR-021). */
+export const getYoutubeAccount = () => call<YoutubeAccount>(COMMANDS.getYoutubeAccount);
+/**
+ * Opens (or focuses) the YouTube sign-in window: Google's own page, the user types there, the app never sees the
+ * password. It closes by itself once signed in; progress via `youtube://account`.
+ */
+export const youtubeSignIn = () => call<void>(COMMANDS.youtubeSignIn);
+/** Deletes the google.com / youtube.com cookies of the app's browser profile (the consent cookies stay). */
+export const youtubeSignOut = () => call<void>(COMMANDS.youtubeSignOut);
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -258,6 +295,10 @@ export const subscribeCalendar = (apply: (c: CalendarStatus) => void, onError?: 
   subscribe(EVENTS.calendarChanged, getCalendar, apply, onError);
 export const subscribeWork = (apply: (w: WorkStatus) => void, onError?: (e: AppError) => void) =>
   subscribe(EVENTS.workChanged, getWork, apply, onError);
+export const subscribePrivacy = (apply: (r: PrivacyReport) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.privacyChanged, getPrivacyReport, apply, onError);
+export const subscribeYoutubeAccount = (apply: (a: YoutubeAccount) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.youtubeAccount, getYoutubeAccount, apply, onError);
 
 export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
 export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);
@@ -298,6 +339,29 @@ export async function pickFile(title: string, filterName: string, extensions: re
       directory: false,
       multiple: false,
       title,
+      filters: [{ name: filterName, extensions: [...extensions] }],
+    });
+    return typeof picked === "string" ? picked : null;
+  } catch (e) {
+    throw toAppError(e);
+  }
+}
+
+/**
+ * Native save dialog limited to `extensions`, starting with `defaultName` (e.g. `focusmode-export.json`).
+ * Resolves `null` when cancelled.
+ */
+export async function pickSaveFile(
+  title: string,
+  defaultName: string,
+  filterName: string,
+  extensions: readonly string[],
+): Promise<string | null> {
+  if (!inShell()) return null;
+  try {
+    const picked = await dialogSave({
+      title,
+      defaultPath: defaultName,
       filters: [{ name: filterName, extensions: [...extensions] }],
     });
     return typeof picked === "string" ? picked : null;

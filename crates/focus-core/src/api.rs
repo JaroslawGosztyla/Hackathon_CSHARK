@@ -119,6 +119,28 @@ pub mod commands {
     /// running phase. Rejected with `developerModeOff` unless `Config.developer_mode` is on. Nothing is persisted
     /// and nothing leaves the computer.
     pub const DEV_TRIGGER: &str = "dev_trigger";
+    /// `() -> PrivacyReport` what FocusMode stores on this computer, item by item (ADR-020). Presence, sizes and
+    /// counts only: never the contents of a token, an ICS link or a cookie.
+    pub const GET_PRIVACY_REPORT: &str = "get_privacy_report";
+    /// `() -> ()` opens the app data folder (`PrivacyReport.folders[0]`) in the file manager.
+    pub const OPEN_DATA_FOLDER: &str = "open_data_folder";
+    /// `{ path: string } -> ()` writes one JSON file (path from the save dialog): config without secrets, history,
+    /// meeting choices and seen work items. Never tokens, ICS links, cookies or other secrets.
+    pub const EXPORT_PRIVACY_DATA: &str = "export_privacy_data";
+    /// `{ kinds: PrivacyItemKind[] } -> Config` deletes those items (only `deletable` ones, else `privacy.notDeletable`).
+    /// A running session is stopped first (shields restored, rule 7). Returns the stored config (deleting the custom
+    /// chimes changes it); the new report arrives as `privacy://changed`.
+    pub const DELETE_PRIVACY_DATA: &str = "delete_privacy_data";
+    /// `() -> Config` "Delete everything": stops a running session, deletes every deletable item and resets the
+    /// settings to the defaults (returned). Nothing outside the app's own folders is touched; the app stays installed.
+    pub const DELETE_ALL_DATA: &str = "delete_all_data";
+    /// `() -> YoutubeAccount` (ADR-021).
+    pub const GET_YOUTUBE_ACCOUNT: &str = "get_youtube_account";
+    /// `() -> ()` opens (or focuses) the visible YouTube sign-in window (Google's own page, shared WebView2 profile);
+    /// it closes by itself once youtube.com sign-in cookies appear. Progress via `youtube://account`.
+    pub const YOUTUBE_SIGN_IN: &str = "youtube_sign_in";
+    /// `() -> ()` deletes the google.com / youtube.com cookies of the WebView2 profile (the consent cookies stay).
+    pub const YOUTUBE_SIGN_OUT: &str = "youtube_sign_out";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -152,6 +174,10 @@ pub mod events {
     pub const CALENDAR_CHANGED: &str = "calendar://changed";
     /// `WorkStatus`, after every sync or token change.
     pub const WORK_CHANGED: &str = "work://changed";
+    /// `PrivacyReport`, whenever something stored changed (debounced rescan) or a delete / export starts or ends.
+    pub const PRIVACY_CHANGED: &str = "privacy://changed";
+    /// `YoutubeAccount`, whenever the sign-in state or the sign-in window changes.
+    pub const YOUTUBE_ACCOUNT: &str = "youtube://account";
 }
 
 /// Loopback port of the browser-extension bridge (`GET http://127.0.0.1:{BRIDGE_PORT}/v1/state` → `BridgeState`).
@@ -1105,6 +1131,158 @@ pub enum DevAction {
 }
 
 // ---------------------------------------------------------------------------
+// Privacy panel (ADR-020)
+// ---------------------------------------------------------------------------
+
+/// One kind of data FocusMode keeps on this computer. `PrivacyReport.items` lists them in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PrivacyItemKind {
+    /// `config.json` (+ `config.json.bak`). Not deletable alone: `delete_all_data` resets it to the defaults.
+    Settings,
+    /// `history.jsonl`; `count` = stored sessions, `includesTitles` = some session keeps window titles.
+    History,
+    /// `meeting-choices.json` (meeting ids and choices, no subjects); `count` = stored choices.
+    MeetingChoices,
+    /// `work-seen.json` (work item ids, no titles); `count` = stored ids.
+    WorkSeen,
+    /// `teams-token.bin` (DPAPI): the Microsoft sign-in used by Teams and the Microsoft calendar.
+    MicrosoftToken,
+    /// `google-token.bin` (DPAPI): the Google Calendar sign-in.
+    GoogleToken,
+    /// `ics-links.bin` (DPAPI): ICS subscription links; `count` = number of links when known.
+    IcsLinks,
+    /// `work-github-token.bin` (DPAPI).
+    GithubToken,
+    /// `work-gitlab-token.bin` (DPAPI).
+    GitlabToken,
+    /// `work-jira-token.bin` (DPAPI).
+    JiraToken,
+    /// `work-azure-devops-token.bin` (DPAPI).
+    AzureDevopsToken,
+    /// `work-linear-token.bin` (DPAPI).
+    LinearToken,
+    /// Imported chime files in the `sounds` folder; `count` = files.
+    CustomChimes,
+    /// `websiteblacklist.txt`; `count` = domains + patterns. Deleting it restores the bundled default list.
+    Blocklist,
+    /// `shields-restore.json`: exists only while shields are up (or after a crash). Never deletable (rule 7):
+    /// it goes away by itself once Windows settings are restored.
+    ShieldsRestore,
+    /// `tint-restore.json`: exists only while the screen tint is applied (or after a crash). Never deletable (rule 7).
+    TintRestore,
+    /// The embedded browser profile (WebView2 data folder): cookies incl. the YouTube sign-in and consent, cache,
+    /// local storage. Deleting it clears all browsing data (signs out of YouTube).
+    BrowserData,
+    /// Log files (no tokens, titles or meeting subjects by rule 11).
+    Logs,
+}
+
+impl PrivacyItemKind {
+    /// Every kind in report order.
+    pub const ALL: [Self; 18] = [
+        Self::Settings,
+        Self::History,
+        Self::MeetingChoices,
+        Self::WorkSeen,
+        Self::MicrosoftToken,
+        Self::GoogleToken,
+        Self::IcsLinks,
+        Self::GithubToken,
+        Self::GitlabToken,
+        Self::JiraToken,
+        Self::AzureDevopsToken,
+        Self::LinearToken,
+        Self::CustomChimes,
+        Self::Blocklist,
+        Self::ShieldsRestore,
+        Self::TintRestore,
+        Self::BrowserData,
+        Self::Logs,
+    ];
+
+    /// `delete_privacy_data` may delete it. Settings are only reset by `delete_all_data`; the restore files only
+    /// go away once the shell has restored Windows settings (CLAUDE.md, rule 7).
+    pub const fn is_deletable(self) -> bool {
+        !matches!(
+            self,
+            Self::Settings | Self::ShieldsRestore | Self::TintRestore
+        )
+    }
+
+    /// The work tool whose token this kind is.
+    pub const fn work_source(self) -> Option<WorkSource> {
+        match self {
+            Self::GithubToken => Some(WorkSource::Github),
+            Self::GitlabToken => Some(WorkSource::Gitlab),
+            Self::JiraToken => Some(WorkSource::Jira),
+            Self::AzureDevopsToken => Some(WorkSource::AzureDevops),
+            Self::LinearToken => Some(WorkSource::Linear),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PrivacyItem {
+    pub kind: PrivacyItemKind,
+    /// Something of this kind is stored now.
+    pub present: bool,
+    /// Size on disk in KiB, rounded up (a non-empty file is at least 1); `None` when absent, unknown or too costly
+    /// to compute.
+    pub size_kib: Option<u32>,
+    /// Number of entries where it makes sense (sessions, choices, ids, links, files, blocklist entries).
+    pub count: Option<u32>,
+    /// `delete_privacy_data` accepts this kind (`settings`, `shieldsRestore`, `tintRestore` never).
+    pub deletable: bool,
+    /// `history` only: at least one stored session keeps window titles (`trackTitles`). `false` for other kinds.
+    pub includes_titles: bool,
+}
+
+/// What FocusMode stores on this computer (Settings → "Privacy & data").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PrivacyReport {
+    /// Set by the shell; grows with every emitted report.
+    pub revision: u32,
+    /// Every folder where FocusMode keeps data, without duplicates; the first one is what `open_data_folder` opens
+    /// (settings, history, tokens, sounds), the others hold the browser profile and the logs.
+    pub folders: Vec<String>,
+    /// One entry per `PrivacyItemKind`, in its order (absent items too, with `present: false`).
+    pub items: Vec<PrivacyItem>,
+    /// A delete or an export is running (buttons stay disabled until the next report).
+    pub busy: bool,
+}
+
+// ---------------------------------------------------------------------------
+// YouTube sign-in for Premium (ADR-021)
+// ---------------------------------------------------------------------------
+
+/// YouTube sign-in state of the shared WebView2 profile. Only cookie names are checked (`LOGIN_INFO`, `SAPISID`,
+/// `__Secure-3PAPISID` on youtube.com); cookie values are never read into the app's state or logged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct YoutubeAccount {
+    /// Set by the shell; grows with every emitted state.
+    pub revision: u32,
+    /// The shell has checked the cookies at least once since start (until then `signed_in` is only a guess:
+    /// the player keeps today's routing).
+    pub known: bool,
+    /// youtube.com sign-in cookies are present: YouTube plays in the media window (first-party cookies, Premium applies).
+    pub signed_in: bool,
+    /// The sign-in window is open.
+    pub sign_in_open: bool,
+    /// Google refused the embedded browser in the sign-in window ("This browser or app may not be secure",
+    /// detected by its `/signin/rejected` URL). Cleared when a new sign-in starts.
+    pub browser_rejected: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Browser extension bridge
 // ---------------------------------------------------------------------------
 
@@ -1137,7 +1315,10 @@ pub struct BridgeState {
 
 #[cfg(test)]
 mod tests {
-    use super::{DevAction, Phase, PopupInfo, PopupKind, commands, events};
+    use super::{
+        DevAction, Phase, PopupInfo, PopupKind, PrivacyItemKind, WorkSource, YoutubeAccount,
+        commands, events,
+    };
     use std::fmt::Write as _;
 
     #[test]
@@ -1182,6 +1363,63 @@ mod tests {
         assert_eq!(remaining, DevAction::SetRemaining { secs: 5 });
 
         assert!(serde_json::from_str::<DevAction>(r#"{"type":"wipeDisk"}"#).is_err());
+    }
+
+    #[test]
+    fn privacy_kinds_are_complete_and_camel_case() {
+        let mut seen = std::collections::HashSet::new();
+        for kind in PrivacyItemKind::ALL {
+            assert!(seen.insert(kind), "{kind:?} listed twice");
+        }
+        assert_eq!(
+            serde_json::to_value(PrivacyItemKind::AzureDevopsToken).expect("serialize"),
+            serde_json::json!("azureDevopsToken")
+        );
+        assert_eq!(
+            serde_json::from_str::<PrivacyItemKind>(r#""meetingChoices""#).expect("deserialize"),
+            PrivacyItemKind::MeetingChoices
+        );
+        let not_deletable: Vec<_> = PrivacyItemKind::ALL
+            .into_iter()
+            .filter(|kind| !kind.is_deletable())
+            .collect();
+        assert_eq!(
+            not_deletable,
+            [
+                PrivacyItemKind::Settings,
+                PrivacyItemKind::ShieldsRestore,
+                PrivacyItemKind::TintRestore
+            ]
+        );
+        let tools: Vec<_> = PrivacyItemKind::ALL
+            .into_iter()
+            .filter_map(PrivacyItemKind::work_source)
+            .collect();
+        assert_eq!(
+            tools,
+            [
+                WorkSource::Github,
+                WorkSource::Gitlab,
+                WorkSource::Jira,
+                WorkSource::AzureDevops,
+                WorkSource::Linear
+            ]
+        );
+    }
+
+    #[test]
+    fn youtube_account_wire_format() {
+        let account = YoutubeAccount {
+            revision: 3,
+            known: true,
+            signed_in: true,
+            sign_in_open: false,
+            browser_rejected: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&account).expect("serialize"),
+            serde_json::json!({ "revision": 3, "known": true, "signedIn": true, "signInOpen": false, "browserRejected": false })
+        );
     }
 
     #[test]
@@ -1245,6 +1483,14 @@ mod tests {
             ("setSessionGoal", commands::SET_SESSION_GOAL),
             ("markGoalDone", commands::MARK_GOAL_DONE),
             ("devTrigger", commands::DEV_TRIGGER),
+            ("getPrivacyReport", commands::GET_PRIVACY_REPORT),
+            ("openDataFolder", commands::OPEN_DATA_FOLDER),
+            ("exportPrivacyData", commands::EXPORT_PRIVACY_DATA),
+            ("deletePrivacyData", commands::DELETE_PRIVACY_DATA),
+            ("deleteAllData", commands::DELETE_ALL_DATA),
+            ("getYoutubeAccount", commands::GET_YOUTUBE_ACCOUNT),
+            ("youtubeSignIn", commands::YOUTUBE_SIGN_IN),
+            ("youtubeSignOut", commands::YOUTUBE_SIGN_OUT),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),
@@ -1261,6 +1507,8 @@ mod tests {
             ("tintChanged", events::TINT_CHANGED),
             ("calendarChanged", events::CALENDAR_CHANGED),
             ("workChanged", events::WORK_CHANGED),
+            ("privacyChanged", events::PRIVACY_CHANGED),
+            ("youtubeAccount", events::YOUTUBE_ACCOUNT),
         ];
         let mut out = String::from(
             "// This file was generated by `cargo test -p focus-core` (api.rs). Do not edit this file manually.\n\n",
