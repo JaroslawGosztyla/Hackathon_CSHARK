@@ -850,7 +850,12 @@ input[type="radio"] {
   flex-wrap: wrap;
   gap: 4px;
   padding: 4px;
-  border-radius: var(--radius-pill);
+  /*
+   * Concentric with the pill of an option (half its height: 0.9rem × line-height 1.5 + 2 × 7px, plus this padding and
+   * the border), not a pill itself: on one row it still looks like a pill, wrapped onto two rows it is a rounded
+   * rectangle instead of an oval. Square where the theme has square pills (8-bit).
+   */
+  border-radius: min(var(--radius-pill), calc(0.675rem + 11px + var(--border-w)));
   background: var(--surface-inset);
   border: var(--border-w) solid var(--border);
   margin: 0;
