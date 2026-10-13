@@ -2,11 +2,14 @@
   import BreakCard from "$lib/components/BreakCard.svelte";
   import GoodPractice from "$lib/components/GoodPractice.svelte";
   import LiveUsage from "$lib/components/LiveUsage.svelte";
+  import MeetingConflicts from "$lib/components/MeetingConflicts.svelte";
+  import MeetingHoldBanner from "$lib/components/MeetingHoldBanner.svelte";
   import MusicSourcePicker from "$lib/components/MusicSourcePicker.svelte";
   import ShieldChips from "$lib/components/ShieldChips.svelte";
   import TimerRing from "$lib/components/TimerRing.svelte";
   import TimingEditor from "$lib/components/TimingEditor.svelte";
   import { formatDuration } from "$lib/format";
+  import { calendarEnabled } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
@@ -22,6 +25,7 @@
   });
   const remaining = $derived(session.isIdle ? idleSecs : snap.remainingSecs);
   const total = $derived(session.isIdle ? idleSecs : snap.phaseTotalSecs);
+  const calendarOn = $derived(calendarEnabled(config.value));
 </script>
 
 <svelte:head>
@@ -106,21 +110,44 @@
   {/if}
 </section>
 
+<MeetingHoldBanner />
+
 {#if session.isIdle}
+  {#if calendarOn}
+    <div class="above">
+      <MeetingConflicts />
+    </div>
+  {/if}
   <div class="grid">
     <TimingEditor />
     <MusicSourcePicker />
   </div>
   <div class="below">
     <GoodPractice />
+    {#if config.ready && !calendarOn}
+      <p class="hint calendar-hint">
+        {strings.calendar.connectHint}
+        <a href="/settings#calendar-settings">{strings.calendar.connectLink}</a>
+      </p>
+    {/if}
   </div>
 {:else if snap.phase === "focus"}
   <div class="grid">
     <LiveUsage />
     <ShieldChips />
   </div>
+  {#if calendarOn}
+    <div class="below">
+      <MeetingConflicts />
+    </div>
+  {/if}
 {:else}
   <BreakCard />
+  {#if calendarOn}
+    <div class="below">
+      <MeetingConflicts />
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -151,8 +178,24 @@
     align-items: start;
   }
 
+  .above {
+    margin-bottom: 16px;
+  }
+
   .below {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     margin-top: 16px;
+  }
+
+  .calendar-hint {
+    text-align: center;
+  }
+
+  .calendar-hint a {
+    color: var(--accent-strong);
+    font-weight: 600;
   }
 
   @media (max-width: 560px) {

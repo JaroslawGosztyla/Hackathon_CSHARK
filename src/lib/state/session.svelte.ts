@@ -18,6 +18,8 @@ const IDLE_SNAPSHOT: SessionSnapshot = {
   breakSecs: 0,
   focusedSecs: 0,
   demo: false,
+  musicMuted: false,
+  meetingHold: null,
 };
 
 class SessionStore {

@@ -10,12 +10,15 @@ import type {
   AppError,
   BlocklistInfo,
   BridgeInfo,
+  CalendarSource,
+  CalendarStatus,
   ChimeKind,
   Config,
   DeviceCodePrompt,
   Language,
   MediaAction,
   MediaWindowStatus,
+  MeetingChoice,
   Nudge,
   PhaseChange,
   PopupAction,
@@ -88,6 +91,10 @@ export const getLastSummary = () => call<SessionSummary | null>(COMMANDS.getLast
 export const listHistory = (limit: number) => call<SessionSummary[]>(COMMANDS.listHistory, { limit });
 
 export const getTeamsStatus = () => call<TeamsStatus>(COMMANDS.getTeamsStatus);
+/**
+ * Starts the Microsoft device code sign-in (also while connected: signs in again). The shell asks for `Calendars.Read`
+ * only while `calendar.microsoft` is on in the stored config, so save pending edits first.
+ */
 export const teamsConnect = () => call<DeviceCodePrompt>(COMMANDS.teamsConnect);
 export const teamsDisconnect = () => call<void>(COMMANDS.teamsDisconnect);
 
@@ -140,6 +147,29 @@ export const removeCustomChime = (chime: ChimeKind) => call<Config>(COMMANDS.rem
 export const listLibraryTracks = () => call<Track[]>(COMMANDS.listLibraryTracks);
 /** Deletes the whole session history (history file and the last summary). Confirm with the user first. */
 export const clearHistory = () => call<void>(COMMANDS.clearHistory);
+
+/**
+ * Meetings of the next hours from all connected calendars and their collisions with the planned breaks
+ * (of the running session, or of a session that would start now).
+ */
+export const getCalendar = () => call<CalendarStatus>(COMMANDS.getCalendar);
+/** Fetches all calendars now. */
+export const refreshCalendar = () => call<CalendarStatus>(COMMANDS.refreshCalendar);
+/** How a meeting that collides with a break is handled. */
+export const setMeetingChoice = (meetingId: string, choice: MeetingChoice) =>
+  call<CalendarStatus>(COMMANDS.setMeetingChoice, { meetingId, choice });
+/** Starts the Google sign-in in the system browser (OAuth loopback + PKCE); progress arrives as `calendar://changed`. */
+export const connectGoogle = () => call<void>(COMMANDS.connectGoogle);
+/**
+ * Forgets the stored credentials / links of that source. `microsoft` keeps the Teams sign-in: the shell only turns
+ * `calendar.microsoft` off (and stores that config) and drops the Microsoft meetings.
+ */
+export const disconnectCalendar = (source: CalendarSource) =>
+  call<CalendarStatus>(COMMANDS.disconnectCalendar, { source });
+/** Replaces the ICS subscription links (the shell stores them encrypted, never in config.json). */
+export const setIcsUrls = (urls: string[]) => call<CalendarStatus>(COMMANDS.setIcsUrls, { urls });
+/** The stored ICS links (only to edit them in Settings; never show them in errors or logs). */
+export const getIcsUrls = () => call<string[]>(COMMANDS.getIcsUrls);
 
 // ---------------------------------------------------------------------------
 // Events
@@ -197,6 +227,8 @@ export const subscribePopup = (apply: (p: PopupInfo) => void, onError?: (e: AppE
   subscribe(EVENTS.popupShow, getPopup, apply, onError);
 export const subscribeTint = (apply: (t: TintStatus) => void, onError?: (e: AppError) => void) =>
   subscribe(EVENTS.tintChanged, getTintStatus, apply, onError);
+export const subscribeCalendar = (apply: (c: CalendarStatus) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.calendarChanged, getCalendar, apply, onError);
 
 export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
 export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);

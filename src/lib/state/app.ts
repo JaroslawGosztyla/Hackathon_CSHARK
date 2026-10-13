@@ -3,6 +3,7 @@ import { goto } from "$app/navigation";
 import * as api from "$lib/api";
 import type { AppError } from "$lib/types";
 import { blocklist } from "./blocklist.svelte";
+import { calendar, reportCalendarError } from "./calendar.svelte";
 import { config } from "./config.svelte";
 import { mediaWindow } from "./mediaWindow.svelte";
 import { nudge } from "./nudge.svelte";
@@ -44,6 +45,8 @@ export function initAppState(): () => void {
   keep(api.subscribeMediaWindow((s) => mediaWindow.apply(s), reportError));
   keep(api.subscribeBlocklist((b) => blocklist.apply(b), reportError));
   keep(api.subscribeTint((t) => tint.apply(t), reportError));
+  // Calendar errors never log their detail (it could come from a calendar server).
+  keep(api.subscribeCalendar((c) => calendar.apply(c), reportCalendarError));
   keep(api.onPhaseChanged((change) => session.announce(change)));
   keep(api.onNudge((n) => nudge.show(n)));
   keep(

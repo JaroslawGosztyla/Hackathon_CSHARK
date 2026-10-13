@@ -6,13 +6,19 @@
   import { onMount } from "svelte";
   import * as api from "$lib/api";
   import AppLogo from "$lib/components/AppLogo.svelte";
-  import { formatDuration } from "$lib/format";
+  import { formatDuration, formatTimeRange } from "$lib/format";
   import { launcherList, strings } from "$lib/strings";
   import { CATEGORY_ICON, pickBreakTip } from "$lib/tips";
-  import type { Config, PopupInfo, PopupKind } from "$lib/types";
+  import type { Config, MeetingChoice, PopupInfo, PopupKind } from "$lib/types";
 
   /** How long the popup stays; the countdown pauses while the pointer or the keyboard focus is on it. */
   const VISIBLE_MS = 8000;
+  /** Popups that explain something stay longer. */
+  const VISIBLE_MS_BY_KIND: Partial<Record<PopupKind, number>> = {
+    breakHeld: 15_000,
+  };
+  /** Buttons of a meeting reminder; "Przypomnij później" only while `remindLaterAllowed` (not on the last one). */
+  const MEETING_CHOICES: readonly MeetingChoice[] = ["extend", "pauseAtBreak", "ignore", "remindLater"];
   /** Exit animation before the shell hides the window. */
   const LEAVE_MS = 180;
   /** The shell closes the popup after a button; if it does not, the popup closes itself after this delay. */
@@ -23,9 +29,12 @@
     focusStarted: "🎧",
     interrupted: "💤",
     launchersClosed: "🎮",
+    meetingReminder: "📅",
+    breakHeld: "⏸️",
   };
 
   const p = strings.popup;
+  const cal = strings.calendar;
 
   let info = $state<PopupInfo | null>(null);
   /** For the wording only (music during the break, shields on); null → the default texts. */
@@ -39,6 +48,8 @@
   let acted = $state(false);
   /** Countdown bar, 1 → 0. */
   let progress = $state(1);
+  /** Saving the meeting choice failed (the popup then says to choose in the main window). */
+  let choiceFailed = $state(false);
   /**
    * Session id for the break tip, fetched per popup (PopupInfo has none). The tip waits for it, so this popup and
    * the main window's break card pick the same tip.
@@ -46,6 +57,8 @@
   let tipSession = $state<{ revision: number; sessionId: string | null } | null>(null);
 
   let held = false;
+  /** Visible time of the current popup (depends on its kind). */
+  let totalMs = VISIBLE_MS;
   let remainingMs = VISIBLE_MS;
   let deadline = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -55,14 +68,37 @@
   const kind = $derived(info?.kind ?? null);
   const visible = $derived(kind !== null && !hidden);
   const canSkip = $derived(kind === "breakStarted" || kind === "focusStarted");
+  /** The meeting of a reminder / held break (may be missing for a held break). */
+  const meeting = $derived(kind === "meetingReminder" || kind === "breakHeld" ? (info?.meeting ?? null) : null);
+  const meetingSubject = $derived(meeting ? meeting.meeting.subject.trim() || cal.untitled : "");
+  /** A meeting longer than 4 h cannot extend the focus or hold the break: those buttons are left out (note instead). */
+  const meetingChoices = $derived(
+    meeting
+      ? MEETING_CHOICES.filter(
+          (choice) =>
+            (choice !== "remindLater" || meeting.remindLaterAllowed) &&
+            !(meeting.tooLong === true && (choice === "extend" || choice === "pauseAtBreak")),
+        )
+      : [],
+  );
+  /**
+   * A meeting reminder asks a question: no countdown, it stays until a button or X (the shell, which sizes the
+   * window taller for it, hides it after a long upper bound).
+   */
+  const waitsForAnswer = $derived(kind === "meetingReminder" && meeting !== null);
 
   const title = $derived.by((): string => {
     if (!info?.kind) return "";
-    return info.kind === "breakStarted" ? p.breakTitle(formatDuration(info.phaseSecs)) : p.title[info.kind];
+    if (info.kind === "breakStarted") return p.breakTitle(formatDuration(info.phaseSecs));
+    if (info.kind === "meetingReminder" && meeting) return p.meetingTitle(meeting.breakNumber);
+    if (info.kind === "breakHeld" && info.phaseSecs > 0) return p.breakHeldTitle(formatDuration(info.phaseSecs));
+    return p.title[info.kind];
   });
 
   /** The user's own reminder for this break: the main line of a break popup. */
   const reminder = $derived(info?.kind === "breakStarted" ? (info.reminder?.trim() ?? "") || null : null);
+  /** A held break shows the meeting first and the user's reminder for that break on its own line. */
+  const heldReminder = $derived(info?.kind === "breakHeld" ? (info.reminder?.trim() ?? "") || null : null);
 
   const tip = $derived.by(() => {
     const current = info;
@@ -86,6 +122,13 @@
         return p.interrupted;
       case "launchersClosed":
         return p.launchersClosed(launcherList(current.launchers));
+      case "meetingReminder":
+        if (choiceFailed) return p.choiceFailed;
+        return meeting
+          ? p.meetingMessage(formatTimeRange(meeting.meeting.startMs, meeting.meeting.endMs), meetingSubject)
+          : "";
+      case "breakHeld":
+        return meeting ? p.breakHeld(meetingSubject) : p.breakHeldGeneric;
     }
   });
 
@@ -124,12 +167,14 @@
     leaving = false;
     busy = false;
     acted = false;
+    choiceFailed = false;
     if (next.kind === null) {
       hidden = true;
       return;
     }
     hidden = false;
-    remainingMs = VISIBLE_MS;
+    totalMs = VISIBLE_MS_BY_KIND[next.kind] ?? VISIBLE_MS;
+    remainingMs = totalMs;
     progress = 1;
     if (!held) runCountdown();
     if (next.kind === "breakStarted" || next.kind === "focusStarted") void refreshConfig();
@@ -142,7 +187,7 @@
 
   function runCountdown(): void {
     stopCountdown();
-    if (!visible || busy || leaving) return;
+    if (!visible || busy || leaving || waitsForAnswer) return;
     deadline = performance.now() + remainingMs;
     timer = setTimeout(() => {
       timer = null;
@@ -172,7 +217,7 @@
     const left = Math.max(0, deadline - now);
     // Reduced motion: the bar steps once a second instead of sliding.
     const shown = reducedMotion ? Math.ceil(left / 1000) * 1000 : left;
-    progress = Math.min(1, shown / VISIBLE_MS);
+    progress = Math.min(1, shown / totalMs);
     frame = requestAnimationFrame(draw);
   }
 
@@ -264,6 +309,30 @@
     runCountdown();
   }
 
+  /** A choice button of a meeting reminder: store it, then close the popup. */
+  async function choose(choice: MeetingChoice): Promise<void> {
+    const current = info;
+    const target = meeting;
+    if (!current || !target || busy || acted || leaving) return;
+    busy = true;
+    stopCountdown();
+    try {
+      await api.setMeetingChoice(target.meeting.id, choice);
+    } catch (e) {
+      warn(e);
+      if (info?.revision === current.revision) {
+        busy = false;
+        choiceFailed = true;
+        if (!held) runCountdown();
+      }
+      return;
+    }
+    if (info?.revision !== current.revision) return;
+    busy = false;
+    acted = true;
+    await dismiss();
+  }
+
   onMount(() => {
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     reducedMotion = motion.matches;
@@ -298,14 +367,25 @@
 {#if visible && info && kind}
   {#key info.revision}
     <div class="popup kind-{kind}" class:leaving role="status" aria-live="polite" aria-atomic="true" {@attach holdWhileInside}>
-      <div class="icon" aria-hidden="true">
-        <span class="emoji">{KIND_ICON[kind]}</span>
-        <span class="badge-logo"><AppLogo size={20} /></span>
-      </div>
+      {#if kind !== "meetingReminder"}
+        <div class="icon" aria-hidden="true">
+          <span class="emoji">{KIND_ICON[kind]}</span>
+          <span class="badge-logo"><AppLogo size={20} /></span>
+        </div>
+      {/if}
 
       <div class="content">
-        <p class="title"><span class="sr-only">{strings.appName}: </span>{title}</p>
-        <p class="message" class:reminder class:single={kind === "breakStarted"} title={message}>
+        <p class="title">
+          <span class="sr-only">{strings.appName}: </span>
+          {#if kind === "meetingReminder"}<span class="title-icon" aria-hidden="true">{KIND_ICON[kind]}</span>{/if}{title}
+        </p>
+        <p
+          class="message"
+          class:reminder
+          class:single={kind === "breakStarted" || heldReminder !== null}
+          class:failed={choiceFailed}
+          title={message}
+        >
           {#if reminder}<span class="sr-only">{p.reminderPrefix} </span>{/if}{message}
         </p>
         {#if kind === "breakStarted"}
@@ -316,22 +396,49 @@
             {/if}
           </p>
         {/if}
-        <div class="actions">
-          <button type="button" class="btn btn-sm btn-primary" disabled={busy || acted} onclick={() => act("showMain")}>
-            {p.showMain}
-          </button>
-          {#if canSkip}
-            <button
-              type="button"
-              class="btn btn-sm"
-              disabled={busy || acted}
-              aria-label={kind === "breakStarted" ? p.skipBreak : p.skipFocus}
-              onclick={() => act("skipPhase")}
-            >
-              {p.skip}
-            </button>
+        {#if heldReminder}
+          <p class="tip" title={heldReminder}>
+            <span class="sr-only">{p.reminderPrefix} </span>{heldReminder}
+          </p>
+        {/if}
+        {#if waitsForAnswer && meeting}
+          <p class="tip tabular">{p.meetingBreakAt(formatTimeRange(meeting.breakStartMs, meeting.breakEndMs))}</p>
+          {#if meeting.tooLong}
+            <p class="tip" title={cal.tooLong}>{cal.tooLong}</p>
           {/if}
-        </div>
+        {/if}
+        {#if waitsForAnswer}
+          <div class="actions choices" role="group" aria-label={p.meetingChoices(meetingSubject)}>
+            {#each meetingChoices as choice, i (choice)}
+              <button
+                type="button"
+                class="btn btn-sm"
+                class:btn-primary={i === 0}
+                disabled={busy || acted}
+                onclick={() => choose(choice)}
+              >
+                {cal.choice[choice]}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <div class="actions">
+            <button type="button" class="btn btn-sm btn-primary" disabled={busy || acted} onclick={() => act("showMain")}>
+              {p.showMain}
+            </button>
+            {#if canSkip}
+              <button
+                type="button"
+                class="btn btn-sm"
+                disabled={busy || acted}
+                aria-label={kind === "breakStarted" ? p.skipBreak : p.skipFocus}
+                onclick={() => act("skipPhase")}
+              >
+                {p.skip}
+              </button>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <button type="button" class="close" aria-label={p.dismiss} title={p.dismiss} onclick={() => dismiss()}>
@@ -340,9 +447,11 @@
         </svg>
       </button>
 
-      <div class="countdown" aria-hidden="true">
-        <span style:transform="scaleX({progress})"></span>
-      </div>
+      {#if !waitsForAnswer}
+        <div class="countdown" aria-hidden="true">
+          <span style:transform="scaleX({progress})"></span>
+        </div>
+      {/if}
     </div>
   {/key}
 {/if}
@@ -403,8 +512,19 @@
     background: var(--surface-solid);
   }
 
-  .kind-breakStarted .icon {
+  .kind-breakStarted .icon,
+  .kind-breakHeld .icon {
     background: var(--break-soft);
+  }
+
+  /* A meeting reminder has four buttons: no icon column, so they get the whole width of the card. */
+  .popup.kind-meetingReminder {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 10px 14px 12px;
+  }
+
+  .title-icon {
+    margin-right: 6px;
   }
 
   .content {
@@ -421,11 +541,13 @@
     line-height: 1.3;
   }
 
-  .kind-breakStarted .title {
+  .kind-breakStarted .title,
+  .kind-breakHeld .title {
     color: var(--break);
   }
 
-  .kind-focusStarted .title {
+  .kind-focusStarted .title,
+  .kind-meetingReminder .title {
     color: var(--accent-strong);
   }
 
@@ -449,6 +571,10 @@
   .message.reminder {
     color: var(--text);
     font-weight: 650;
+  }
+
+  .message.failed {
+    color: var(--danger);
   }
 
   .tip {
@@ -476,6 +602,23 @@
     min-height: 30px;
     padding: 3px 12px;
     font-size: 0.84rem;
+  }
+
+  /* Two columns of choices; a long label wraps to a second line (the window is taller for a reminder). */
+  .actions.choices {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .actions.choices .btn {
+    min-height: 34px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    line-height: 1.25;
+    white-space: normal;
+    text-align: center;
   }
 
   .close {
@@ -515,7 +658,8 @@
     transform-origin: left center;
   }
 
-  .kind-breakStarted .countdown span {
+  .kind-breakStarted .countdown span,
+  .kind-breakHeld .countdown span {
     background: var(--break);
   }
 

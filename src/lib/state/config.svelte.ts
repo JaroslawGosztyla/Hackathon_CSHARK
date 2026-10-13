@@ -14,6 +14,44 @@ const TINT = { minutesPerDay: 1440, maxStrength: 100, maxTransitionMinutes: 180 
 export const TINT_TRANSITION_PRESETS = [0, 15, 30, 60, 90] as const;
 /** Mirrors focus-core `config.rs` (MAX_BREAK_REMINDERS, MAX_REMINDER_CHARS; length counted in characters). */
 const REMINDERS = { maxCount: 24, maxChars: 160 } as const;
+/**
+ * Mirrors focus-core `config.rs` (CALENDAR_HORIZON_HOURS_RANGE, GOOGLE_CLIENT_ID_SUFFIX, MAX_GOOGLE_CLIENT_ID_LEN,
+ * MAX_GOOGLE_CLIENT_SECRET_LEN).
+ */
+const CALENDAR = {
+  minHorizonHours: 1,
+  maxHorizonHours: 24,
+  googleClientIdSuffix: ".apps.googleusercontent.com",
+  maxGoogleClientIdLen: 255,
+  maxGoogleClientSecretLen: 100,
+} as const;
+/** Choices offered for the calendar look-ahead (hours); a different stored value is shown as an extra option. */
+export const CALENDAR_HORIZON_PRESETS = [2, 4, 6, 8, 10, 12, 16, 24] as const;
+
+/**
+ * Mirrors focus-core `is_google_client_id`: at most 255 characters of `[A-Za-z0-9._-]`, ending (case-sensitively) in
+ * `.apps.googleusercontent.com` after a non-empty prefix that does not start with `.` / `-`, does not end with `.`
+ * and has no `..`.
+ */
+export function isGoogleClientId(id: string): boolean {
+  const suffix = CALENDAR.googleClientIdSuffix;
+  if (!id.endsWith(suffix)) return false;
+  const prefix = id.slice(0, id.length - suffix.length);
+  return (
+    id.length <= CALENDAR.maxGoogleClientIdLen &&
+    prefix.length > 0 &&
+    !prefix.startsWith(".") &&
+    !prefix.startsWith("-") &&
+    !prefix.endsWith(".") &&
+    !prefix.includes("..") &&
+    /^[A-Za-z0-9._-]+$/.test(id)
+  );
+}
+
+/** Mirrors focus-core `is_google_client_secret`: 1..=100 characters of `[A-Za-z0-9_-]` (e.g. `GOCSPX-…`). */
+export function isGoogleClientSecret(secret: string): boolean {
+  return secret.length > 0 && secret.length <= CALENDAR.maxGoogleClientSecretLen && /^[A-Za-z0-9_-]+$/.test(secret);
+}
 
 /**
  * The user's reminder for break number `breakNumber` (1-based; the session's `cycle` during that break).
@@ -61,6 +99,25 @@ export function validateConfig(c: Config): Record<string, string> {
   if (reminders.length > REMINDERS.maxCount || reminders.some((r) => charCount(r.trim()) > REMINDERS.maxChars)) {
     errors.breakReminders = strings.settings.remindersInvalid(REMINDERS.maxCount, REMINDERS.maxChars);
   }
+  // Validated even when the calendars are off, like in focus-core. The shell trims the client id; empty is allowed.
+  // `calendar` may be missing only when talking to an older shell build; nothing to check then.
+  const cal = c.calendar as Config["calendar"] | undefined;
+  if (cal) {
+    if (!inRange(cal.horizonHours, CALENDAR.minHorizonHours, CALENDAR.maxHorizonHours)) {
+      errors["calendar.horizonHours"] = strings.errors.fieldInvalid(strings.fields["calendar.horizonHours"] ?? "");
+    }
+    const clientId = cal.googleClientId.trim();
+    if (clientId !== "" && !isGoogleClientId(clientId)) {
+      errors["calendar.googleClientId"] = strings.calendar.googleClientIdInvalid;
+    }
+    // Missing in a config from a shell build before the secret: nothing to check then.
+    const clientSecret = (cal.googleClientSecret as string | undefined)?.trim() ?? "";
+    if (clientSecret !== "" && !isGoogleClientSecret(clientSecret)) {
+      errors["calendar.googleClientSecret"] = strings.calendar.googleClientSecretInvalid(
+        CALENDAR.maxGoogleClientSecretLen,
+      );
+    }
+  }
   return errors;
 }
 
@@ -69,6 +126,7 @@ export const LIMITS = {
   breakMinutes: BREAK_MINUTES,
   tint: TINT,
   reminders: REMINDERS,
+  calendar: CALENDAR,
 } as const;
 
 function copyField<K extends keyof Config>(target: Config, source: Config, key: K): void {
@@ -134,6 +192,14 @@ class ConfigStore {
       return;
     }
     for (const key of keys) copyField(current, saved, key);
+  }
+
+  /**
+   * Applies a change the shell already stored by itself (e.g. `disconnect_calendar("microsoft")` turning
+   * `calendar.microsoft` off). Nothing is saved again; other local edits stay.
+   */
+  applyStored(mutate: (c: Config) => void): void {
+    if (this.value) mutate(this.value);
   }
 
   /** Saves pending edits right away. Resolves true when the config is valid and stored. */

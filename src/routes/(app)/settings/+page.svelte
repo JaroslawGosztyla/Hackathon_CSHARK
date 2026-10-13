@@ -3,6 +3,7 @@
   import { getAutostart, getSystemLanguage, setAutostart, toAppError, ERR_NO_SHELL } from "$lib/api";
   import BlocklistFile from "$lib/components/BlocklistFile.svelte";
   import BreakReminders from "$lib/components/BreakReminders.svelte";
+  import CalendarSettings from "$lib/components/CalendarSettings.svelte";
   import ChimeSettings from "$lib/components/ChimeSettings.svelte";
   import ExtensionGuide from "$lib/components/ExtensionGuide.svelte";
   import HistorySettings from "$lib/components/HistorySettings.svelte";
@@ -185,6 +186,13 @@
           />
         </div>
       </div>
+    </section>
+
+    <section class="card" aria-labelledby="calendar-settings">
+      <div class="card-title">
+        <h2 id="calendar-settings">{strings.calendar.title}</h2>
+      </div>
+      <CalendarSettings />
     </section>
 
     <section class="card" aria-labelledby="reminders-settings">
@@ -381,5 +389,10 @@
 
   .narrow {
     max-width: 340px;
+  }
+
+  /* Linked from the Skupienie page (#calendar-settings): keep the heading clear of the sticky header. */
+  .page :global(h2[id]) {
+    scroll-margin-top: 110px;
   }
 </style>

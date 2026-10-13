@@ -4,10 +4,12 @@ import type { TipCategory } from "./tips";
 import type {
   AppError,
   BlocklistIssueCode,
+  CalendarSource,
   ChimeSound,
   GameLauncher,
   IntegrationState,
   Language,
+  MeetingChoice,
   MusicSourceKind,
   NoiseColor,
   Phase,
@@ -143,6 +145,7 @@ export const strings = {
     idle: "Muzyka zacznie grać po starcie sesji",
     pausedBySession: "Wstrzymane",
     pausedForBreak: "Wstrzymane na czas przerwy",
+    pausedForMeeting: "Wyciszone na czas spotkania",
     loading: "Ładuję…",
     silence: "Cisza",
     next: "Następny",
@@ -281,7 +284,7 @@ export const strings = {
       "Wejdź na portal Azure → Microsoft Entra ID → Rejestracje aplikacji → Nowa rejestracja.",
       "Typ konta: konta w dowolnym katalogu organizacji. Platforma: „Aplikacje mobilne i klasyczne” (Mobile and desktop).",
       "W „Uwierzytelnianie” włącz „Zezwalaj na publiczne przepływy klientów” (Allow public client flows).",
-      "W „Uprawnienia interfejsu API” dodaj delegowane uprawnienia Microsoft Graph: Presence.ReadWrite i User.Read.",
+      "W „Uprawnienia interfejsu API” dodaj delegowane uprawnienia Microsoft Graph: Presence.ReadWrite i User.Read, a dla kalendarza także Calendars.Read.",
       "Skopiuj „Application (client) ID” tutaj. Jeśli administrator wymaga zgody, poproś go o jej udzielenie.",
     ],
 
@@ -462,7 +465,18 @@ export const strings = {
       focusStarted: "Czas na skupienie",
       interrupted: "Sesja wstrzymana",
       launchersClosed: "Zamknięto launchery gier",
+      meetingReminder: "Spotkanie w czasie przerwy",
+      breakHeld: "Przerwa wstrzymana",
     } satisfies Record<PopupKind, string>,
+    /** Meeting reminder: `11:00–11:30 · Planowanie sprintu`. */
+    meetingMessage: (range: string, subject: string) => `${range} · ${subject}`,
+    meetingTitle: (n: number) => `Spotkanie w czasie ${n}. przerwy`,
+    meetingBreakAt: (range: string) => `Planowana przerwa: ${range}`,
+    meetingChoices: (subject: string) => `Co zrobić ze spotkaniem ${subject}?`,
+    breakHeld: (subject: string) => `Spotkanie: ${subject}. Minutnik przerwy czeka — wznów go po spotkaniu.`,
+    breakHeldGeneric: "Trwa spotkanie. Minutnik przerwy czeka — wznów go po spotkaniu.",
+    breakHeldTitle: (time: string) => `Przerwa wstrzymana · ${time}`,
+    choiceFailed: "Nie udało się zapisać wyboru — wybierz w oknie FocusMode.",
     /** Break popup with a tip: the length goes to the title, the reminder (or one of these lines) under it. */
     breakTitle: (time: string) => `Czas na przerwę · ${time}`,
     breakMusicOn: "Muzyka gra dalej — odejdź na chwilę od biurka.",
@@ -526,6 +540,166 @@ export const strings = {
     ],
   },
 
+  calendar: {
+    // --- Settings → Kalendarze ---
+    title: "Kalendarze",
+    lead: "FocusMode sprawdza spotkania z najbliższych godzin i jeszcze przed startem sesji ostrzega, gdy któreś wypada w czasie przerwy. Kalendarze są tylko odczytywane — FocusMode niczego w nich nie zmienia.",
+    privacy:
+      "Spotkania zostają na tym komputerze. Tokeny logowania i linki do kalendarzy są zapisane w postaci zaszyfrowanej, poza plikiem ustawień, i nie trafiają do logów.",
+    horizon: "Sprawdzaj spotkania na najbliższe",
+    horizonOption: (h: number) => `${h} ${plural(h, "godzinę", "godziny", "godzin")}`,
+    horizonHint: "Przy długiej sesji wybierz dłuższy zakres, żeby objąć wszystkie jej przerwy.",
+    lastSync: (time: string) => `Ostatnia synchronizacja: ${time}`,
+    neverSynced: "Kalendarze nie były jeszcze odczytane.",
+    refresh: "Odśwież teraz",
+    refreshing: "Odświeżam…",
+    sourceName: {
+      microsoft: "Microsoft 365 / Outlook",
+      google: "Kalendarz Google",
+      ics: "Kalendarze z linku ICS",
+    } satisfies Record<CalendarSource, string>,
+    sourceShort: {
+      microsoft: "Outlook",
+      google: "Google",
+      ics: "ICS",
+    } satisfies Record<CalendarSource, string>,
+    state: {
+      off: "wyłączony",
+      on: "połączony",
+      unavailable: "niedostępny",
+      error: "błąd",
+    } satisfies Record<IntegrationState, string>,
+    statusLine: (state: string, account: string | null) => (account ? `${state} · ${account}` : state),
+    errorLead: "Nie udało się odczytać kalendarza:",
+
+    microsoft: "Microsoft 365 / Outlook (konto Microsoft z Teams)",
+    microsoftHint:
+      "Czyta kalendarz przez to samo konto Microsoft, którego używa integracja z Teams (Microsoft Graph, tylko odczyt: Calendars.Read). Obejmuje spotkania w Teams i wszystkie inne wydarzenia z kalendarza.",
+    microsoftReconnect:
+      "O zgodę na odczyt kalendarza (Calendars.Read) FocusMode prosi tylko przy logowaniu z włączonym kalendarzem. Konto połączone wcześniej tylko dla Teams trzeba połączyć ponownie — bez rozłączania, status w Teams działa dalej. W rejestracji aplikacji w Azure dodaj uprawnienie Calendars.Read.",
+    microsoftTeamsAbove: "Konto Microsoft łączysz wyżej, w osłonie „Microsoft Teams: Nie przeszkadzać”.",
+    microsoftConnect: "Połącz konto Microsoft",
+    /** The Microsoft source answered "reconnect needed": the sign-in has no calendar permission. */
+    microsoftNeedsReconnect:
+      "To logowanie Microsoft nie ma dostępu do kalendarza. Połącz konto ponownie i zgódź się na odczyt kalendarza.",
+    microsoftReconnectButton: "Połącz ponownie",
+    microsoftReconnecting: "Łączę…",
+    /** Device code of the new sign-in, shown here when the Teams settings with the code are in the shield above. */
+    microsoftReconnectCode: (code: string) =>
+      `Wpisz kod ${code} na stronie logowania Microsoft (otwartej w przeglądarce, link także wyżej, w osłonie Teams).`,
+
+    google: "Kalendarz Google",
+    googleHint:
+      "Logowanie odbywa się w przeglądarce, a FocusMode prosi tylko o odczyt kalendarza. Potrzebny jest własny, bezpłatny identyfikator klienta OAuth z Google Cloud.",
+    googleClientId: "Identyfikator klienta OAuth (Client ID)",
+    googleClientIdPlaceholder: "123456789012-abc….apps.googleusercontent.com",
+    googleClientIdInvalid:
+      "Identyfikator klienta Google kończy się na .apps.googleusercontent.com i zawiera tylko litery, cyfry, kropki, myślniki i podkreślenia.",
+    googleClientSecret: "Tajny klucz klienta (Client secret)",
+    googleClientSecretPlaceholder: "GOCSPX-…",
+    googleClientSecretHint:
+      "Z tego samego klienta „Aplikacja komputerowa” w Google Cloud, co identyfikator powyżej. Google wymaga go przy logowaniu, ale w aplikacjach instalowanych nie traktuje go jako tajnego, więc FocusMode zapisuje go w pliku ustawień (nigdy w logach).",
+    googleClientSecretInvalid: (max: number) =>
+      `Tajny klucz klienta zawiera tylko litery, cyfry, myślniki i podkreślenia (najwyżej ${max} znaków).`,
+    googleConnect: "Połącz z Google",
+    googleDisconnect: "Rozłącz",
+    googlePending: "Dokończ logowanie w otwartej przeglądarce…",
+    googleConnected: (account: string | null) => (account ? `Połączono jako ${account}` : "Połączono"),
+    googleNotConnected: "Nie połączono",
+    googleNeedsClientId: "Najpierw wpisz identyfikator klienta.",
+    googleErrorLead: "Połączenie z Google nie powiodło się:",
+    googleHelpTitle: "Jak przygotować identyfikator klienta Google?",
+    googleHelp: [
+      "Otwórz console.cloud.google.com i utwórz projekt (albo wybierz istniejący).",
+      "W „Interfejsy API i usługi” → „Biblioteka” włącz Google Calendar API.",
+      "Skonfiguruj ekran zgody OAuth (Google Auth Platform): odbiorcy „Zewnętrzni” (albo „Wewnętrzni” w firmowym Google Workspace), zakres …/auth/calendar.readonly. Dopóki aplikacja jest w trybie testowym, dodaj swój adres e-mail jako użytkownika testowego.",
+      "W „Klienci” (Dane logowania) utwórz identyfikator klienta OAuth typu „Aplikacja komputerowa” (Desktop app).",
+      "Skopiuj „Identyfikator klienta” (kończy się na .apps.googleusercontent.com) i „Tajny klucz klienta” (zaczyna się od GOCSPX-) do pól powyżej i naciśnij „Połącz z Google”.",
+    ],
+
+    ics: "Inne kalendarze (link ICS / iCal)",
+    icsHint:
+      "Dla kalendarzy z prywatnym linkiem subskrypcji: Outlook i Exchange w firmie, Google, iCloud, Proton, Zoho, Zimbra, Nextcloud i inne. Spotkania cykliczne też są uwzględniane.",
+    icsLinks: "Linki do kalendarzy — jeden w każdej linii",
+    icsPlaceholder: "https://outlook.office365.com/owa/calendar/…/calendar.ics\nwebcal://…",
+    icsSave: "Zapisz linki",
+    icsSaved: "Linki do kalendarzy zostały zapisane.",
+    icsEdit: "Edytuj linki",
+    icsAdd: "Dodaj linki",
+    icsCancel: "Anuluj",
+    icsRemoveAll: "Usuń wszystkie linki",
+    icsRemoved: "Linki do kalendarzy zostały usunięte.",
+    /** Status line part: `2 linki`, `brak linków`. */
+    icsCount: (n: number) => (n === 0 ? "brak linków" : `${n} ${plural(n, "link", "linki", "linków")}`),
+    icsLoading: "Wczytuję zapisane linki…",
+    icsInvalidLines: (lines: readonly number[]) =>
+      `${lines.length === 1 ? "Linia" : "Linie"} ${lines.join(", ")}: to nie wygląda na link do kalendarza (https:// albo webcal://).`,
+    icsSecret:
+      "Taki link daje wgląd w kalendarz każdemu, kto go zna. FocusMode zapisuje go zaszyfrowany i nigdy nie pokazuje go w komunikatach o błędach.",
+    icsHelpTitle: "Gdzie znaleźć link ICS?",
+    icsHelp: [
+      {
+        name: "Outlook w przeglądarce (Microsoft 365, Exchange)",
+        text: "Ustawienia → Kalendarz → Kalendarze udostępnione → „Publikuj kalendarz”: wybierz kalendarz i „Może wyświetlać wszystkie szczegóły”, naciśnij „Publikuj” i skopiuj link ICS. Na firmowym serwerze Exchange publikowanie musi być włączone przez administratora.",
+      },
+      {
+        name: "Kalendarz Google",
+        text: "Ustawienia → wybierz kalendarz po lewej → „Integrowanie kalendarza” → „Tajny adres w formacie iCal”.",
+      },
+      {
+        name: "iCloud",
+        text: "W Kalendarzu udostępnij kalendarz jako „Kalendarz publiczny” i skopiuj jego link (webcal://).",
+      },
+      {
+        name: "Proton, Zoho, Zimbra, Nextcloud i inne",
+        text: "W ustawieniach kalendarza szukaj opcji „Udostępnij”, „Subskrybuj”, „Link ICS” albo „iCal”.",
+      },
+    ],
+
+    // --- Skupienie: collisions and upcoming meetings ---
+    cardTitle: "Spotkania w czasie przerw",
+    leadPlanned: "Jeśli zaczniesz teraz, te spotkania wypadną w czasie przerw. Zdecyduj, co zrobić:",
+    leadRunning: "Te spotkania wypadają w czasie przerw tej sesji:",
+    noConflictsPlanned: "Jeśli zaczniesz teraz, żadne spotkanie nie wypadnie w czasie przerwy.",
+    noConflictsRunning: "Żadne spotkanie nie wypada w czasie przerw tej sesji.",
+    breakInfo: (n: number, range: string) => `${n}. przerwa: ${range}`,
+    choice: {
+      extend: "Przedłuż skupienie (muzyka wyciszona)",
+      pauseAtBreak: "Wstrzymaj przy przerwie",
+      ignore: "Ignoruj",
+      remindLater: "Przypomnij później",
+    } satisfies Record<MeetingChoice, string>,
+    choiceExtend: (end: string) =>
+      `Skupienie potrwa do końca spotkania (${end}), z wyciszoną muzyką. Przerwa zacznie się po spotkaniu.`,
+    choicePauseAtBreak: "Gdy przyjdzie pora przerwy, minutnik się zatrzyma i poczeka, aż naciśniesz „Wznów”.",
+    choiceIgnore: "Sesja biegnie bez zmian.",
+    choiceRemindLater: (time: string | null) =>
+      time ? `Przypomnę o ${time} — w małym okienku FocusMode.` : "Przypomnę bliżej spotkania.",
+    choiceNone: "Wybierz, co zrobić.",
+    /** A meeting longer than 4 h (`MeetingConflict.tooLong`): "extend" and "pause at break" are disabled. */
+    tooLong: "Spotkanie dłuższe niż 4 h — nie przedłużam skupienia",
+    choiceGroup: (subject: string) => `Co zrobić ze spotkaniem ${subject}`,
+    upcomingTitle: "Najbliższe spotkania",
+    upcomingEmpty: (hours: number) => `Brak spotkań w ciągu ${hours} ${plural(hours, "godziny", "godzin", "godzin")}.`,
+    now: "teraz",
+    online: "online",
+    onlineAria: "spotkanie online",
+    tomorrow: "jutro",
+    untitled: "(bez tytułu)",
+    connectHint: "Połącz kalendarz, a FocusMode przed sesją ostrzeże Cię o spotkaniach w czasie przerw.",
+    connectLink: "Ustawienia kalendarzy",
+    sourceErrors: (names: string) => `Nie udało się odczytać: ${names}.`,
+    sourceErrorsLink: "Szczegóły w Ustawieniach",
+    loading: "Wczytuję kalendarz…",
+
+    // --- Banner during a held focus / break ---
+    holdExtend: (time: string, subject: string) => `Skupienie przedłużone do ${time} — spotkanie: ${subject}`,
+    holdExtendHint: "Muzyka jest wyciszona do końca spotkania, potem zacznie się przerwa.",
+    holdPause: (subject: string) => `Przerwa wstrzymana — spotkanie: ${subject}`,
+    holdPauseHint: (time: string) =>
+      `Minutnik przerwy czeka. Naciśnij „Wznów”, gdy spotkanie się skończy (planowo o ${time}).`,
+  },
+
   nudge: {
     title: "Wracaj do pracy",
     body: (domain: string) => `${domain} poczeka do przerwy.`,
@@ -582,6 +756,19 @@ export const strings = {
       "chime.decode": "Tego pliku nie da się odtworzyć jako dźwięku — wybierz inny.",
       "music.library": "Nie udało się wczytać wbudowanej muzyki.",
       "popup.window": "Nie udało się pokazać okienka FocusMode.",
+      // Codes of src-tauri/src/calendar.rs (+ calendar/model.rs, calendar/fetch.rs).
+      "calendar.sync": "Nie udało się odczytać kalendarza — szczegóły w Ustawieniach → Kalendarze.",
+      "calendar.unavailable": "Kalendarze nie odpowiadają — uruchom aplikację ponownie.",
+      "calendar.unknownMeeting": "Tego spotkania nie ma już w kalendarzu.",
+      "calendar.remindLater":
+        "Na przypomnienie jest już za późno — spotkanie zaczyna się za 10 minut lub szybciej. Wybierz inną opcję.",
+      "calendar.meetingTooLong":
+        "Spotkanie dłuższe niż 4 h nie przedłuża skupienia ani nie wstrzymuje przerwy. Wybierz inną opcję.",
+      "calendar.googleNotConfigured": "Najpierw wpisz identyfikator klienta Google.",
+      "calendar.googleAuth": "Nie udało się rozpocząć logowania do Google.",
+      "calendar.disconnect": "Nie udało się usunąć zapisanych danych kalendarza.",
+      "calendar.icsUrl": "Któryś z linków nie jest poprawnym linkiem do kalendarza (https:// albo webcal://).",
+      "calendar.icsSave": "Nie udało się bezpiecznie zapisać linków do kalendarza.",
       autostart: "Nie udało się zmienić uruchamiania przy logowaniu.",
       "session.unavailable": "Sesja nie odpowiada — uruchom aplikację ponownie.",
       "ipc.unavailable": "Ta funkcja działa tylko w aplikacji FocusMode.",
@@ -604,6 +791,9 @@ export const strings = {
       popup: "Problem z okienkiem FocusMode.",
       launchers: "Problem z zamykaniem launcherów gier.",
       window: "Problem z oknem aplikacji.",
+      calendar: "Problem z kalendarzem — sesja działa dalej.",
+      google: "Problem z kalendarzem Google.",
+      ics: "Problem z kalendarzem z linku ICS.",
     } as Record<string, string>,
   },
 
@@ -629,6 +819,9 @@ export const strings = {
     "customChimes.breakFile": "dźwięk początku przerwy",
     "customChimes.focusFile": "dźwięk początku skupienia",
     breakReminders: "przypomnienia w przerwach",
+    "calendar.horizonHours": "zakres sprawdzania kalendarza",
+    "calendar.googleClientId": "identyfikator klienta Google",
+    "calendar.googleClientSecret": "tajny klucz klienta Google",
   } as Record<string, string>,
 
   dialog: {

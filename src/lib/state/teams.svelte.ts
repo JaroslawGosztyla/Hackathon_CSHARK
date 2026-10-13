@@ -10,11 +10,8 @@ class TeamsStore {
   private localPrompt = $state<DeviceCodePrompt | null>(null);
   connecting = $state(false);
 
-  prompt = $derived.by((): DeviceCodePrompt | null => {
-    const s = this.status;
-    if (s?.connected) return null;
-    return s?.pending ?? this.localPrompt;
-  });
+  /** The device code of a sign-in in progress, also while an older sign-in is still connected ("Połącz ponownie"). */
+  prompt = $derived.by((): DeviceCodePrompt | null => this.status?.pending ?? this.localPrompt);
 
   apply(status: TeamsStatus): void {
     this.status = status;

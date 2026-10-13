@@ -5,6 +5,13 @@
   import { toasts } from "$lib/state/toasts.svelte";
   import { strings } from "$lib/strings";
 
+  interface Props {
+    /** Label of the connect button (Settings → Kalendarze reuses this connection for the Outlook calendar). */
+    connectLabel?: string;
+  }
+
+  let { connectLabel = strings.settings.teamsConnect }: Props = $props();
+
   const shieldsCfg = $derived(config.value?.shields ?? null);
   const status = $derived(teams.status);
   const prompt = $derived(teams.prompt);
@@ -102,7 +109,7 @@
           disabled={!configured || teams.connecting || prompt !== null}
           onclick={() => teams.connect()}
         >
-          {strings.settings.teamsConnect}
+          {connectLabel}
         </button>
       {/if}
     </div>

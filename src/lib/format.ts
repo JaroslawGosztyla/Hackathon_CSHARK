@@ -38,6 +38,32 @@ export function formatSpan(startMs: number, endMs: number): string {
   return `${formatDate(startMs)}, ${formatTimeOfDay(startMs)}–${end}`;
 }
 
+/** Whole local calendar days from the day of `nowMs` to the day of `ms` (0 = same day, 1 = tomorrow). */
+function dayOffset(ms: number, nowMs: number): number {
+  const a = new Date(ms);
+  const b = new Date(nowMs);
+  const dayA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const dayB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((dayA - dayB) / 86_400_000);
+}
+
+/** Meeting / break time: `11:00–11:30`; another day than today gets a prefix (`jutro 09:00–09:30`, `14 paź 09:00–09:30`). */
+export function formatTimeRange(startMs: number, endMs: number, nowMs: number = Date.now()): string {
+  const range = `${formatTimeOfDay(startMs)}–${formatTimeOfDay(endMs)}`;
+  const offset = dayOffset(startMs, nowMs);
+  if (offset === 0) return range;
+  if (offset === 1) return `${strings.calendar.tomorrow} ${range}`;
+  return `${formatShortDate(startMs)} ${range}`;
+}
+
+/** A time of day that may be on another day than today: `11:30`, `jutro 09:00`. */
+export function formatTimeNear(ms: number, nowMs: number = Date.now()): string {
+  const offset = dayOffset(ms, nowMs);
+  if (offset === 0) return formatTimeOfDay(ms);
+  if (offset === 1) return `${strings.calendar.tomorrow} ${formatTimeOfDay(ms)}`;
+  return `${formatShortDate(ms)} ${formatTimeOfDay(ms)}`;
+}
+
 /** Fraction 0..1 → `54%`. Values that round to 0 but are not 0 show as `<1%`. */
 export function formatPercent(fraction: number): string {
   if (!Number.isFinite(fraction) || fraction <= 0) return pctFmt.format(0);

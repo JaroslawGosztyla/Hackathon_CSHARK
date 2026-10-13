@@ -19,7 +19,9 @@
 
   const musicCfg = $derived(config.value?.music ?? null);
   const pauseForBreak = $derived(session.phase === "break" && (musicCfg?.pauseDuringBreak ?? false));
-  const shouldPlay = $derived(session.phase !== "idle" && !session.paused && !pauseForBreak);
+  /** Focus extended through a meeting: silent until it ends (the engine pauses, then resumes in place). */
+  const mutedForMeeting = $derived(session.snapshot.musicMuted);
+  const shouldPlay = $derived(session.phase !== "idle" && !session.paused && !pauseForBreak && !mutedForMeeting);
 
   /** Local tracks of the current source: the folder's (once listed for that folder) or the bundled library. */
   const sourceTracks = $derived.by(() => {
@@ -84,6 +86,7 @@
         return strings.player.loading;
       case "paused":
       case "stopped":
+        if (mutedForMeeting && !session.paused) return strings.player.pausedForMeeting;
         if (pauseForBreak) return strings.player.pausedForBreak;
         return strings.player.pausedBySession;
       case "error":

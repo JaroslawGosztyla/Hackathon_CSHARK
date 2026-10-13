@@ -33,7 +33,7 @@
     radial-gradient(1100px 620px at 85% -15%, var(--glow-warm) 0%, transparent 62%),
     radial-gradient(900px 520px at -15% 115%, var(--glow-cool) 0%, transparent 60%),
     linear-gradient(180deg, var(--bg-1), var(--bg-0));
-  --header-bg: color-mix(in srgb, var(--bg-1) 86%, transparent);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
   --header-line: color-mix(in srgb, var(--text) 8%, transparent);
 
   --surface-hover: color-mix(in srgb, var(--text) 10%, transparent);
@@ -320,7 +320,7 @@
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23c4c6cc' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 
   --app-bg: linear-gradient(180deg, var(--bg-1), var(--bg-0));
-  --header-bg: color-mix(in srgb, var(--bg-1) 92%, transparent);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
 }
 
 /* ---------- Basic light: WCAG AA contrast for text (4.5:1) and control outlines (3:1) ---------- */
@@ -384,7 +384,7 @@
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23383d47' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 
   --app-bg: linear-gradient(180deg, var(--bg-1), var(--bg-0));
-  --header-bg: color-mix(in srgb, var(--bg-1) 92%, transparent);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
   --header-line: rgba(20, 24, 32, 0.1);
 }
 
