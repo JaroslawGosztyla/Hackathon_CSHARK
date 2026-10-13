@@ -25,4 +25,9 @@ issues: Array<BlocklistIssue>,
 /**
  * The file could not be read; the previous list (or the bundled default) stays in use.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * Regex sources the browser extension reported it could not enforce as network rules (Chrome's RE2
+ * limits); they are still checked when a tab loads. Empty when no extension reported.
+ */
+extensionSkipped: Array<string>, };

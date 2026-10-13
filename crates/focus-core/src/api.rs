@@ -292,6 +292,8 @@ pub struct Config {
     pub calendar: CalendarConfig,
     /// Developer tools for "Co dalej?". All off by default; tokens are stored separately (encrypted).
     pub work: WorkConfig,
+    /// Show the axolotl mascot (main window, break card, popups). Default true.
+    pub show_mascot: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -754,6 +756,10 @@ pub struct BlocklistInfo {
     pub issues: Vec<BlocklistIssue>,
     /// The file could not be read; the previous list (or the bundled default) stays in use.
     pub error: Option<String>,
+    /// Regex sources the browser extension reported it could not enforce as network rules (Chrome's RE2
+    /// limits); they are still checked when a tab loads. Empty when no extension reported.
+    #[serde(default)]
+    pub extension_skipped: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

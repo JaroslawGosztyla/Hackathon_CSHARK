@@ -84,4 +84,8 @@ calendar: CalendarConfig,
 /**
  * Developer tools for "Co dalej?". All off by default; tokens are stored separately (encrypted).
  */
-work: WorkConfig, };
+work: WorkConfig, 
+/**
+ * Show the axolotl mascot (main window, break card, popups). Default true.
+ */
+showMascot: boolean, };
