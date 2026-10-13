@@ -2,7 +2,8 @@
 //!
 //! Every action goes straight to the session actor channel, so the tray works even when the
 //! WebView is hidden, frozen or crashed. The tooltip is refreshed on every phase change and at
-//! most every 5 s otherwise.
+//! most every 5 s otherwise. The labels are in the UI language (`texts::current`); after a
+//! language change the next update relabels every item.
 //!
 //! The actor never waits for the main thread: menu and tooltip changes are posted to the main
 //! thread fire-and-forget (there every menu call runs inline). The `TrayIcon` itself is never
@@ -11,7 +12,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use focus_core::api::{Phase, SessionSnapshot};
+use focus_core::api::{Language, Phase, SessionSnapshot};
 use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Wry};
@@ -36,8 +37,8 @@ pub struct Tray {
     view: Mutex<TrayView>,
 }
 
-/// Menu items that change with the session. `MenuItem` is `Arc`-based and safe to clone and drop
-/// on any thread (its native part is always touched on the main thread).
+/// Menu items that change with the session or the language. `MenuItem` is `Arc`-based and safe to
+/// clone and drop on any thread (its native part is always touched on the main thread).
 #[derive(Clone)]
 struct TrayItems {
     status: MenuItem<Wry>,
@@ -45,30 +46,38 @@ struct TrayItems {
     pause: MenuItem<Wry>,
     skip: MenuItem<Wry>,
     stop: MenuItem<Wry>,
+    show: MenuItem<Wry>,
+    quit: MenuItem<Wry>,
 }
 
 struct TrayView {
     phase: Option<Phase>,
     paused: bool,
     last_text: Option<Instant>,
+    /// Language of the labels on the menu now.
+    language: Language,
 }
 
 /// One batch of tray changes, applied on the main thread.
 struct TrayUpdate {
     /// `Some((running, pause_text))` when the phase or the paused flag changed.
     controls: Option<(bool, &'static str)>,
+    /// The labels of the fixed items, when the language changed.
+    labels: Option<&'static texts::Texts>,
     status: String,
     tooltip: String,
 }
 
 pub fn build(app: &AppHandle, actor: ActorHandle) -> tauri::Result<Tray> {
-    let status = MenuItem::with_id(app, ID_STATUS, "Gotowy do skupienia", false, None::<&str>)?;
-    let start = MenuItem::with_id(app, ID_START, texts::TRAY_START, true, None::<&str>)?;
-    let pause = MenuItem::with_id(app, ID_PAUSE, texts::TRAY_PAUSE, false, None::<&str>)?;
-    let skip = MenuItem::with_id(app, ID_SKIP, texts::TRAY_SKIP, false, None::<&str>)?;
-    let stop = MenuItem::with_id(app, ID_STOP, texts::TRAY_STOP, false, None::<&str>)?;
-    let show = MenuItem::with_id(app, ID_SHOW, texts::TRAY_SHOW, true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, ID_QUIT, texts::TRAY_QUIT, true, None::<&str>)?;
+    let language = texts::language();
+    let t = texts::for_language(language);
+    let status = MenuItem::with_id(app, ID_STATUS, t.tray_status_idle, false, None::<&str>)?;
+    let start = MenuItem::with_id(app, ID_START, t.tray_start, true, None::<&str>)?;
+    let pause = MenuItem::with_id(app, ID_PAUSE, t.tray_pause, false, None::<&str>)?;
+    let skip = MenuItem::with_id(app, ID_SKIP, t.tray_skip, false, None::<&str>)?;
+    let stop = MenuItem::with_id(app, ID_STOP, t.tray_stop, false, None::<&str>)?;
+    let show = MenuItem::with_id(app, ID_SHOW, t.tray_show, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, ID_QUIT, t.tray_quit, true, None::<&str>)?;
     let separator_top = PredefinedMenuItem::separator(app)?;
     let separator_bottom = PredefinedMenuItem::separator(app)?;
 
@@ -115,11 +124,14 @@ pub fn build(app: &AppHandle, actor: ActorHandle) -> tauri::Result<Tray> {
             pause,
             skip,
             stop,
+            show,
+            quit,
         },
         view: Mutex::new(TrayView {
             phase: None,
             paused: false,
             last_text: None,
+            language,
         }),
     })
 }
@@ -147,12 +159,16 @@ fn on_menu(app: &AppHandle, actor: &ActorHandle, id: &str) {
 }
 
 impl Tray {
-    /// Called by the actor after every published snapshot. Never blocks: the changes are posted
-    /// to the main thread.
+    /// Called by the actor after every published snapshot and after a config change (a new UI
+    /// language relabels the whole menu at once). Never blocks: the changes are posted to the
+    /// main thread.
     pub fn update(&self, snapshot: &SessionSnapshot) {
         let update = {
             let mut view = lock(&self.view);
-            let changed = view.phase != Some(snapshot.phase) || view.paused != snapshot.paused;
+            let language = texts::language();
+            let relabel = view.language != language;
+            let changed =
+                relabel || view.phase != Some(snapshot.phase) || view.paused != snapshot.paused;
             let text_due = view.last_text.is_none_or(|at| at.elapsed() >= TEXT_REFRESH);
             if !changed && !text_due {
                 return;
@@ -160,15 +176,18 @@ impl Tray {
             view.phase = Some(snapshot.phase);
             view.paused = snapshot.paused;
             view.last_text = Some(Instant::now());
+            view.language = language;
+            let t = texts::for_language(language);
             let pause_text = if snapshot.paused {
-                texts::TRAY_RESUME
+                t.tray_resume
             } else {
-                texts::TRAY_PAUSE
+                t.tray_pause
             };
             TrayUpdate {
                 controls: changed.then_some((snapshot.phase != Phase::Idle, pause_text)),
-                status: texts::tray_status(snapshot),
-                tooltip: texts::tray_tooltip(snapshot),
+                labels: relabel.then_some(t),
+                status: t.tray_status(snapshot),
+                tooltip: t.tray_tooltip(snapshot),
             }
         };
         let items = self.items.clone();
@@ -188,6 +207,13 @@ impl Tray {
 impl TrayItems {
     /// Runs on the main thread, where each menu call is executed inline.
     fn apply(&self, update: &TrayUpdate) {
+        if let Some(t) = update.labels {
+            log_err(self.start.set_text(t.tray_start));
+            log_err(self.skip.set_text(t.tray_skip));
+            log_err(self.stop.set_text(t.tray_stop));
+            log_err(self.show.set_text(t.tray_show));
+            log_err(self.quit.set_text(t.tray_quit));
+        }
         if let Some((running, pause_text)) = update.controls {
             log_err(self.start.set_enabled(!running));
             log_err(self.pause.set_enabled(running));

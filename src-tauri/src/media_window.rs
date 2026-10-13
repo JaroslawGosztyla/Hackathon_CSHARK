@@ -424,7 +424,7 @@ impl MediaWindow {
         needs_consent: bool,
     ) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
         let mut builder = WebviewWindowBuilder::new(app, MEDIA_WINDOW, WebviewUrl::External(url))
-            .title(texts::MEDIA_WINDOW_TITLE)
+            .title(texts::current().media_window_title)
             .inner_size(WIDTH, HEIGHT)
             .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
             .resizable(true)

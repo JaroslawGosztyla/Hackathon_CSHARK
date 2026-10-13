@@ -30,6 +30,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::bridge::SharedBridge;
 use crate::persistence::{Persistence, write_atomic};
+use crate::texts::{self, Texts};
 use crate::{emit_error, emit_startup_error, lock};
 
 /// The parsed list in use, shared with the tracker (window-title fallback).
@@ -99,7 +100,7 @@ impl BlocklistService {
             Err(err) => {
                 emit_startup_error(app, AppError::new(READ_ERROR_CODE, err.english()));
                 let (list, issues) = Blocklist::parse(DEFAULT_BLACKLIST);
-                (list, issues, Some(err.polish()))
+                (list, issues, Some(err.message(texts::current())))
             }
         };
         let info = BlocklistInfo {
@@ -274,7 +275,7 @@ fn next_info(current: &BlocklistInfo, loaded: &Loaded) -> Option<BlocklistInfo> 
         }
         // The list in use and its issues stay; only the error is new.
         Err(err) => BlocklistInfo {
-            error: Some(err.polish()),
+            error: Some(err.message(texts::current())),
             ..current.clone()
         },
     };
@@ -304,22 +305,16 @@ enum LoadError {
 }
 
 impl LoadError {
-    /// Polish text for `BlocklistInfo.error` (the UI adds that the previous list stays in use).
-    fn polish(&self) -> String {
+    /// Text for `BlocklistInfo.error` in the UI language (the UI adds that the previous list stays in use).
+    fn message(&self, t: &Texts) -> String {
         match self {
-            Self::Create(err) => format!("Nie można utworzyć pliku z domyślną listą: {err:#}"),
-            Self::Io(err) if err.kind() == ErrorKind::NotFound => {
-                "Pliku nie ma (usunięty albo przeniesiony). Otwórz go z Ustawień, a powstanie od nowa z domyślną listą."
-                    .to_owned()
-            }
+            Self::Create(err) => (t.blocklist_create)(&format!("{err:#}")),
+            Self::Io(err) if err.kind() == ErrorKind::NotFound => t.blocklist_missing.to_owned(),
             Self::Io(err) if err.kind() == ErrorKind::PermissionDenied => {
-                "Brak dostępu do pliku.".to_owned()
+                t.blocklist_denied.to_owned()
             }
-            Self::Io(err) => format!("Błąd odczytu pliku: {err}"),
-            Self::TooLarge => format!(
-                "Plik jest za duży (limit {} MB).",
-                MAX_FILE_BYTES / (1024 * 1024)
-            ),
+            Self::Io(err) => (t.blocklist_io)(&err.to_string()),
+            Self::TooLarge => (t.blocklist_too_large)(MAX_FILE_BYTES / (1024 * 1024)),
         }
     }
 
@@ -413,6 +408,15 @@ fn log_loaded(info: &BlocklistInfo) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use focus_core::api::Language;
+
+    fn pl() -> &'static Texts {
+        texts::for_language(Language::Pl)
+    }
+
+    fn en() -> &'static Texts {
+        texts::for_language(Language::En)
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
@@ -463,7 +467,7 @@ mod tests {
         let missing = read_text(&path).expect_err("missing");
         assert!(matches!(&missing, LoadError::Io(err) if err.kind() == ErrorKind::NotFound));
         assert!(!missing.is_transient());
-        assert!(missing.polish().contains("Pliku nie ma"));
+        assert!(missing.message(pl()).contains("Pliku nie ma"));
 
         let size = usize::try_from(MAX_FILE_BYTES).expect("fits") + 1;
         std::fs::write(&path, vec![b'#'; size]).expect("write");
@@ -578,19 +582,21 @@ mod tests {
     fn error_texts() {
         let denied = LoadError::Io(std::io::Error::from(ErrorKind::PermissionDenied));
         assert!(denied.is_transient());
-        assert_eq!(denied.polish(), "Brak dostępu do pliku.");
+        assert_eq!(denied.message(pl()), "Brak dostępu do pliku.");
+        assert_eq!(denied.message(en()), "No access to the file.");
         assert!(
             denied
                 .english()
                 .starts_with("cannot read websiteblacklist.txt")
         );
         assert_eq!(
-            LoadError::TooLarge.polish(),
+            LoadError::TooLarge.message(pl()),
             "Plik jest za duży (limit 1 MB)."
         );
         assert!(!LoadError::TooLarge.is_transient());
         let create = LoadError::Create(anyhow::anyhow!("disk full"));
-        assert!(create.polish().contains("disk full"));
+        assert!(create.message(pl()).contains("disk full"));
+        assert!(create.message(en()).contains("disk full"));
         assert!(!create.is_transient());
     }
 }

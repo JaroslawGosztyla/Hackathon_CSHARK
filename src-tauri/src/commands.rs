@@ -104,6 +104,10 @@ async fn store_config(
     }
 
     write_config(&state.config, normalized.clone());
+    if normalized.language != previous.language {
+        // Before `ConfigChanged`, so the actor's tray refresh already uses the new labels.
+        crate::apply_language(app, normalized.language);
+    }
     state.shields.config_changed();
     if let Err(err) = state.actor.send(ActorCmd::ConfigChanged) {
         log::warn!("cannot refresh the idle profile: {}", err.message);

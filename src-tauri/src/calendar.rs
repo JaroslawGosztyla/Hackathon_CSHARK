@@ -1064,9 +1064,10 @@ mod tests {
         assert_eq!(popup.kind, PopupKind::MeetingReminder);
         assert_eq!((popup.cycle, popup.phase_secs), (2, 900));
         assert_eq!(popup.meeting, Some(conflict));
-        assert!(popup.fallback.body.contains("„Przegląd”"));
-        assert!(popup.fallback.body.contains("za 30 min"));
-        assert!(popup.fallback.body.contains("przerwie 2"));
+        // In the UI language in use (English in tests): subject, how soon and which break.
+        assert!(popup.fallback.body.contains("Przegląd"));
+        assert!(popup.fallback.body.contains("30 min"));
+        assert!(popup.fallback.body.contains(" 2."));
     }
 
     #[test]

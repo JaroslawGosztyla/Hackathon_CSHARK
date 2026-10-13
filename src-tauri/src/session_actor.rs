@@ -231,6 +231,12 @@ impl Actor {
                 let profile = self.profile();
                 self.session.set_idle_profile(profile);
                 self.publish(false);
+                // A new UI language relabels the tray even when the snapshot did not change.
+                if !self.shutting_down
+                    && let (Some(tray), Some(snapshot)) = (&self.ctx.tray, &self.last_published)
+                {
+                    tray.update(snapshot);
+                }
             }
             ActorCmd::UseDemoProfile => self.use_demo_profile(),
             ActorCmd::GetSnapshot(reply) => {

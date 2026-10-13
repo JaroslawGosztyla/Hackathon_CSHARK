@@ -575,7 +575,7 @@ impl Worker {
     ) -> tauri::Result<WebviewWindow> {
         let mut builder =
             WebviewWindowBuilder::new(&self.app, POPUP_WINDOW, WebviewUrl::App(ROUTE.into()))
-                .title(texts::POPUP_WINDOW_TITLE)
+                .title(texts::current().popup_window_title)
                 .inner_size(WIDTH, height)
                 .resizable(false)
                 .maximizable(false)

@@ -368,7 +368,7 @@ mod tests {
             popup
                 .fallback
                 .body
-                .starts_with("Przerwa wstrzymana — trwa spotkanie.")
+                .starts_with(texts::current().held_meeting_untitled)
         );
     }
 

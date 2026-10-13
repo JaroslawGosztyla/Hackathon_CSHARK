@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use anyhow::Context;
-use focus_core::api::{AppError, Config, SessionSummary, events};
+use focus_core::api::{AppError, Config, Language, SessionSummary, events};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
 /// Current, validated config shared by the actor and the workers.
@@ -212,6 +212,9 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
     if let Some(err) = config_error {
         emit_startup_error(&handle, err);
     }
+    // Before the tray and any window or toast: they are all built in the UI language.
+    texts::apply_config_language(config.language);
+    log::info!("UI language: {}", texts::language().code());
     music::allow_configured_folder(&handle, config.music.folder.as_deref());
     // Not for a `--restore-shields` launch, which only repairs what a crash left behind.
     if config.launch_on_login && !launch.restore_only {
@@ -640,6 +643,26 @@ pub(crate) fn emit_startup_error(app: &AppHandle, error: AppError) {
 /// Locks a mutex, recovering the data if another thread panicked while holding it.
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Applies a new `Config.language` to the shell: toasts built from now on, the tray (relabelled with the
+/// next snapshot, see `tray::Tray::update`) and the titles of the open YouTube and popup windows.
+pub(crate) fn apply_language(app: &AppHandle, choice: Language) {
+    if !texts::apply_config_language(choice) {
+        return;
+    }
+    log::info!("UI language: {}", texts::language().code());
+    let t = texts::current();
+    for (label, title) in [
+        (media_window::MEDIA_WINDOW, t.media_window_title),
+        (popup::POPUP_WINDOW, t.popup_window_title),
+    ] {
+        if let Some(window) = app.get_webview_window(label)
+            && let Err(err) = window.set_title(title)
+        {
+            log::debug!("cannot retitle window {label}: {err}");
+        }
+    }
 }
 
 pub(crate) fn read_config(config: &SharedConfig) -> Config {

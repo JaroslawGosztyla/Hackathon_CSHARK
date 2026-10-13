@@ -408,7 +408,7 @@ impl Worker {
 
     /// The app's popup when `phase_popups` is on, otherwise a toast (shown before notifications are muted).
     fn report_closed_launchers(&mut self, closed: &[GameLauncher], popups: bool) {
-        let toast = texts::launchers_closed_toast(&launcher_names(closed));
+        let toast = texts::launchers_closed_toast(closed);
         if popups {
             self.ctx.popup.show(PopupRequest {
                 launchers: closed.to_vec(),
