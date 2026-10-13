@@ -11,8 +11,9 @@ Rust + Tauri 2 + Svelte 5 · Windows 10/11 (pełne wsparcie), macOS / Linux (bes
 Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu),
 [ADR-014](docs/DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki),
 [ADR-015](docs/DECISIONS.md#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia),
-[ADR-016](docs/DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach)
-i [ADR-017](docs/DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy).
+[ADR-016](docs/DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach),
+[ADR-017](docs/DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy)
+i [ADR-018](docs/DECISIONS.md#adr-018-maskotka-i-poprawki).
 
 ## Co potrafi
 
@@ -28,6 +29,8 @@ i [ADR-017](docs/DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy).
   z przyciskami „Pokaż okno” i „Pomiń fazę”. Nie zabiera fokusu i znika samo po kilku sekundach. Pojawia się też, gdy sesja zatrzymała się
   po uśpieniu komputera, gdy FocusMode zamknął launchery gier, gdy przerwa czeka na koniec spotkania, jako przypomnienie o spotkaniu w czasie przerwy
   i w przerwie (albo po Stop) z liczbą nowych pozycji „Co dalej?”. To okno aplikacji, a nie powiadomienie, więc „Nie przeszkadzać” go nie wycisza.
+  Gdy grasz albo prezentujesz na pełnym ekranie, okienko **czeka**, aż skończysz, i dopiero wtedy się pokazuje (po 10 minutach czekania przepada;
+  stan sesji zawsze widać w oknie FocusMode).
 - **Spotkania z kalendarza** (opcjonalnie; [jak połączyć](#kalendarze-spotkania-w-czasie-przerw)): Microsoft 365 / Outlook, Google Calendar
   i każdy kalendarz z linkiem ICS (firmowy Exchange, iCloud, Proton, Zoho, Zimbra, Nextcloud…), także spotkania cykliczne. Gdy spotkanie wypada
   w czasie przerwy, strona Skupienie pokazuje to **przed Start** i pyta, czy przedłużyć skupienie na czas spotkania (z wyciszoną muzyką),
@@ -78,6 +81,10 @@ i [ADR-017](docs/DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy).
 - **Motywy**: Midnight (domyślny), Vaporwave, fazy księżyca, przytulna jesień, prosty ciemny, prosty jasny i 8-bit. Przełączanie zakładek
   Skupienie / Podsumowanie / Ustawienia jest animowane (podświetlenie przesuwa się, a tło lekko przesuwa się w bok); przy włączonym w systemie
   ograniczeniu animacji ruch jest wyłączony.
+- **Maskotka — aksolotl w słuchawkach**: siedzi obok minutnika i mruga. Reaguje na to, co się dzieje: puszcza oczko na start, uśmiecha się na przerwę,
+  cieszy się po ukończonym cyklu, smuci przy wcześniejszym Stop i złości, gdy otworzysz rozpraszającą stronę. Porady i przypomnienia „mówi” w dymku,
+  ruszając ustami według samogłosek tekstu, a w okienkach FocusMode wygląda zza krawędzi. W motywie 8-bit jest pikselowa. Przy ograniczeniu animacji
+  w systemie się nie rusza. Wyłączysz ją w **Ustawienia → Wygląd → „Pokaż maskotkę (aksolotl)”**.
 - **Wykres produktywności**: w trakcie skupienia FocusMode co sekundę sprawdza, która aplikacja jest na pierwszym planie.
   Po Stop pokazuje czas według procesu (np. `Code.exe`, `chrome.exe`), osobno bezczynność, a historię sesji zapisuje lokalnie.
   Elementy samego Windows (menu Start, wyszukiwanie, pasek zadań, pulpit, `ShellExperienceHost` itp.) nie są liczone.
@@ -87,7 +94,8 @@ i [ADR-017](docs/DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy).
 - **Zasobnik**: przy pierwszym kliknięciu X FocusMode pyta, czy schować się do zasobnika (obok zegara). „Tak” chowa okno (muzyka i sesja trwają dalej)
   i od razu włącza okienka FocusMode; „Nie” sprawia, że X zamyka aplikację. Wybór zapamiętuje i możesz go zmienić w Ustawieniach.
   Z menu ikony w zasobniku zawsze sterujesz sesją i zamkniesz aplikację („Zakończ”). Jedna instancja, opcjonalny start przy logowaniu
-  (wtedy FocusMode startuje zminimalizowany do zasobnika).
+  (wtedy FocusMode startuje zminimalizowany do zasobnika; przy każdym starcie odświeża ten wpis, więc działa też po przeniesieniu aplikacji,
+  a wpisu wyłączonego w Menedżerze zadań nie włącza z powrotem).
 - **Języki**: angielski, polski, niemiecki, francuski, włoski, ukraiński, rosyjski, hiszpański, chiński i japoński; domyślnie język Windows
   (gdy go nie ma na liście, angielski). Tłumaczenia są w przygotowaniu, na razie teksty są po polsku.
 
@@ -114,6 +122,8 @@ Działa w Chrome, Edge, Brave, Operze i Vivaldi (Chromium). Firefox nie jest na 
 
 Rozszerzenie co 30 s (i przy zmianie karty) pyta aplikację o stan pod `http://127.0.0.1:47615/v1/state`. W trakcie skupienia przekierowuje
 strony z listy (niżej) na lokalną stronę „Wracaj do pracy”, a w przerwie wszystko otwiera się normalnie. Gdy aplikacja nie działa, rozszerzenie niczego nie blokuje.
+Wzorce z listy, których przeglądarka nie przyjmie jako reguł blokady, rozszerzenie zgłasza aplikacji (`POST http://127.0.0.1:47615/v1/report`, same wzorce z twojej listy),
+a Ustawienia pokazują je przy liście stron.
 Szczegóły: [browser-extension/README.md](browser-extension/README.md).
 
 ## Lista blokowanych stron (websiteblacklist.txt)
@@ -150,6 +160,11 @@ Przykłady:
 Żeby odblokować stronę, usuń linię albo dopisz na jej początku `#`. Domyślna lista zawiera też zakomentowane pozycje
 (cały YouTube, portale informacyjne, komunikatory), które włączysz, usuwając `#`.
 Bez rozszerzenia FocusMode porównuje z listą tylko tytuł okna przeglądarki, więc wzorce pisane pod adres (np. z `^https?://`) wtedy nie zadziałają.
+
+Przeglądarka sprawdza wyrażenia własnym silnikiem z limitami (np. zbyt złożony wzorzec albo zbyt wiele wzorców), więc linia poprawna dla FocusMode
+może nie dostać w niej reguły blokady. W trakcie skupienia rozszerzenie zgłasza takie linie aplikacji, a Ustawienia pokazują je jako ostrzeżenie:
+„Przeglądarka nie obsługuje tych wyrażeń jako reguł — sprawdzam je przy wczytaniu karty”. Rozszerzenie nadal sprawdza je samo przy ładowaniu karty,
+ale strona może zdążyć się na chwilę otworzyć; najlepiej uprość takie wyrażenie albo zastąp je domeną.
 
 ## Teams „Nie przeszkadzać” (opcjonalnie)
 
@@ -341,6 +356,10 @@ $env:FOCUSMODE_DEMO=1; npm run tauri dev
 
 W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
 
+Gdy FocusMode już działa (np. w zasobniku), `focusmode.exe --demo` nie uruchamia drugiej kopii, tylko przełącza działającą aplikację w tryb demo
+i pokazuje jej okno, o ile nie trwa sesja. W trakcie sesji (także w pauzie) pojawi się powiadomienie „Zatrzymaj sesję, aby włączyć tryb prezentacji”.
+Tryb demo zostaje do zamknięcia aplikacji; zwykłe czasy wracają po ponownym uruchomieniu bez `--demo`. `FOCUSMODE_DEMO=1` działa tylko przy pierwszym uruchomieniu.
+
 ## Muzyka w zestawie i licencje
 
 Domyślna muzyka to 12 utworów z kolekcji **Open Lo-Fi** autorstwa btahir (<https://github.com/btahir/open-lofi>, wydanie v1.0.0),
@@ -350,6 +369,10 @@ Pełna lista utworów, pochodzenie i pozostałe zasoby (maskotka, dźwięki): [C
 
 Dzwonki są syntezowane w kodzie, bez plików z zewnątrz. Stream Lofi Girl to tylko link do ich publicznej transmisji, odtwarzany oficjalnym playerem YouTube;
 FocusMode nie zawiera grafik ani marki Lofi Girl.
+
+Maskotkę (aksolotl w słuchawkach) wygenerował przez AI Bartłomiej Szolc na potrzeby projektu; to własność projektu FocusMode. W aplikacji są jego oryginalne klatki:
+arkusze z `art/mascot/` powiększone ×4 narzędziem Real-ESRGAN i wycięte (`static/mascot/`), bez wektoryzacji, przerysowywania i przekolorowania.
+Jak powstały klatki: [art/mascot/README.md](art/mascot/README.md).
 
 ## Prywatność
 
@@ -362,8 +385,13 @@ FocusMode nie zawiera grafik ani marki Lofi Girl.
   do logów, do rozszerzenia ani do sieci, a w Ustawieniach możesz wyłączyć tytuły, wyłączyć zapisywanie historii albo usunąć całą historię (z potwierdzeniem).
   Wyłączenie tytułów nie usuwa tych, które już są w historii; do tego służy „Usuń historię”. Całe śledzenie wyłączysz w Ustawieniach.
 - **Rozszerzenie nie wysyła historii przeglądania** ani do aplikacji, ani nigdzie indziej. Samo pobiera z aplikacji stan i listę domen
-  oraz wzorców z `websiteblacklist.txt`, a adres karty porównuje lokalnie w przeglądarce. Nie ładuje zdalnego kodu. Jedynym adresem, z którym się łączy, jest `127.0.0.1:47615`.
-- **Lokalny most** nasłuchuje tylko na `127.0.0.1` (nie jest widoczny w sieci) i udostępnia wyłącznie odczyt stanu.
+  oraz wzorców z `websiteblacklist.txt`, a adres karty porównuje lokalnie w przeglądarce. Aplikacji odsyła tylko listę wzorców z twojej własnej listy,
+  których przeglądarka nie przyjęła jako reguł (bez adresów i tytułów stron). Nie ładuje zdalnego kodu. Jedynym adresem, z którym się łączy, jest `127.0.0.1:47615`.
+- **Lokalny most** nasłuchuje tylko na `127.0.0.1` (nie jest widoczny w sieci) i udostępnia odczyt stanu. Jedyne, co przyjmuje, to to zgłoszenie rozszerzenia
+  (`POST /v1/report`): tylko z rozszerzenia przeglądarki (origin rozszerzenia i własny nagłówek, więc zwykła strona internetowa nie może go wysłać), z limitem rozmiaru,
+  a aplikacja zostawia z niego tylko wzorce, które naprawdę są na twojej liście. Zgłoszenie jest trzymane tylko w pamięci.
+- **Maskotka i sprawdzanie pełnego ekranu** działają lokalnie: grafika maskotki jest w aplikacji (bez pobierania), a to, czy prezentujesz albo grasz
+  na pełnym ekranie, FocusMode sprawdza w Windows tylko wtedy, gdy ma pokazać okienko (i co 5 s, dopóki okienko czeka), i niczego z tego nie zapisuje.
 - **Ruch sieciowy** jest tylko taki, jaki sam wybierzesz: odtwarzacz łączy się z YouTube / adresem streamu / linkami jak zwykła przeglądarka,
   a opcjonalna integracja z Teams łączy się z Microsoft Graph. YouTube gra w osadzonym iframe, którym aplikacja steruje przez `postMessage`.
   Skrypty Google nie są ładowane do samej aplikacji, a okno ma ustawione CSP. Player YouTube w iframe może zapisać swoje ciasteczka w danych WebView.
@@ -419,6 +447,11 @@ FocusMode nie zawiera grafik ani marki Lofi Girl.
   Takie linki grają w ukrytym oknie YouTube. W tym trybie FocusMode nie przechodzi sam do następnego linku po końcu utworu.
   Link, którego nie da się odtworzyć wcale, jest pomijany z komunikatem.
 - Rozszerzenie trzeba raz załadować ręcznie. Zmiana fazy dociera do niego najpóźniej po 30 s (przy otwieraniu stron szybciej).
+  Lista wzorców, których przeglądarka nie przyjęła jako reguł, pojawia się w Ustawieniach dopiero w trakcie skupienia (gdy rozszerzenie ustawi reguły)
+  i znika po restarcie aplikacji do następnego zgłoszenia.
+- To, czy prezentujesz albo grasz na pełnym ekranie, ocenia Windows: okno bez ramki na cały monitor zwykle się liczy, ale nie zawsze, a aplikacja ze Sklepu Windows
+  na pierwszym planie też może wstrzymać okienka FocusMode. Okienko, które czekało, pokazuje się po zakończeniu prezentacji, a po 10 minutach przepada.
+- Maskotka ma tylko te miny i kształty ust, które są na arkuszach autora; ruch ust to przybliżenie z liter tekstu (bez dźwięku).
 - Przerwa to dzwonek, powiadomienie (albo okienko FocusMode) i propozycje ruchu w oknie. Nie ma pełnoekranowej blokady ekranu.
 - Ciepłe kolory ekranu zmieniają ustawienie Windows (Oświetlenie nocne) albo rampę gamma monitora, więc po awarii aplikacji zostają ciepłe
   do jej następnego uruchomienia albo najpóźniej do następnego logowania (Oświetlenie nocne możesz też od razu wyłączyć w szybkich ustawieniach Windows).
@@ -475,9 +508,12 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 |---|---|
 | `crates/focus-core` | czysta logika: profil czasów, maszyna stanów (ze spotkaniami, które przedłużają focus albo wstrzymują przerwę, i z celem sesji), config (z przypomnieniami, nazwami plików dzwonków, kalendarzami i narzędziami pracy), parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki (z pomijaniem powłoki Windows i tytułami okien), harmonogram i temperatura odcienia, planowanie przerw i kolizje ze spotkaniami (`calendar.rs`), kolejność „Co dalej?” (`work.rs`), launchery gier, języki; kontrakt IPC w `api.rs` |
 | `crates/focus-audio` | dzwonki (rodio) na dedykowanym wątku: syntezowane pakiety i własny plik |
-| `crates/focus-platform` | integracje Windows: aktywne okno (z klasą okna), wyciszenie powiadomień, keep-awake, Teams i kalendarz Microsoft (Graph), Google Calendar i linki ICS (`calendar/`), klienci GitHub, GitLab, Jira, Azure DevOps i Linear (`work/`), pliki szyfrowane DPAPI (`secrets.rs`), zamykanie procesów, język systemu, czas lokalny, Oświetlenie nocne, rampa gamma |
-| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray, okienka faz, ciepło ekranu (Oświetlenie nocne / gamma), synchronizacja kalendarzy i przypomnienia o spotkaniach (`src/calendar/`), synchronizacja narzędzi pracy i wstrzymywanie nowych pozycji w focusie (`src/work.rs`, `src/work/`); muzyka w zestawie w `resources/music/` |
-| `src/` | frontend SvelteKit (SPA): ekrany, odtwarzacz muzyki, „Co dalej?” i cel sesji (`lib/components/NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`), motywy (`lib/themes/`), porady na przerwę (`lib/tips.ts`), teksty UI |
+| `crates/focus-platform` | integracje Windows: aktywne okno (z klasą okna), wyciszenie powiadomień, keep-awake, Teams i kalendarz Microsoft (Graph), Google Calendar i linki ICS (`calendar/`), klienci GitHub, GitLab, Jira, Azure DevOps i Linear (`work/`), pliki szyfrowane DPAPI (`secrets.rs`), zamykanie procesów, język systemu, czas lokalny, Oświetlenie nocne, rampa gamma, prezentacja / pełny ekran (`notification_state.rs`) |
+| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia (z jedynym zapisem `POST /v1/report`), persystencja, tray, okienka faz (czekają w czasie prezentacji), ciepło ekranu (Oświetlenie nocne / gamma), synchronizacja kalendarzy i przypomnienia o spotkaniach (`src/calendar/`), synchronizacja narzędzi pracy i wstrzymywanie nowych pozycji w focusie (`src/work.rs`, `src/work/`); muzyka w zestawie w `resources/music/` |
+| `src/` | frontend SvelteKit (SPA): ekrany, odtwarzacz muzyki, „Co dalej?” i cel sesji (`lib/components/NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`), maskotka (`lib/mascot/`), motywy (`lib/themes/`), porady na przerwę (`lib/tips.ts`), teksty UI |
+| `static/mascot/` | klatki maskotki w aplikacji: atlasy WebP i manifesty (generowane, nie edytuj ręcznie) |
+| `art/mascot/` | arkusze źródłowe maskotki i opis, jak powstały klatki (nie trafia do aplikacji) |
+| `tools/mascot/` | powtarzalne cięcie arkuszy na klatki (Node + Edge headless; nie trafia do aplikacji) |
 | `browser-extension/` | rozszerzenie MV3 do blokady stron |
 | `spikes/` | wyrzucalne eksperymenty z M0 |
 
@@ -485,8 +521,9 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Plik | Zawartość |
 |---|---|
-| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013…017 opisują aktualny zakres** |
-| [CREDITS.md](CREDITS.md) | licencje i autorzy dołączonej muzyki, grafiki i dźwięków |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013…018 opisują aktualny zakres** |
+| [CREDITS.md](CREDITS.md) | licencje i autorzy dołączonej muzyki, grafiki (maskotka) i dźwięków |
+| [art/mascot/README.md](art/mascot/README.md) | jak z arkuszy autora powstały klatki maskotki (bez przerysowywania) |
 | [docs/TASKS.md](docs/TASKS.md) | taski (sekcja „Speedrun”), milestone'y i podział pracy A/B |
 | [docs/DESIGN.md](docs/DESIGN.md) | produkt, UX, ryzyka (sprzed pivotu, w części nieaktualne) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | stos, crate'y, wątki, narzędzia (sprzed pivotu, w części nieaktualne); kontrakt IPC w §6 aktualny |

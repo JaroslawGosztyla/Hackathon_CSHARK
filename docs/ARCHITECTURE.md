@@ -260,7 +260,7 @@ config spoza zakresów → błąd walidacji.
 
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
-> Stan na 2026-10-13 (z ADR-017, „Co dalej?”), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> Stan na 2026-10-13 (z ADR-018, maskotka i poprawki), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
 `#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu w ms od epoki Unix
@@ -333,6 +333,8 @@ Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/st
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
 wyrażeń regularnych (RE2) dopasowywanych do pełnego adresu URL bez rozróżniania wielkości liter. Poza blokadą obie listy są puste.
 `patterns` ma `#[serde(default)]`, więc stan bez tego pola też się wczytuje.
+Jedyny zapis do mostu (ADR-018): `POST http://127.0.0.1:47615/v1/report` z treścią `{ "skipped": string[] }`, w którym rozszerzenie zgłasza wzorce
+z `patterns`, których przeglądarka nie przyjęła jako reguł; aplikacja pokazuje je jako `BlocklistInfo.extensionSkipped`. Warunki i limity: §6.10.
 
 ### 6.2 Eventy
 
@@ -348,7 +350,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `focus://nudge` | `Nudge` | awaryjny nudge: tracker wykrył stronę z listy w tytule okna przeglądarki (bez rozszerzenia); `matched` to domena albo źródło regexu |
 | `app://error` | `AppError` | integracja zawiodła; sesja trwa (degradacja) |
 | `media://window` | `MediaWindowStatus` | okno YouTube się otwiera, zamyka, przechodzi na inny adres albo zmienia tytuł |
-| `blocklist://changed` | `BlocklistInfo` | `websiteblacklist.txt` wczytany ponownie (automatycznie albo przez `reload_blocklist`) z innym wynikiem |
+| `blocklist://changed` | `BlocklistInfo` | `websiteblacklist.txt` wczytany ponownie (automatycznie albo przez `reload_blocklist`) z innym wynikiem, albo zgłoszenie rozszerzenia (`POST /v1/report`) zmieniło `extensionSkipped` (ADR-018) |
 | `app://close-requested` | `null` | do okna głównego, gdy użytkownik kliknął X, a `closeToTray` jest jeszcze `null`: UI pyta i odpowiada `resolve_close` |
 | `popup://show` | `PopupInfo` | okienko faz ma pokazać komunikat (albo się schować: `kind: null`) |
 | `tint://changed` | `TintStatus` | zmienił się poziom ciepła, podgląd, użyty mechanizm (`mode`), ograniczenie siły (`capped`) albo błąd |
@@ -408,7 +410,7 @@ Odtwarzacz (osadzony i okno YouTube) milknie, gdy `musicMuted`, i wraca do zwyk�
 |---|---|---|
 | `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
 | `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
-| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014); także przypomnienie o spotkaniu `meetingReminder`, wstrzymana przerwa `breakHeld` (ADR-016) i paczka nowych pozycji „Co dalej?” `workDigest` (ADR-017) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu) i `popup://show`, a przy `meetingReminder` także `set_meeting_choice` |
+| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014); także przypomnienie o spotkaniu `meetingReminder`, wstrzymana przerwa `breakHeld` (ADR-016) i paczka nowych pozycji „Co dalej?” `workDigest` (ADR-017). Gdy użytkownik prezentuje albo gra na pełnym ekranie, okienko czeka (ADR-018, §6.10); przy `showMascot` z maskotką „zza krawędzi” | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu, `showMascot`) i `popup://show`, a przy `meetingReminder` także `set_meeting_choice` |
 
 Okien przerwy i ostrzeżenia nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
 Okien overlay odcienia (`tint-*`) też już nie ma: ciepło ekranu daje Oświetlenie nocne Windows albo gamma ramp (ADR-015), a `TintStatus` czyta tylko okno główne.
@@ -531,6 +533,12 @@ z pierwszą przerwą). „Przypomnij później” wybrane na stronie Skupienie d
             "azureDevops": false, "azureOrg": "", "linear": false, "holdDuringFocus": true } }
 ```
 
+`Config`, tylko pole dodane przez ADR-018 (wartość domyślna):
+
+```json
+{ "showMascot": true }
+```
+
 `WorkStatus` (GitHub, Jira i Linear włączone; w chwili `lastSyncMs` trwa przerwa, a jedna pozycja przyszła w trakcie focusa i czeka jako nowa):
 
 ```json
@@ -599,7 +607,14 @@ Argumenty komend okna YouTube: `open_media_window` → `{ "url": "https://www.yo
   "domains": ["kwejk.pl", "jbzd.com.pl", "reddit.com"],
   "patterns": ["linkedin\\.com/feed", "youtube\\.com/shorts"],
   "issues": [{ "line": 42, "text": "(reddit|wykop\\.pl", "code": "invalidRegex", "message": "unclosed group" }],
-  "error": null }
+  "error": null, "extensionSkipped": [] }
+```
+
+`extensionSkipped` jest pusta, dopóki rozszerzenie nie zgłosi wzorców, których przeglądarka nie przyjęła jako reguł; wtedy zawiera te źródła z `patterns`
+(w kolejności z pliku). Zgłoszenie rozszerzenia (`POST /v1/report`, ADR-018) z jednym takim wzorcem (tu: ponad limitem reguł regex przeglądarki):
+
+```json
+{ "skipped": ["youtube\\.com/shorts"] }
 ```
 
 `BridgeState` (Focus, blokada włączona):
@@ -615,9 +630,11 @@ Lista stron do blokowania nie jest częścią `Config`: **jedynym źródłem jes
 (`app_config_dir()`, na Windows `%APPDATA%\com.focusmode.app\websiteblacklist.txt`). Pole `shields.blocklist` usunięto z `ShieldsConfig`.
 Zostaje włącznik `shields.blockSites`. Stary `config.json` z polem `shields.blocklist` nadal się wczytuje, a to pole jest ignorowane.
 
-- `BlocklistInfo { revision, path, domains, patterns, issues, error }`: `path` to bezwzględna ścieżka pliku, `domains` to znormalizowane domeny
+- `BlocklistInfo { revision, path, domains, patterns, issues, error, extensionSkipped }`: `path` to bezwzględna ścieżka pliku, `domains` to znormalizowane domeny
   (zwykłe linie), a `patterns` to źródła regexów (linie w `/…/` albo ze znakami regexu). Obie listy zachowują kolejność z pliku, bez duplikatów.
   `issues` to pominięte linie, a `error` jest ustawiony, gdy pliku nie da się przeczytać; wtedy w użyciu zostaje poprzednia lista (albo domyślna).
+  `extensionSkipped` (ADR-018, `#[serde(default)]`) to wzorce z `patterns`, których przeglądarka nie przyjęła jako reguł, według ostatniego zgłoszenia
+  rozszerzenia (§6.10); bez zgłoszenia pusta.
 - `BlocklistIssue { line, text, code, message }`: numer linii (od 1), linia jak w pliku (przycięta, najwyżej 200 znaków),
   kod `BlocklistIssueCode` i szczegół po angielsku (ADR-014: core nie zwraca tekstów dla użytkownika). Kody: `invalidDomain`, `invalidRegex`
   (`message` = powód z parsera regexu, np. `unclosed group`), `regexTooComplex`, `matchesEverything`, `pastedUrl` (`message` = domena do podpowiedzi),
@@ -893,6 +910,76 @@ UI: `src/lib/state/work.svelte.ts` (listen → `get_work` → nowsza rewizja), `
 tylko przy wyłączonym `holdDuringFocus`), `SessionGoalLine.svelte` (cel pod minutnikiem, „×” czyści), `WorkSettings.svelte` (Ustawienia → Narzędzia pracy:
 włącznik, adres / e-mail / organizacja, token z instrukcją najwęższych uprawnień, stan, „Odśwież teraz”, `holdDuringFocus`); podsumowanie pyta „Zrobione?”,
 a historia pokazuje cel ze znacznikiem.
+
+### 6.10 Maskotka i poprawki (ADR-018)
+
+Nowe pole `Config` (stary `config.json` bez niego wczytuje się z `true`):
+
+| Pole | Typ | Domyślnie | Znaczenie |
+|---|---|---|---|
+| `showMascot` | `boolean` | `true` | maskotka (aksolotl) w oknie głównym, na karcie przerwy i w okienkach; Ustawienia → Wygląd. Bez walidacji w core |
+
+Nowe pole DTO:
+
+| Typ | Pole | Uwagi |
+|---|---|---|
+| `BlocklistInfo` | `extensionSkipped: string[]` | `#[serde(default)]`; wzorce z `patterns`, których przeglądarka nie przyjęła jako reguł `declarativeNetRequest`, według ostatniego zgłoszenia rozszerzenia; w kolejności z pliku, bez powtórzeń; tylko w pamięci (po restarcie pusta do następnego zgłoszenia) |
+
+Bez nowych komend i eventów: `extensionSkipped` przychodzi parą `get_blocklist` + `blocklist://changed` (nowa rewizja, gdy lista się zmieni).
+
+**Most: `POST /v1/report`** (`src-tauri/src/bridge.rs`; jedyny zapis do mostu, poza nim tylko `GET /v1/state`):
+
+| | |
+|---|---|
+| Treść | `{ "skipped": string[] }` (`Content-Type: application/json`; inne pola ignorowane): źródła wzorców z `BridgeState.patterns`, dokładnie w tej postaci |
+| Warunki | `Host` loopback (`127.0.0.1`, `localhost`, `[::1]`, z portem albo bez); `Origin` rozszerzenia (`chrome-extension://`, `moz-extension://`, `extension://`); nagłówek `X-FocusMode-Extension: 1`. Wszystkie trzy naraz |
+| Limity | najwyżej 500 pozycji (`REPORT_MAX_ENTRIES` = `MAX_PATTERNS`), pozycja najwyżej 500 znaków (`REPORT_MAX_ENTRY_CHARS` = `MAX_LINE_CHARS`, znaki, nie bajty); treść najwyżej ok. 1,5 MB (`REPORT_MAX_BYTES`: najdłuższa lista, jaką aplikacja może wysłać, nawet z każdym znakiem zapisanym jako `\u0001`; zadeklarowana większa długość jest odrzucana bez czytania) |
+| Odpowiedzi | `204` przyjęte (także bez zmiany); `403` zły `Host`, brak originu rozszerzenia albo nagłówka; `413` treść ponad `REPORT_MAX_BYTES`; `400` nie ten JSON albo ponad limity. Zawsze `Cache-Control: no-store`; nagłówki CORS tylko dla originu rozszerzenia |
+| CORS | preflight (`OPTIONS`) dla originu rozszerzenia: `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: X-FocusMode-Extension, Content-Type`, `Access-Control-Allow-Private-Network: true`; origin strony WWW nie dostaje nagłówków CORS, więc przeglądarka nie wyśle z niej zgłoszenia (własny nagłówek wymusza preflight) |
+| Skutek | `BlocklistService::set_extension_skipped` zostawia tylko źródła obecne w bieżącej liście (`kept_skipped`: dokładne porównanie, kolejność z pliku, bez powtórzeń) i przy zmianie emituje `blocklist://changed`. Przeładowanie pliku zostawia w `extensionSkipped` tylko wzorce, które w nim zostały; błąd odczytu pliku zostawia wszystko. Logi podają tylko liczby |
+
+Rozszerzenie (`browser-extension/background.js`, `BRIDGE_REPORT_URL` w `common.js`) wysyła listę `skippedPatterns` po ustawieniu reguł w Focus: po 2 s spokoju,
+jedno zgłoszenie naraz, raz na każdą nową listę w danym focusie (zapamiętaną w `chrome.storage.session`; poza focusem zapomina ją, więc następny focus zgłasza
+od nowa). Gdy aplikacja nie odpowie, ponawia przy następnym odświeżeniu stanu; każda odpowiedź HTTP (także `404` ze starszej aplikacji) kończy próby dla tej listy.
+
+**Okienka a prezentacja** (`focus-platform/src/notification_state.rs`, `src-tauri/src/popup.rs`):
+- `notification_state::user_is_presenting() -> bool`: `SHQueryUserNotificationState`. `true` dla `QUNS_BUSY` (2), `QUNS_RUNNING_D3D_FULL_SCREEN` (3),
+  `QUNS_PRESENTATION_MODE` (4) i `QUNS_APP` (7); `false` dla `QUNS_NOT_PRESENT` (1), `QUNS_ACCEPTS_NOTIFICATIONS` (5), `QUNS_QUIET_TIME` (6), wartości nieznanej
+  i błędu. Bez COM, z dowolnego wątku. Poza Windows zawsze `false`. Import `shell32` zadeklarowany ręcznie (`windows::core::link!`), bo `windows` nie ma
+  włączonej funkcji `Win32_UI_Shell` (`TODO(hackathon)`).
+- Wątek okienek: przy każdym okienku pyta `user_is_presenting()`. Gdy `true`, okienko trafia do `held` (jedno, najnowsze; kolejne spotyka je według tych samych
+  reguł co okienko na ekranie, `merge_held` / `arrival`: zastępuje, odkłada przypomnienie o spotkaniu albo paczkę „Co dalej?” do `parked`, albo paczka czeka za nim).
+  Co `PRESENTING_POLL` (5 s) wątek pyta ponownie; po końcu prezentacji pokazuje okienko (przypomnienie o zakończonym już spotkaniu pomija), potem kolejne z `parked`.
+  Po `PRESENTING_HOLD_MAX` (10 min) od przyjścia okienko przepada bez toastu zastępczego. Odpowiedź na spotkanie (`resolve_meeting`) i start focusa
+  (`withdraw_work_digest`) usuwają czekające okienko tak samo jak widoczne. Okienka już widocznego prezentacja nie chowa.
+
+**Drugie uruchomienie z `--demo`** (`src-tauri/src/lib.rs`, `session_actor.rs`): `on_second_instance` wysyła do aktora `ActorCmd::UseDemoProfile` i pokazuje okno główne.
+Aktor w Idle przełącza profil Idle na `TimingProfile::demo()` (od teraz do końca procesu; snapshot `demo: true`, następny Start w demo). W trakcie sesji (także
+w pauzie) profil zostaje, a powłoka pokazuje toast `texts::demo_needs_stop_toast` („Zatrzymaj sesję, aby włączyć tryb prezentacji”); gdy profil demo już działa, nic się nie zmienia (bez toastu). Zmienne środowiska
+(`FOCUSMODE_DEMO`) drugiego uruchomienia nie docierają do działającej instancji.
+
+**Autostart** (`src-tauri/src/lib.rs`, `refresh_autostart`): przy starcie z włączonym `launchOnLogin` (poza `--restore-shields`) powłoka pyta wtyczkę
+`is_enabled()`; tylko przy `true` robi `disable()` + `enable()`, więc wpis w `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` dostaje bieżącą ścieżkę
+i `--autostart`. Wpisu brakującego albo wyłączonego w Menedżerze zadań (`…\Explorer\StartupApproved\Run`) nie rusza: `enable()` ustawia tam „włączony”.
+Błędy tylko w logu. Zmiana `launchOnLogin` w Ustawieniach działa jak dotąd (`sync_autostart`).
+
+**Maskotka** (frontend, `src/lib/mascot/`; grafika: `static/mascot/`, źródła i opis obróbki: `art/mascot/`, narzędzie: `tools/mascot/`):
+
+| Plik | Rola |
+|---|---|
+| `assets.svelte.ts` | pobiera raz na okno manifest i atlas wariantu (`main`: `/mascot/axo-manifest.json` + `axo-atlas.webp`; `peek`: `/mascot/peek-manifest.json` + `peek-atlas.webp`); `FRAME_GEOMETRY` (rozmiar klatki i kotwica znane przed pobraniem, więc ramka ma od razu docelowy rozmiar) |
+| `frames.ts` | czyste funkcje: klatka spoczynku (`blink-1` / `idle`), mrugnięcie, reakcje (`start`, `break`, `cycle`, `stopEarly`, `nudge`, `meeting`, `digest`) jako kroki z czasami, ruch ust z tekstu (`lipSyncSteps`: `CHAR_MS` = 70 ms na znak, najwyżej `TALK_MAX_MS` = 6 s) |
+| `controller.svelte.ts` | `MascotController`: odgrywa kroki, losowe mrugnięcie co 3–7 s (`BLINK_DELAY_MS`), `prefers-reduced-motion`, sprzątanie timerów przy odmontowaniu |
+| `cues.svelte.ts` | zdarzenia sesji → reakcje maskotek w oknie głównym (zmiana fazy `PhaseChange`: Idle → Focus = start, Przerwa → Focus = ukończony cykl, → Przerwa = przerwa; podsumowanie z `focusedSecs` mniejszym niż długość focusa = wcześniejszy Stop); maskotka, która pojawi się zaraz po zdarzeniu (karta przerwy, Podsumowanie), też reaguje, jeśli zdarzenie jest świeże (do 4 s) |
+| `Axolotl.svelte` | jedna klatka jako tło elementu (`background-position` / `background-size` z manifestu); ramka ma rozmiar od pierwszego malowania; w motywie `pixel` klatka zmniejszana do małego canvasu (piksel grafiki = 2–4 px CSS; filtr przeglądarki uśrednia piksele), alfa progowana do 0 albo 255, canvas powiększany z `image-rendering: pixelated`; `aria-hidden` |
+| `SpeechBubble.svelte` | dymek ze zwykłym tekstem (`aria-live="polite"` tylko dla nowych porad) |
+| `FocusMascot.svelte` | maskotka obok minutnika na stronie Skupienie (140 px; w wąskim oknie 84 px w rogu pierścienia, bez dymka), pozycjonowana absolutnie, więc nie przesuwa strony; w Idle „mówi” pierwszą pozycję „Co dalej?” albo dobrą praktykę dnia; w przerwie przechodzi do karty przerwy (`BreakCard.svelte`), więc na ekranie jest jeden aksolotl |
+| `theme.svelte.ts` | czy działa motyw `pixel` (atrybut `data-theme` na `<html>`, w oknie głównym i w `popup`) |
+
+Manifest (`static/mascot/*-manifest.json`): `frameWidth`, `frameHeight`, `columns` (6), `anchorX`, `anchorY` (wspólne dla wszystkich klatek wariantu)
+i `frames: { "<nazwa>": { x, y, scale } }` (lewy górny róg klatki w atlasie; `scale` to współczynnik wyrównania użyty przy cięciu, informacyjnie).
+Nazwy klatek: ADR-018 pkt 1. Atlasy i manifesty powstają tylko narzędziem z `tools/mascot/`; grafiki się nie przerysowuje (CLAUDE.md, zasada 10).
+CSP bez zmian: atlas i manifest są z własnego originu (`img-src 'self'`, `connect-src 'self'`).
 
 ## 7. Model wątków i współbieżności
 

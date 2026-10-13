@@ -28,6 +28,12 @@ zignorować albo przypomnieć później (30, 20 i 10 minut przed spotkaniem). Zm
 na niego (review, zmiany, nieudane testy, wzmianki), na końcu pozostałe powiadomienia, z powodami przy każdej pozycji. Nowe pozycje czekają do przerwy
 i nie przerywają skupienia. Wybrane zadanie staje się celem sesji, a podsumowanie pyta „Zrobione?”. Zmienia ADR-013 i 014.
 
+**Stan na 2026-10-13 (maskotka i poprawki):** [ADR-018](#adr-018-maskotka-i-poprawki) dokłada maskotkę: aksolotla w słuchawkach z arkuszy klatek właściciela,
+**bez przerysowywania** (mruganie, reakcje na sesję, ruch ust według samogłosek, „wyglądanie” zza krawędzi okienek, pikselowa wersja w motywie 8-bit, `showMascot`).
+Do tego poprawki: okienka czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie; `--demo` przy działającej aplikacji przełącza ją w tryb demo;
+rozszerzenie zgłasza wzorce, których przeglądarka nie przyjęła jako reguł (`POST /v1/report`, jedyny zapis do mostu); wpis autostartu jest odświeżany przy starcie.
+Zmienia ADR-013, 014 i 015.
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -249,7 +255,7 @@ Poza oknem głównym zostają okno `popup` i okno YouTube `media`.
 ---
 
 ## ADR-013: Speedrun: pivot produktu
-**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7), ADR-015 (2026-10-13: pkt 2, 3 i 5) i ADR-016 (2026-10-13: pkt 1, 4 i 7)
+**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7), ADR-015 (2026-10-13: pkt 2, 3 i 5), ADR-016 (2026-10-13: pkt 1, 4 i 7) i ADR-018 (2026-10-13: pkt 4, zgłoszenie `POST /v1/report` do mostu)
 
 **Kontekst:** termin oddania to **jutro** (2026-10-13). Po T0-2/T0-3 nie było jeszcze kontraktu (T0-4), maszyny stanów ani okien przerwy,
 a plan M1–M4 zakładał jeszcze ok. 10 dni pracy. Równocześnie właściciel produktu zmienił wymagania:
@@ -434,10 +440,14 @@ Teams nie rusza statusu „offline” ani własnego DND użytkownika; `Blocklist
 - Pkt 4: logowanie Teams prosi też o `Calendars.Read`, bo ten sam token czyta kalendarz Microsoft.
 - Pkt 7: przycisk „Jestem na spotkaniu” nadal jest odłożony; spotkania z kalendarza obsługuje ADR-016.
 
+**Poprawka (ADR-018, 2026-10-13):** pkt 4: most nie jest już wyłącznie do odczytu. Przyjmuje jedno zapisujące zapytanie, `POST /v1/report`, w którym rozszerzenie
+zgłasza wzorce z listy aplikacji, których przeglądarka nie przyjęła jako reguł; tylko z originu rozszerzenia, z nagłówkiem `X-FocusMode-Extension: 1`, z limitami rozmiaru,
+a aplikacja zostawia z niego tylko wzorce z bieżącej listy. Adresy odwiedzanych stron nadal nie trafiają do aplikacji.
+
 ---
 
 ## ADR-014: Zasobnik i okienka faz, odcień ekranu (overlay), zamykanie launcherów gier, języki
-**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); w części zmieniona przez ADR-015 (2026-10-13: pkt 2 i 6, overlay odcienia odrzucony); pkt 1 uzupełniony przez ADR-016 (2026-10-13: okienka spotkań)
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); w części zmieniona przez ADR-015 (2026-10-13: pkt 2 i 6, overlay odcienia odrzucony); pkt 1 uzupełniony przez ADR-016 (2026-10-13: okienka spotkań) i ADR-018 (2026-10-13: okienka czekają w czasie prezentacji, maskotka)
 
 **Kontekst:** po pierwszych testach zakresu z ADR-013 właściciel produktu poprosił 2026-10-13 o:
 1. możliwość schowania aplikacji do zasobnika i **okienka przy starcie skupienia i przerwy** w stylu FocusMode (małe okno w rogu ekranu,
@@ -605,10 +615,14 @@ a w ich miejsce wchodzą konsekwencje z ADR-015.
 z tymi samymi wyborami co na stronie Skupienie (bez „przypomnij później” w ostatnim, 10 minut przed spotkaniem). `breakHeld` mówi, że przerwa zaczęła się
 wstrzymana z powodu spotkania. Oba niosą spotkanie w `PopupInfo.meeting` (`MeetingConflict`).
 
+**Poprawka (ADR-018, 2026-10-13):** pkt 1: okienko nie wyskakuje nad grą ani prezentacją. Gdy Windows zgłasza, że użytkownik prezentuje albo ma aplikację
+na pełnym ekranie (`SHQueryUserNotificationState`), okienko czeka (najwyżej 10 minut, zostaje najnowsze) i pojawia się, gdy to się skończy. W okienku
+jest maskotka „zza krawędzi” (wyłączana przez `showMascot`).
+
 ---
 
 ## ADR-015: Runda 2a: ciepło ekranu bez overlayu, motywy, dźwięki, muzyka, przerwy i historia
-**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); pkt 2 uzupełniony przez ADR-018 (2026-10-13: pikselowa maskotka w motywie 8-bit)
 
 **Kontekst:** po testach zakresu z ADR-014 właściciel produktu poprosił 2026-10-13 o drugą rundę zmian (runda 2a):
 1. **Odcień ekranu jako overlay jest odrzucony**: „półprzezroczysta warstwa koloru to nie jest odcień”. Warstwa mieszana alfą obniża kontrast i rozjaśnia czernie,
@@ -778,6 +792,9 @@ Punkt 1 odwraca ADR-014 pkt 2, który odrzucił Oświetlenie nocne (brak publicz
     tylko lokalnie w `history.jsonl` (przy wyłączonym `keepHistory` nic), **nigdy w logach**, moście, rozszerzeniu ani w sieci (ADR-015). Powierzchnie powłoki Windows pomijamy.”;
   - Struktura: `focus-platform` (`night_light`, `gamma`, klasa okna w `foreground`), powłoka (`tint.rs`: Oświetlenie nocne / gamma i plik przywracania),
     `src/lib/themes/`, `src/lib/tips.ts`, `src-tauri/resources/music/`.
+
+**Poprawka (ADR-018, 2026-10-13):** pkt 2: w motywie `pixel` (8-bit) maskotka jest pikselizowana przy wyświetlaniu (klatka zmniejszona do małego canvasu
+z progiem alfa i powiększona z `image-rendering: pixelated`); pliki grafiki się nie zmieniają.
 
 ---
 
@@ -1182,3 +1199,168 @@ To dotyka twardej zasady 11 w CLAUDE.md (ruch sieciowy tylko ten, który wybrał
     kolejność liczona lokalnie, nic nie trafia do modeli AI;
   - Struktura: `focus-core/src/work.rs`, `focus-platform/src/work/`, `src-tauri/src/work.rs` (+ `work/model.rs`, `work/fetch.rs`),
     `src/lib/state/work.svelte.ts` i komponenty `NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`.
+
+---
+
+## ADR-018: Maskotka i poprawki
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu przygotował 2026-10-13 maskotkę FocusMode: aksolotla w słuchawkach, wygenerowanego przez AI na dwóch arkuszach
+(`art/mascot/`, opis obróbki w `art/mascot/README.md`). Pierwszy arkusz to postać z sześcioma kształtami ust (O A E I U Y) i po trzy klatki mrugnięcia,
+oczka, uśmiechu, smutku, złości i radości. Drugi to ta sama postać „wyglądająca” zza krawędzi: spoczynek, cztery klatki mrugnięcia, usta A E I U Y,
+uśmiech, smutek, złość i radość. Właściciel prosi, żeby maskotka mrugała, reagowała na to, co dzieje się w sesji, „mówiła” porady z ruchem ust,
+wyglądała zza krawędzi okienek FocusMode i miała pikselową wersję w motywie 8-bit. **Decyzja właściciela: grafiki nie przerysowujemy.**
+Wpis w `CREDITS.md` (dodany razem z ADR-015) mówił o „wersji wektorowej przygotowanej na podstawie arkusza”; takiej wersji nie ma w repozytorium i jej nie robimy.
+
+Z testów wyszły też poprawki, które trafiają do tej samej rundy:
+1. Okienko FocusMode to okno aplikacji zawsze na wierzchu, którego „Nie przeszkadzać” nie wycisza (ADR-014), więc wyskakuje nad grą na pełnym ekranie
+   i nad prezentacją na rzutniku. Toasty Windows w tych trybach zwykle wycisza sam system (automatyczne reguły „Nie przeszkadzać” / Asystenta skupienia).
+2. Działająca instancja ignoruje `--demo` z drugiego uruchomienia (wtyczka single instance przekazuje jej tylko argumenty), więc przed prezentacją
+   trzeba zamknąć FocusMode z zasobnika i uruchomić go ponownie.
+3. Wzorzec z `websiteblacklist.txt`, który przechodzi walidację w core (crate `regex`), może nie dostać reguły w przeglądarce: Chrome sprawdza go własnym RE2
+   z limitami (`isRegexSupported`) i ma limit reguł regex (`MAX_NUMBER_OF_REGEX_RULES`). Popup rozszerzenia pokazuje wtedy „pominięte”, ale Ustawienia aplikacji nie,
+   więc użytkownik myśli, że linia działa w pełni. Żeby aplikacja się o tym dowiedziała, rozszerzenie musi coś do niej wysłać, a most jest dotąd tylko do odczytu
+   (ADR-013 pkt 4, twarda zasada 11 w CLAUDE.md). To wymaga tego ADR.
+4. Wpis autostartu (`launchOnLogin`) powstaje tylko przy zmianie ustawienia. Wpis zapisany wcześniej (np. przez wcześniejszy build albo przed przeniesieniem
+   aplikacji do innego folderu) zostaje taki, jaki był: może wskazywać starą ścieżkę albo nie mieć argumentu `--autostart`, a wtedy logowanie otwiera okno zamiast
+   zostawić FocusMode w zasobniku.
+
+**Opcje — jak pokazać maskotkę:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Klatki z arkuszy właściciela (sprite sheet): atlas WebP + manifest JSON, jedna klatka naraz** | wierne grafice właściciela; animacja to podmiana klatki (tania, przewidywalna, łatwa do zatrzymania); dwa pliki, razem ok. 1,1 MB | tylko te miny i kształty ust, które są na arkuszach; ruch skokowy, bez płynnych przejść; powiększenie ponad rozdzielczość klatki rozmywa |
+| Wersja wektorowa (SVG) narysowana na podstawie arkusza | płynne skalowanie, animacja części (oczy, usta) | to przerysowanie projektu; **odrzucone przez właściciela** |
+| Animacja szkieletowa 2D (postać pocięta na części, siatka) | płynny ruch | cięcie postaci na części i dorysowywanie zasłoniętych fragmentów to ingerencja w grafikę; dodatkowe narzędzia i biblioteki; za duże na hackathon; odrzucone |
+| Nowe miny generowane przez AI w aplikacji | dowolne miny | ruch sieciowy i model AI (zasada 11), niepowtarzalny wynik, zmienia projekt; odrzucone |
+
+**Opcje — jak aplikacja dowie się, których wzorców przeglądarka nie egzekwuje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Rozszerzenie zgłasza listę: `POST /v1/report`** | prawdziwy wynik przeglądarki (jej RE2, jej limit reguł); rozszerzenie i tak zna tę listę | pierwsze zapisujące zapytanie do mostu: zmiana zasady 11, potrzebne zabezpieczenia (pkt 7) |
+| Aplikacja sama przewiduje wynik Chrome | most zostaje tylko do odczytu | crate `regex` to nie RE2 z Chrome (inne limity rozmiaru), a limit reguł zależy od przeglądarki: wynik byłby inny niż w przeglądarce; odrzucone |
+| Zgłoszenie w adresie zapytania (`GET /v1/state?skipped=…`) | bez nowej metody HTTP | `GET` ze skutkiem ubocznym, lista wzorców w adresie (limity długości, logi pośrednie); odrzucone |
+| Native messaging przeglądarki | oficjalny kanał rozszerzenie ↔ aplikacja | manifest hosta w rejestrze i identyfikator rozszerzenia (rozpakowane rozszerzenie ma identyfikator zależny od ścieżki); za dużo na hackathon |
+
+**Decyzja:**
+
+1. **Grafika: klatki z arkuszy właściciela, bez przerysowywania.**
+   - Źródła w `art/mascot/`: `axolotl-sheet.webp` (1536×745, przezroczyste tło) i `axolotl-peek-sheet.webp` (1536×1024). Klatki przygotowuje powtarzalnie
+     `tools/mascot/` (Node + Edge headless; narzędzie tylko przygotowuje grafikę i nie trafia do aplikacji): powiększenie ×4 przez Real-ESRGAN
+     (`realesrgan-ncnn-vulkan` v0.2.5.0, BSD-3, model `realesrgan-x4plus-anime`), wykrycie i wycięcie klatek, wyrównanie skali (wiersze rysowane mniejszą postacią
+     powiększone ok. ×1,30 do wielkości wiersza z ustami), wspólna kotwica (linia stóp + środek głowy, więc postać nie skacze przy zmianie klatki) i usunięcie
+     miękkiej poświaty alfa. Wynik w `static/mascot/`: atlas WebP (6 kolumn) + manifest (`frameWidth`, `frameHeight`, `columns`, `anchorX`, `anchorY`,
+     `frames: { nazwa: { x, y, scale } }`). Atlasów i manifestów nie edytujemy ręcznie.
+   - Zestaw główny (`axo-atlas.webp` + `axo-manifest.json`, 24 klatki 415×420): `mouth-o`, `mouth-a`, `mouth-e`, `mouth-i`, `mouth-u`, `mouth-y`, `blink-1..3`,
+     `wink-1..3`, `smile-1..3`, `sad-1..3`, `angry-1..3`, `happy-1..3`. **`blink-1` (oczy otwarte, neutralnie) to spoczynek.**
+     Zestaw „zza krawędzi” (`peek-atlas.webp` + `peek-manifest.json`, 14 klatek 495×300): `idle`, `blink-1..4`, `mouth-a`, `mouth-e`, `mouth-i`, `mouth-u`,
+     `mouth-y`, `smile`, `sad`, `angry`, `happy` (bez O).
+   - **Wolno**: wybierać i wyświetlać klatki, skalować całą klatkę, pikselizować przy wyświetlaniu (pkt 3). **Nie wolno**: przerysowywać, przekolorowywać,
+     obrysowywać (trace), wektoryzować, dorysowywać klatek ani generować nowych min. Nowa mina to nowy arkusz od właściciela, pocięty tym samym narzędziem.
+
+2. **Stany i animacja** (frontend, `src/lib/mascot/`; animacja to tylko podmiana klatek, bez interpolacji i bez zmian w plikach).
+   - Wyświetlanie: jedna klatka z atlasu jako tło elementu o stałym rozmiarze (`background-image`, `background-position` i `background-size` liczone z manifestu),
+     więc zmiana klatki nie przesuwa układu. Manifest jest pobierany raz z własnego originu aplikacji (CSP bez zmian: `img-src 'self'`, `connect-src 'self'`).
+   - **Spoczynek i mruganie**: co losowe 3–7 s mrugnięcie (główna: `blink-1` → `blink-3` na ok. 120 ms → `blink-1`; „zza krawędzi”: `idle` → `blink-2` →
+     `blink-3` → `blink-2` → `idle`), tylko gdy maskotka odpoczywa z neutralną miną (klatki mrugnięcia mają neutralną twarz) i okno jest widoczne.
+   - **Reakcje** na zdarzenia sesji: start sesji → `wink-1..3`; start przerwy → `smile-1..3`, potem spoczynek; ukończony cykl (przerwa → następny focus) →
+     `happy-1..3` w pętli przez 2,5 s; Stop przed końcem pierwszego focusa (`focusedSecs` mniejsze niż długość focusa) → `sad-1..3`, potem spoczynek;
+     nudge o rozpraszającej stronie → `angry-1..3`, potem spoczynek; przypomnienie o spotkaniu → uśmiech; paczka nowych pozycji „Co dalej?” → radość.
+     Wersja „zza krawędzi” ma po jednej klatce miny i nie ma oczka, więc start to mrugnięcie przechodzące w uśmiech.
+   - **„Mówienie”** (ruch ust według samogłosek): gdy maskotka pokazuje dymek z tekstem, usta idą za tekstem znak po znaku (ok. 70 ms na znak, najwyżej 6 s,
+     potem spoczynek): a / ą → A, e / ę → E, i → I, y → Y, o / ó → O (wersja „zza krawędzi” nie ma O, więc A), u → U; spółgłoska trzyma poprzednie usta
+     przez jeden krok, potem klatkę neutralną; spacja i interpunkcja → spoczynek. To przybliżenie z liter: FocusMode nie ma syntezy mowy, więc nie ma dźwięku
+     do analizy.
+   - **Ograniczenie animacji** (`prefers-reduced-motion`): bez mrugania i bez ruchu ust (w czasie dymka maskotka pokazuje klatkę uśmiechu), a reakcja to jedna
+     nieruchoma klatka przez ten sam czas.
+   - **Miejsca**: strona Skupienie (maskotka obok minutnika, ok. 140 px, w wąskim oknie mniejsza i bez dymka; w Idle dymek z pierwszą pozycją „Co dalej?”,
+     jeśli jest, albo z „Dobrą praktyką”), karta przerwy (w przerwie maskotka przechodzi do karty i „mówi” poradę i przypomnienie, więc na ekranie jest jeden
+     aksolotl), Podsumowanie (smutna przy pustym podsumowaniu, wesoła, gdy cel sesji jest zrobiony), pasek nudge'a (mała, zła) i okienko `popup`
+     (wersja „zza krawędzi” przy krawędzi karty, „mówi” tytuł i treść okienka).
+   - **Dostępność**: maskotka jest dekoracyjna (`aria-hidden`), a treść dymka to zwykły tekst (`aria-live="polite"` tylko dla nowych porad).
+     Teksty po polsku w `src/lib/strings.ts`.
+
+3. **Wersja 8-bit**: w motywie `pixel` klatka jest zmniejszana do małego canvasu (jeden piksel grafiki to 2–4 piksele CSS, zależnie od rozmiaru maskotki)
+   filtrem przeglądarki, który uśrednia piksele (zostają cienkie kontury i oczy); potem każdy piksel staje się w pełni kryjący albo w pełni przezroczysty
+   (próg alfa, ostre krawędzie), a canvas jest powiększany z `image-rendering: pixelated`. To efekt wyświetlania, a nie nowa grafika: pliki się nie zmieniają,
+   nic nie jest dorysowane ani przekolorowane, a kolory pikseli to średnie z klatki właściciela. Gdy pikseli nie da się odczytać, zostają miękkie krawędzie.
+   W pozostałych motywach klatka jest skalowana gładko.
+
+4. **`Config.showMascot`** (`boolean`, domyślnie `true`; stary `config.json` bez pola wczytuje się z `true`): Ustawienia → Wygląd → „Pokaż maskotkę (aksolotl)”.
+   Wyłączona maskotka znika z okna głównego, karty przerwy i okienek (okno `popup` czyta config przez `get_config`); treści (porady, przypomnienia,
+   okienka) zostają bez zmian. Core nie ma tu czego walidować (zwykły przełącznik).
+
+5. **Okienka czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie.**
+   - Platforma: `focus_platform::notification_state::user_is_presenting()` pyta `SHQueryUserNotificationState` (shell32), czyli ten sam test, którym Windows
+     decyduje o dymkach powiadomień. „Prezentuje” to `QUNS_BUSY` (aplikacja na pełnym ekranie albo włączone ustawienia prezentacji),
+     `QUNS_RUNNING_D3D_FULL_SCREEN` (Direct3D w wyłącznym pełnym ekranie), `QUNS_PRESENTATION_MODE` (tryb prezentacji Windows) i `QUNS_APP`
+     (aplikacja ze Sklepu Windows na pierwszym planie). Nie prezentuje: `QUNS_ACCEPTS_NOTIFICATIONS`, `QUNS_QUIET_TIME`, `QUNS_NOT_PRESENT` (ekran zablokowany,
+     wygaszacz, nieaktywna sesja), nieznana wartość i błąd zapytania (wtedy nic nie jest wstrzymywane na zgadywanie). Bez COM i tanie, więc powłoka może pytać
+     co tick. Poza Windows zawsze `false`. Funkcja jest zadeklarowana ręcznie (`windows::core::link!`, ten sam import, który generuje crate `windows`),
+     bo zależność `windows` nie ma włączonej funkcji `Win32_UI_Shell` (`TODO(hackathon)`; bez nowych zależności).
+   - Powłoka (`popup.rs`): okienko, które ma się pokazać, gdy użytkownik prezentuje, nie otwiera okna, tylko czeka, a powłoka sprawdza stan co 5 s
+     (`PRESENTING_POLL`) i pokazuje je, gdy prezentacja się skończy. Dotyczy wszystkich rodzajów okienek: faz, zamkniętych launcherów, przypomnień o spotkaniach
+     i paczek „Co dalej?”. Czeka najnowsze okienko, a kolejne spotyka je tak, jak spotkałoby okienko na ekranie: zastępuje je, a przypomnienie o spotkaniu
+     i paczka „Co dalej?” czekają w kolejce na swoją kolej (przypomnienie o spotkaniu, które już się skończyło, przepada). Okienko, które czeka dłużej niż
+     10 minut (`PRESENTING_HOLD_MAX`), a użytkownik nadal prezentuje, przepada bez toastu zastępczego (Windows w tych trybach i tak wstrzymuje toasty, a stan widać
+     w oknie głównym), więc test Windows nie zatrzyma okienek na zawsze. Okienko, które już jest na ekranie, zostaje. Toastów (przy wyłączonych okienkach)
+     to nie zmienia.
+
+6. **`--demo` przy działającej aplikacji.** Drugie uruchomienie z `--demo` (np. `focusmode.exe --demo` ze skrótu do prezentacji), gdy działająca instancja jest w Idle,
+   przełącza ją na profil demo (40 s skupienia / 20 s przerwy: `ActorCmd::UseDemoProfile`, aktor ustawia profil Idle, `SessionSnapshot.demo = true`) i pokazuje
+   okno główne. W trakcie sesji (także w pauzie) profil się nie zmienia (sesja ma swój profil od Start), a toast mówi „Zatrzymaj sesję, aby włączyć tryb prezentacji”
+   (`texts::demo_needs_stop_toast`). Profil demo zostaje do końca działania procesu; zwykłe czasy wracają po ponownym uruchomieniu bez `--demo`.
+   `FOCUSMODE_DEMO=1` działa tylko przy pierwszym uruchomieniu (drugie uruchomienie przekazuje działającej instancji argumenty, a nie zmienne środowiska).
+
+7. **Rozszerzenie zgłasza wzorce, których przeglądarka nie egzekwuje: `POST /v1/report`, jedyny zapis do mostu.**
+   - Rozszerzenie: po ustawieniu reguł w fazie Focus wysyła listę wzorców, które nie dostały reguły `declarativeNetRequest` (odrzucone przez `isRegexSupported`
+     albo ponad limit reguł regex): `POST http://127.0.0.1:47615/v1/report`, nagłówki `Content-Type: application/json` i `X-FocusMode-Extension: 1`,
+     treść `{ "skipped": string[] }`. Tylko źródła wzorców otrzymane od aplikacji, dokładnie w tej postaci; nigdy adresy, tytuły ani nic o przeglądaniu.
+     Wysyła po 2 s spokoju, raz na każdą nową listę w danym focusie (w następnym focusie od nowa), a po braku odpowiedzi ponawia przy następnym sprawdzeniu stanu.
+     Błąd zgłoszenia nie wpływa na blokowanie.
+   - Most przyjmuje to zapytanie tylko wtedy, gdy: nagłówek `Host` wskazuje loopback (jak dotąd, przeciw DNS rebinding); `Origin` to origin rozszerzenia
+     (`chrome-extension://`, `moz-extension://`, `extension://`); jest nagłówek `X-FocusMode-Extension: 1`; treść ma najwyżej ok. 1,5 MB (mieści się najdłuższa lista, jaką aplikacja może wysłać) i jest JSON-em z tablicą `skipped`
+     o najwyżej 500 pozycjach po najwyżej 500 znaków (limity listy w core: `MAX_PATTERNS`, `MAX_LINE_CHARS`; inne pola są ignorowane). Odpowiedzi: `204` (przyjęte,
+     także gdy nic się nie zmieniło), `403` (zły `Host`, brak originu rozszerzenia albo nagłówka), `413` (treść ponad ten limit; zadeklarowanej większej treści most nie czyta),
+     `400` (nie ten JSON albo ponad limity pozycji); odrzucone zgłoszenie niczego nie zmienia.
+     Własny nagłówek wymusza na stronach WWW preflight CORS, a most nie daje nagłówków CORS originom innym niż rozszerzenia, więc strona otwarta w przeglądarce
+     zgłoszenia nie wyśle. Poza tym most zostaje tylko do odczytu (`GET /v1/state`).
+   - Aplikacja (`src-tauri/src/blocklist.rs`) zostawia ze zgłoszenia **tylko wzorce, które są teraz na liście** (dokładnie te same źródła, w kolejności z pliku,
+     bez powtórzeń), więc nawet podrobione zgłoszenie nie wstawi do Ustawień obcego tekstu: najwyżej oznaczy wzorce użytkownika jako nieobsługiwane.
+     Wynik to `BlocklistInfo.extensionSkipped` (tylko w pamięci; każde zgłoszenie zastępuje poprzednie; przeładowanie pliku zostawia tylko wzorce, które w nim zostały),
+     a zmiana daje nową rewizję i `blocklist://changed`. Logi podają tylko liczby.
+   - Ustawienia → Blokuj rozpraszające strony pokazują tę listę jako ostrzeżenie: „Przeglądarka nie obsługuje tych wyrażeń jako reguł — sprawdzam je przy wczytaniu karty”.
+     Taki wzorzec rozszerzenie nadal sprawdza samo przy ładowaniu karty (jeśli JavaScript umie wykonać to wyrażenie), ale strona może zdążyć się na chwilę otworzyć.
+
+8. **Autostart odświeżany przy starcie.** Gdy `launchOnLogin` jest włączone, powłoka przy każdym starcie (poza uruchomieniem z `--restore-shields`) zapisuje
+   wpis autostartu od nowa przez wtyczkę (`disable` + `enable`), więc wpis ma bieżącą ścieżkę aplikacji i argument `--autostart`. Robi to tylko wtedy, gdy wpis
+   istnieje i jest włączony (`is_enabled()`): wpisu wyłączonego w Menedżerze zadań (Aplikacje autostartu) albo usuniętego nie rusza, bo `enable()` wtyczki
+   włączyłoby go z powrotem wbrew wyborowi użytkownika. Taki wpis wraca dopiero po wyłączeniu i włączeniu „Uruchamiaj przy logowaniu” w Ustawieniach.
+   Błędy trafiają tylko do logu (start aplikacji ich nie zgłasza).
+
+9. **Kontrakt** (`api.rs`; jak w ADR-013–017, w tej samej gałęzi co implementacja): pole `Config.showMascot` (`#[serde(default)]` = `true`) i pole
+   `BlocklistInfo.extensionSkipped` (`string[]`, `#[serde(default)]`). Bez nowych komend i eventów: lista przychodzi istniejącą parą `get_blocklist` +
+   `blocklist://changed`. Most dostaje trasę `POST /v1/report` (to nie jest komenda Tauri; port `BRIDGE_PORT` bez zmian). Szczegóły: ARCHITECTURE §6.10.
+
+**Konsekwencje:**
+- Instalator rośnie o ok. 1,1 MB (dwa atlasy WebP). Źródłowe arkusze i narzędzie leżą w repozytorium, ale nie trafiają do aplikacji.
+- Maskotka ma tylko te miny i kształty ust, które są na arkuszach, a ruch ust to przybliżenie z liter. Każda nowa mina wymaga nowego arkusza od właściciela.
+- Animacja to timery w WebView: muszą znikać razem z komponentem (bez wycieków przy zmianie strony) i respektować ograniczenie animacji.
+- Most nie jest już tylko do odczytu. Lokalny proces, który podrobi nagłówki, może najwyżej oznaczyć wzorce użytkownika jako nieobsługiwane w Ustawieniach
+  (bez wpływu na blokowanie). Strona WWW nie może tego zrobić (CORS, `Origin`, `Host`).
+- Limit treści zgłoszenia wynika z limitów listy (500 wzorców po 500 znaków), więc mieści się każde zgłoszenie, które rozszerzenie może wysłać; `413` dostaje
+  tylko treść, której aplikacja nie mogła wywołać.
+- Czy użytkownik „prezentuje”, ocenia heurystyka Windows: okno bez ramki na cały ekran zwykle się liczy, ale nie zawsze, a aplikacja ze Sklepu na pierwszym planie
+  też może wstrzymać okienka. Okienko pokazane po czekaniu może już być nieaktualne (np. zaczęła się następna faza): zostaje tylko najnowsze.
+- Przełączenie na demo przez drugie uruchomienie działa tylko w Idle, a z powrotem tylko przez ponowne uruchomienie aplikacji.
+- Odświeżenie autostartu nie naprawia wpisu wyłączonego w Menedżerze zadań ani usuniętego (celowo); po przeniesieniu aplikacji taki wpis trzeba
+  włączyć ponownie w Ustawieniach.
+
+**Co zmienia:**
+- ADR-013 pkt 4: most „obsługuje tylko odczyt stanu (`GET`)” — wyjątek `POST /v1/report` (pkt 7 wyżej).
+- ADR-014 pkt 1: okienka czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie (pkt 5); w okienku jest maskotka (pkt 2).
+- ADR-015 pkt 2: motyw `pixel` pikselizuje też maskotkę (pkt 3).
+- CLAUDE.md: opis zakresu (ADR-013…018 i maskotka); zasada 10 (własne grafiki projektu: maskotki nie przerysowujemy, nie przekolorowujemy ani nie obrysowujemy);
+  zasada 11 (most tylko udostępnia stan, z wyjątkiem `POST /v1/report`); Struktura (`src/lib/mascot/`, `static/mascot/`, `art/mascot/`, `tools/mascot/`,
+  `focus-platform/src/notification_state.rs`, `/v1/report` w `bridge.rs`, czekanie okienek w `popup.rs`); Komendy (`--demo` przy działającej aplikacji).

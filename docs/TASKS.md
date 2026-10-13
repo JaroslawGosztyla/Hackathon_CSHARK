@@ -1,7 +1,7 @@
 # FocusMode — Taski i podział pracy
 
-> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014, ADR-015, ADR-016 i ADR-017); wersja 2 po cross-review (2026-09-27).
-> Decyzje: ADR-008…017 w [DECISIONS.md](DECISIONS.md).
+> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014, ADR-015, ADR-016, ADR-017 i ADR-018); wersja 2 po cross-review (2026-09-27).
+> Decyzje: ADR-008…018 w [DECISIONS.md](DECISIONS.md).
 
 **Legenda statusu:** `[ ]` do zrobienia · `[~]` w toku · `[x]` zrobione · `[-]` porzucone
 Przy braniu taska wpisz obok statusu kto: `[~] (A)`. Edytuj **tylko swoje linie** (mniej konfliktów).
@@ -23,6 +23,9 @@ spotkanie w czasie przerwy widać na stronie Skupienie przed Start, z wyborem: p
 „Co dalej?” ([ADR-017](DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy), 2026-10-13): zadania i powiadomienia z GitHub, GitLab, Jira, Azure DevOps i Linear
 (tokeny tylko do odczytu, DPAPI) w kolejności: przypisane do użytkownika → czeka na niego → reszta, z powodami; nowe pozycje czekają do przerwy;
 wybrane zadanie = cel sesji, a podsumowanie pyta „Zrobione?” (SR-34…SR-37).
+Maskotka i poprawki ([ADR-018](DECISIONS.md#adr-018-maskotka-i-poprawki), 2026-10-13): aksolotl w słuchawkach z arkuszy klatek właściciela, bez przerysowywania
+(mruganie, reakcje, ruch ust według samogłosek, „zza krawędzi” w okienkach, pikselowy w motywie 8-bit, `showMascot`); okienka czekają w czasie prezentacji i gry
+na pełnym ekranie; `--demo` przy działającej aplikacji; zgłoszenie wzorców, których przeglądarka nie egzekwuje (`POST /v1/report`); odświeżanie autostartu (SR-38…SR-42).
 
 - [~] **SR-01** (B) Kontrakt IPC od nowa (`crates/focus-core/src/api.rs`): DTO configu (czasy, muzyka, osłony), snapshot sesji, `ShieldStatus`,
   użycie aplikacji i `SessionSummary`, Teams, most dla rozszerzenia (`BRIDGE_PORT = 47615`), stałe komend i eventów. Bindingi w `src/lib/bindings/`
@@ -48,6 +51,10 @@ wybrane zadanie = cel sesji, a podsumowanie pyta „Zrobione?” (SR-34…SR-37)
   2026-10-13 („Co dalej?”): ADR-017, ARCHITECTURE §6 (nowe komendy i event, snapshot, przykłady JSON, §6.9 config, DTO, reguły core, platforma i powłoka),
   README (funkcja, tokeny krok po kroku dla GitHub / GitLab / Jira / Azure DevOps / Linear, prywatność, pliki danych, ograniczenia).
   Zmiana CLAUDE.md (zasada 11, struktura) wprowadzona 2026-10-13 (zgodnie z decyzjami właściciela).
+  2026-10-13 (maskotka i poprawki): ADR-018 (+ poprawki ADR-013, 014, 015), ARCHITECTURE §6 (most `POST /v1/report`, `blocklist://changed`, okno `popup`, przykłady JSON,
+  §6.5 `extensionSkipped`, nowy §6.10), README (maskotka, okienka w czasie prezentacji, zgłoszenie wzorców, `--demo` przy działającej aplikacji, autostart, prywatność,
+  ograniczenia, katalogi), CREDITS.md (maskotka: powiększenie Real-ESRGAN i cięcie, bez wektoryzacji; poprawione „wersja wektorowa”).
+  Zmiana CLAUDE.md (zakres, zasady 10 i 11, struktura, komendy) wprowadzona 2026-10-13 (zgodnie z decyzją właściciela o grafice i ADR-018).
 - [ ] **SR-09** (A+B, po merge'u) Zaktualizować DESIGN.md i ARCHITECTURE.md do ADR-013 (tabela faz, wątki, kontrakt, okna). ARCHITECTURE §6 (kontrakt IPC) zaktualizowany 2026-10-13.
 - [~] **SR-10** (B) Okno YouTube jako fallback (ADR-013 pkt 2): gdy YouTube odmawia osadzania (błędy 101/150/153; m.in. live Lofi Girl i część YouTube Music)
   albo linku nie da się osadzić (`/@kanał/live`, `/channel/<id>/live`, `/@kanał`), link gra w ukrytym oknie Tauri `media` ze stroną YouTube (odtwarzacz w tle, bez uprawnień IPC,
@@ -169,6 +176,29 @@ wybrane zadanie = cel sesji, a podsumowanie pyta „Zrobione?” (SR-34…SR-37)
   włączniki, adresy, tokeny z instrukcją najwęższych uprawnień, stan, „Odśwież teraz”, `holdDuringFocus`), „Zrobione?” w podsumowaniu i znacznik celu w historii,
   okienko `workDigest`, `src/lib/state/work.svelte.ts`, teksty w `strings.ts`. DoD: `npm run check` zielone; token nie wraca do pola ani do konsoli;
   „Ustaw jako cel” → cel pod minutnikiem przez całą sesję → Stop → „Zrobione?” → odpowiedź widać w historii także po restarcie.
+- [~] **SR-38** (B) Maskotka (ADR-018 pkt 1–4): klatki z arkuszy właściciela (`art/mascot/` → `tools/mascot/` → `static/mascot/`: atlasy WebP + manifesty; gotowe w `1c28bd8`),
+  `src/lib/mascot/` (manifesty i atlasy, `Axolotl.svelte`: jedna klatka bez skoku układu, sterownik: mruganie co 3–7 s, reakcje na start / przerwę / ukończony cykl /
+  wcześniejszy Stop / nudge / spotkanie / „Co dalej?”, ruch ust według samogłosek, `prefers-reduced-motion`; pikselizacja w motywie `pixel`), miejsca: Skupienie (obok minutnika,
+  dymek z poradą), karta przerwy, Podsumowanie, pasek nudge'a, okienko `popup` (wersja „zza krawędzi”); `Config.showMascot` w Ustawieniach → Wygląd; teksty w `strings.ts`.
+  Kontrakt: `Config.showMascot`. **Grafiki nie przerysowujemy, nie przekolorowujemy ani nie obrysowujemy** (CLAUDE.md, zasada 10).
+  DoD: Idle → maskotka mruga; Start → oczko; przerwa → uśmiech i porada w dymku z ruchem ust; następny focus → radość; Stop przed końcem focusa → smutek;
+  okienko faz z maskotką „zza krawędzi”; motyw 8-bit → pikselowa; ograniczenie animacji w Windows → bez mrugania i ruchu ust; „Pokaż maskotkę” wyłączone → brak maskotki
+  w oknie i okienkach; `npm run check` zielone; brak wycieków timerów przy przełączaniu stron.
+- [~] **SR-39** (B) Okienka czekają w czasie prezentacji (ADR-018 pkt 5): `focus-platform/src/notification_state.rs` (`user_is_presenting()`: `SHQueryUserNotificationState`,
+  import zadeklarowany ręcznie, bo `windows` nie ma `Win32_UI_Shell`), `src-tauri/src/popup.rs` (najnowsze okienko czeka, sprawdzanie co 5 s, po 10 min przepada, kolejka
+  przypomnień i paczek „Co dalej?” jak na ekranie). DoD: gra albo film na pełnym ekranie / tryb prezentacji w trakcie zmiany fazy → okienka brak, po wyjściu z pełnego ekranu
+  pojawia się w ciągu 5 s; ponad 10 min pełnego ekranu → okienko przepada, sesja działa; bez pełnego ekranu okienka jak dotąd.
+- [~] **SR-40** (B) `--demo` przy działającej aplikacji (ADR-018 pkt 6): `on_second_instance` → `ActorCmd::UseDemoProfile`; Idle → profil demo do końca procesu,
+  okno na wierzch; w trakcie sesji toast „Zatrzymaj sesję, aby włączyć tryb prezentacji” (`texts::demo_needs_stop_toast`). DoD: FocusMode w zasobniku →
+  `focusmode.exe --demo` → okno z oznaczeniem demo, Start = 40 s / 20 s; w trakcie sesji → toast, sesja bez zmian.
+- [~] **SR-41** (B, `/sync-contract`) Wzorce, których przeglądarka nie egzekwuje (ADR-018 pkt 7): rozszerzenie wysyła `skippedPatterns` (`POST /v1/report`, nagłówek
+  `X-FocusMode-Extension: 1`, po 2 s spokoju, raz na listę w focusie); most przyjmuje tylko z originu rozszerzenia + nagłówka + loopback `Host`, ≤ 500 pozycji
+  po ≤ 500 znaków, treść ≤ ~1,5 MB (najdłuższa możliwa lista; 204 / 403 / 413 / 400); `BlocklistService::set_extension_skipped` (tylko wzorce z bieżącej listy, `blocklist://changed`); ostrzeżenie w Ustawieniach →
+  Blokuj strony. Kontrakt: `BlocklistInfo.extensionSkipped`. DoD: wzorzec odrzucany przez Chrome w `websiteblacklist.txt` → Start → w Ustawieniach ostrzeżenie z tym wzorcem;
+  `fetch` z originu strony WWW → odrzucone (brak CORS / 403); zgłoszenie z obcym tekstem → Ustawienia go nie pokazują; usunięcie linii z pliku → znika z ostrzeżenia.
+- [~] **SR-42** (B) Odświeżanie autostartu (ADR-018 pkt 8): przy starcie z `launchOnLogin` (poza `--restore-shields`) `refresh_autostart`: tylko gdy `is_enabled()`,
+  `disable` + `enable` (bieżąca ścieżka i `--autostart`); wpis wyłączony w Menedżerze zadań albo usunięty zostaje; błędy tylko w logu. DoD: wpis bez `--autostart`
+  (ręcznie w `HKCU\…\Run`) → start FocusMode → wpis z `--autostart`; wpis wyłączony w Menedżerze zadań → po starcie nadal wyłączony; logowanie → FocusMode w zasobniku.
 
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
@@ -193,6 +223,10 @@ wybrane zadanie = cel sesji, a podsumowanie pyta „Zrobione?” (SR-34…SR-37)
 - [ ] „Co dalej?” (ADR-017): GitHub (token fine-grained), GitLab, Jira Cloud, Azure DevOps i Linear z tokenami tylko do odczytu → przypisane zadania zawsze nad
   prośbami o review i wzmiankami, a te nad powiadomieniami, z powodami; nowe pozycje w trakcie focusa nie dają okienek ani toastów, w przerwie jedno okienko z liczbą;
   „Ustaw jako cel” → cel pod minutnikiem → Stop → „Zrobione?” zapisane w historii; w `config.json` i w logach brak tokenów i tytułów zadań; zły token → błąd tylko tego narzędzia
+- [ ] maskotka (ADR-018): mruga, reaguje na start / przerwę / cykl / wcześniejszy Stop / nudge, „mówi” poradę w przerwie; w okienku wygląda zza krawędzi; 8-bit pikselowy;
+  ograniczenie animacji → bez ruchu; wyłączona w Ustawieniach → nigdzie jej nie ma; grafika bez zmian względem `static/mascot/`
+- [ ] gra / film na pełnym ekranie albo tryb prezentacji w trakcie zmiany fazy → okienko czeka i pojawia się po wyjściu z pełnego ekranu; `focusmode.exe --demo` przy działającej
+  aplikacji w Idle → tryb demo, w trakcie sesji → toast; wzorzec odrzucany przez Chrome → ostrzeżenie w Ustawieniach; autostart po starcie ma `--autostart`
 
 ## Role
 
@@ -402,3 +436,14 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
     `NextUp.svelte` (Skupienie: „Co dalej?”), `SessionGoalLine.svelte` (cel pod minutnikiem) i `WorkSettings.svelte` (Ustawienia → Narzędzia pracy)”.
 
 - [2026-10-13] (B) Zmiany CLAUDE.md z propozycji ADR-015, ADR-016 i ADR-017 (zasady 2, 6, 11 i Struktura) wprowadzone — wynikają wprost z decyzji właściciela produktu (tytuły okien, kalendarze, narzędzia pracy).
+- [2026-10-13] (B→A) Kontrakt, maskotka i poprawki (ADR-018): `Config.showMascot` (bool, domyślnie `true`, stary config → `true`; bez walidacji)
+  i `BlocklistInfo.extensionSkipped` (`string[]`, `#[serde(default)]`). Bez nowych komend i eventów (`extensionSkipped` idzie przez `get_blocklist` + `blocklist://changed`).
+  **Most nie jest już tylko do odczytu**: `POST /v1/report` (`{ "skipped": string[] }`) tylko z originu rozszerzenia + nagłówka `X-FocusMode-Extension: 1` + loopback `Host`,
+  ≤ 500 pozycji po ≤ 500 znaków (treść ≤ ~1,5 MB, czyli najdłuższa możliwa lista); aplikacja zostawia tylko wzorce z bieżącej listy (`blocklist.rs::kept_skipped`). Proszę o review `bridge.rs` (zabezpieczenia)
+  i `popup.rs` (czekanie w czasie prezentacji: `held`, `merge_held`, 5 s / 10 min). Nowe w `focus-platform`: `notification_state::user_is_presenting()`
+  (`SHQueryUserNotificationState`); **`windows` nie ma funkcji `Win32_UI_Shell`**, więc import jest zadeklarowany ręcznie (`windows::core::link!`, `TODO(hackathon)`);
+  po dodaniu tej funkcji do `Cargo.toml` można przejść na `windows::Win32::UI::Shell::SHQueryUserNotificationState`. Aktor (twój `session_actor.rs`):
+  `ActorCmd::UseDemoProfile` (drugie uruchomienie z `--demo`; Idle → profil demo do końca procesu, w sesji toast). Tabela faz z ADR-013 bez zmian.
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-018 wprowadzona: zakres (ADR-013…018, maskotka), zasada 10 (maskotki nie przerysowujemy, nie przekolorowujemy,
+  nie obrysowujemy ani nie wektoryzujemy — decyzja właściciela), zasada 11 (most tylko udostępnia stan, z wyjątkiem `POST /v1/report`), Struktura
+  (`src/lib/mascot/`, `static/mascot/`, `art/mascot/`, `tools/mascot/`, `notification_state`, `/v1/report`, czekanie okienek, `--demo` i autostart w `lib.rs`), Komendy.

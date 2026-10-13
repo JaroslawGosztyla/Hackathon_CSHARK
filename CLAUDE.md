@@ -6,7 +6,8 @@ z dzwonkiem i toastem (albo okienkiem FocusMode w rogu ekranu) przy każdej zmia
 Teams „Nie przeszkadzać” (Graph; nie rusza „offline” ani własnego DND użytkownika), blokada rozpraszających stron (rozszerzenie przeglądarki + lokalny most),
 nieusypianie ekranu, zamknięcie launcherów gier. W przerwie osłony schodzą, a muzyka gra dalej; przerwa pokazuje poradę i przypomnienie użytkownika.
 Opcjonalnie ciepłe kolory ekranu według pory dnia (Oświetlenie nocne Windows albo gamma). Motywy i pakiety dzwonków (także własny plik).
-Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014 + ADR-015**;
+Maskotka: aksolotl w słuchawkach z arkuszy klatek właściciela (mruga, reaguje na sesję, „mówi” porady ruchem ust, wygląda zza krawędzi okienek; ADR-018).
+Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014…018**;
 wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
 Architektura multiplatformowa, **odbiór i gwarancje UX tylko na Windows** (ADR-008).
 Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), prowadzony z pomocą AI.
@@ -17,7 +18,7 @@ Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), pro
 2. Ustal, dla kogo pracujesz (A czy B): sprawdź `CLAUDE.local.md`; jeśli go nie ma — zapytaj.
 3. Przy pracy nad architekturą/IPC czytaj [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md);
    przy decyzjach produktowych [docs/DESIGN.md](docs/DESIGN.md); ADR-y w [docs/DECISIONS.md](docs/DECISIONS.md).
-   Oba dokumenty są sprzed pivotu: najpierw ADR-013, ADR-014, ADR-015 i `crates/focus-core/src/api.rs`.
+   Oba dokumenty są sprzed pivotu: najpierw ADR-013…018 i `crates/focus-core/src/api.rs`.
 
 ## Stos
 
@@ -45,28 +46,37 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `locale` (język wyświetlania systemu), `clock` (minuta doby czasu lokalnego dla odcienia, `GetLocalTime`),
   `night_light` (Oświetlenie nocne bieżącego użytkownika: nieudokumentowany zapis w rejestrze), `gamma` (rampa gamma każdego monitora z kopią bazowej rampy),
   `calendar/` (`google.rs`: OAuth loopback + PKCE i Calendar API; `ics.rs` + `rrule.rs`: iCalendar ze spotkaniami cyklicznymi), `secrets.rs` (pliki DPAPI),
-  `teams` także z kalendarzem Microsoft (`Calendars.Read`, tylko gdy kalendarz włączony), `work/` (klienci GitHub, GitLab, Jira, Azure DevOps, Linear; tylko odczyt).
+  `teams` także z kalendarzem Microsoft (`Calendars.Read`, tylko gdy kalendarz włączony), `work/` (klienci GitHub, GitLab, Jira, Azure DevOps, Linear; tylko odczyt),
+  `notification_state` (czy użytkownik prezentuje albo ma aplikację na pełnym ekranie: `SHQueryUserNotificationState`, tylko odczyt).
 - `src-tauri/src/` — powłoka: `commands.rs` (cienkie adaptery), `session_actor.rs` (aktor + tick 1 s), `effects.rs` (dispatch efektów),
   `shields.rs` (wątek osłon z generacją, `shields-restore.json` + wpis RunOnce `FocusModeRestore` → `--restore-shields`; także zamykanie launcherów),
   `tracker.rs` (próbkowanie aktywnej aplikacji + awaryjny nudge po tytule okna, gdy rozszerzenie nie odpytało mostu przez 90 s),
-  `bridge.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia), `persistence.rs` (`config.json`, `history.jsonl`, `keepHistory`, `clear_history`),
-  `blocklist.rs` (`websiteblacklist.txt` w katalogu konfiguracji: utworzenie z domyślnej listy, odczyt, auto-przeładowanie po zapisie, `blocklist://changed`),
+  `bridge.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia: `GET /v1/state` i jedyny zapis, zgłoszenie `POST /v1/report`; ADR-018),
+  `persistence.rs` (`config.json`, `history.jsonl`, `keepHistory`, `clear_history`),
+  `blocklist.rs` (`websiteblacklist.txt` w katalogu konfiguracji: utworzenie z domyślnej listy, odczyt, auto-przeładowanie po zapisie, `blocklist://changed`;
+  wzorce, których przeglądarka nie przyjęła jako reguł, ze zgłoszenia rozszerzenia jako `extensionSkipped`),
   `music.rs` (skan folderu i muzyka w zestawie; asset scope tylko dla znalezionych plików audio), `media_window.rs` (ukryte okno YouTube, ADR-013 pkt 2),
-  `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`), `tint.rs` (ciepło ekranu przez Oświetlenie nocne albo gammę, harmonogram, podgląd,
+  `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`; czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie), `tint.rs` (ciepło ekranu przez Oświetlenie nocne albo gammę, harmonogram, podgląd,
   `tint-restore.json`, `tint://changed`; ADR-015), `safety_net.rs` (jeden wpis RunOnce `FocusModeRestore` dla osłon i kolorów ekranu),
   `close.rs` (X na oknie głównym: zasobnik, wyjście albo pytanie `app://close-requested`), `window_util.rs` (opcje WebView2 okna głównego dla
   pozostałych okien, pozycja w rogu ekranu), `teams.rs`, `tray.rs`, `texts.rs` (wszystkie teksty powłoki: toasty, tray, okienka),
   `calendar.rs` + `calendar/` (synchronizacja kalendarzy, wybory w `meeting-choices.json`, okienka `meetingReminder`, `Input::SetMeetingHolds`, `calendar://changed`),
   `work.rs` + `work/` (synchronizacja co 5 min, `work-seen.json`, wstrzymywanie nowych pozycji w focusie, okienko `workDigest`, `work://changed`);
-  `persistence.rs` także `mark_goal_done`.
+  `persistence.rs` także `mark_goal_done`. `lib.rs`: argumenty startu (`--demo`, `--autostart`, `--restore-shields`); drugie uruchomienie z `--demo`
+  przełącza aplikację w Idle na profil demo; przy starcie odświeża wpis autostartu (ADR-018).
   `src-tauri/capabilities/`: `default.json` (okno `main`), `overlays.json` (okno `popup`: tylko eventy).
   `src-tauri/resources/music/open-lofi/` = muzyka w zestawie (Open Lo-Fi, CC0, opis w `library.json`, licencja w `CREDITS.md`).
 - `src/` — **frontend Svelte/TS** (nie Rust!). `src/lib/api.ts` = jedyne miejsce z `invoke`/`listen`. `src/lib/player/` = odtwarzacz muzyki.
   `src/lib/themes/` = motywy (zmienne CSS i tła), `src/lib/tips.ts` = porady na przerwę (PL/EN, źródło przy każdej).
+  `src/lib/mascot/` = maskotka (ADR-018): manifesty klatek, komponent rysujący jedną klatkę z atlasu, sterownik stanów (mruganie, reakcje na sesję,
+  ruch ust według samogłosek, pikselizacja w motywie 8-bit); wyłącza ją `Config.showMascot`.
   Kalendarze: `MeetingConflicts.svelte` (Skupienie), `MeetingHoldBanner.svelte`, `CalendarSettings.svelte`; „Co dalej?”: `NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`.
   Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w layoucie odtwarzacz i animowana nawigacja),
   `src/routes/(overlay)/` = lekka strona okna `popup`, **bez odtwarzacza** (inaczej muzyka grałaby w kilku oknach).
 - `src/lib/bindings/` — **generowane** przez ts-rs, nie edytuj ręcznie.
+- `static/mascot/` — atlasy WebP i manifesty klatek maskotki (generowane z `art/mascot/` narzędziem `tools/mascot/`, nie edytuj ręcznie).
+  `art/mascot/` — arkusze źródłowe właściciela + README (jak powstały klatki). `tools/mascot/` — powtarzalne cięcie arkuszy
+  (Node + Edge headless; Real-ESRGAN tylko do przygotowania grafiki); nic z `art/` ani `tools/` nie trafia do aplikacji.
 - `browser-extension/` — rozszerzenie MV3 (Chrome/Edge/Brave/Opera/Vivaldi): odpytuje most i przekierowuje rozpraszające strony na `blocked.html`.
   Trafia do instalatora jako zasób (`bundle.resources`).
 
@@ -76,7 +86,7 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
 npm install                          # raz, po sklonowaniu
 npm run tauri dev                    # uruchom aplikację (dev)
 FOCUSMODE_DEMO=1 npm run tauri dev   # tryb demo (dev): 40 s focus, przerwa 20 s  (PowerShell: $env:FOCUSMODE_DEMO=1; npm run tauri dev)
-                                     # zainstalowana aplikacja: focusmode.exe --demo
+                                     # zainstalowana aplikacja: focusmode.exe --demo (przy działającej w Idle: przełącza ją w demo)
 cargo test --workspace --locked      # testy Rust (generuje też bindingi TS)
 cargo test -p focus-core             # tylko core + regeneracja src/lib/bindings/
 cargo clippy --workspace --all-targets -- -D warnings
@@ -120,7 +130,9 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
    (dopóki wyboru nie ma, pierwsze X pyta; ADR-013, ADR-014).
 9. Brak `unwrap()`/`expect()` poza testami i setupem. Biblioteki: `thiserror`; powłoka: `anyhow`;
    granica IPC: `AppError { code, message, field }`.
-10. Dołączane do aplikacji muzyka i grafiki tylko z licencją pozwalającą na użycie (CC0/CC-BY), z wpisem w `CREDITS.md`.
+10. Dołączane do aplikacji muzyka i grafiki tylko z licencją pozwalającą na użycie (CC0/CC-BY) albo własne projektu, z wpisem w `CREDITS.md`.
+    **Maskotki (arkusze właściciela w `art/mascot/`) nie przerysowujemy, nie przekolorowujemy, nie obrysowujemy ani nie wektoryzujemy**;
+    aplikacja tylko wyświetla jej klatki (wolno je skalować i pikselizować przy wyświetlaniu), a nowa mina to nowy arkusz od właściciela (ADR-018).
     Żadnych grafik ani marki Lofi Girl; link do ich publicznego streamu, odtwarzany oficjalnym playerem YouTube, jest OK.
     Żadnych obietnic zdrowotnych w UI (przerwa to propozycje ruchu, nie terapia).
 11. **Prywatność**: nic nie opuszcza komputera poza ruchem, który wybrał użytkownik (muzyka, opcjonalnie Graph dla Teams i kalendarza Microsoft,
@@ -128,7 +140,10 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
     token Google, linki ICS i tokeny narzędzi tylko w plikach szyfrowanych DPAPI (`focus-platform/src/secrets.rs`), nigdy w `config.json` ani w logach;
     tematy spotkań i tytuły zadań tylko lokalnie, nigdy w logach, historii, moście ani rozszerzeniu (toast podaje tylko liczbę).
     Kolejność „Co dalej?” liczy `focus-core` lokalnie; nic nie trafia do modeli AI (ADR-016, ADR-017).
-    Most słucha tylko na `127.0.0.1` i tylko udostępnia stan; rozszerzenie nie wysyła adresów stron i nie ładuje zdalnego kodu.
+    Most słucha tylko na `127.0.0.1` i tylko udostępnia stan, z jednym wyjątkiem: `POST /v1/report`, w którym rozszerzenie zgłasza wzorce z listy aplikacji,
+    których przeglądarka nie przyjęła jako reguł (tylko origin rozszerzenia + nagłówek `X-FocusMode-Extension: 1`, sprawdzany `Host`, limity rozmiaru;
+    aplikacja zostawia tylko wzorce z bieżącej listy; ADR-018). Innych zapisów do mostu nie dodajemy bez nowego ADR.
+    Rozszerzenie nie wysyła adresów stron ani tytułów i nie ładuje zdalnego kodu.
     Tracker zapisuje nazwy procesów i sumy czasu, a tytuły okien **tylko przy włączonym `trackTitles`**: przycięte, tylko lokalnie w `history.jsonl`
     (przy wyłączonym `keepHistory` nic), **nigdy w logach** (także nie w `Debug`), moście, rozszerzeniu ani w sieci (ADR-015).
     Powierzchnie powłoki Windows (pasek zadań, pulpit, menu Start, `ShellExperienceHost`…) pomijamy. Tokenów nie logujemy.

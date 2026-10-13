@@ -16,10 +16,16 @@ Zasoby dołączone do FocusMode (CLAUDE.md, zasada 10). Każdy nowy plik muzyki,
 
 ## Grafika
 
-### Maskotka — aksolotl w słuchawkach
+### Maskotka — aksolotl w słuchawkach (`static/mascot/`, źródła w `art/mascot/`)
 
 - **Autor:** Bartłomiej Szolc (zespół FocusMode), grafika wygenerowana przez AI na potrzeby projektu.
-- **Prawa:** własność projektu FocusMode; wersja wektorowa przygotowana na podstawie arkusza autora.
+- **Prawa:** własność projektu FocusMode.
+- **Pliki:** arkusze źródłowe autora `art/mascot/axolotl-sheet.webp` i `art/mascot/axolotl-peek-sheet.webp`; w aplikacji atlasy klatek
+  `static/mascot/axo-atlas.webp` (24 klatki) i `static/mascot/peek-atlas.webp` (14 klatek) z manifestami `axo-manifest.json` i `peek-manifest.json`.
+- **Obróbka:** arkusze zostały **powiększone ×4 narzędziem [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)** (`realesrgan-ncnn-vulkan` v0.2.5.0,
+  licencja BSD-3, model `realesrgan-x4plus-anime`), a potem wycięte na klatki i wyrównane (wspólna skala i kotwica, usunięta miękka poświata krawędzi;
+  `tools/mascot/`, opis w `art/mascot/README.md`). Grafika **nie jest wektoryzowana, przerysowywana ani przekolorowana**: klatki to oryginalne rysunki autora.
+  Real-ESRGAN służył tylko do przygotowania plików i nie trafia do aplikacji. Pikselowy wygląd w motywie 8-bit to efekt wyświetlania, pliki się nie zmieniają (ADR-018).
 
 ## Dźwięki
 
