@@ -103,7 +103,10 @@
         disabled={calendar.refreshing}
         aria-label={calendar.refreshing ? c.refreshing : c.refresh}
         title={calendar.refreshing ? c.refreshing : c.refresh}
-        onclick={() => calendar.refresh()}
+        onclick={() => {
+          // A developer-mode sample is shown: no calendar is contacted for it (ADR-019).
+          if (calendar.sample === null) void calendar.refresh();
+        }}
       >
         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" class:spin={calendar.refreshing}>
           <path

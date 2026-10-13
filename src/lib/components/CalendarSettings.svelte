@@ -16,7 +16,8 @@
 
   const cfg = $derived(config.value);
   const cal = $derived(cfg?.calendar ?? null);
-  const status = $derived(calendar.status);
+  // Always the shell's status: developer-mode samples (ADR-019) are never shown in Settings.
+  const status = $derived(calendar.real);
   const anyOn = $derived(cal !== null && (cal.microsoft || cal.google || cal.ics));
 
   const microsoft = $derived(calendar.source("microsoft"));

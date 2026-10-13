@@ -15,6 +15,7 @@ export const en: Strings = {
     focus: "Focus",
     summary: "Summary",
     settings: "Settings",
+    developer: "Developer",
   },
 
   phase: {
@@ -375,6 +376,11 @@ export const en: Strings = {
     systemTitle: "System",
     launchOnLogin: "Start FocusMode when I sign in",
     launchOnLoginHint: "After you sign in, FocusMode starts minimized to the tray (the icon next to the clock).",
+
+    developerTitle: "Developer",
+    developerMode: "Enable Developer Mode",
+    developerModeHint:
+      "Adds a Developer tab with buttons that trigger pop-ups, notifications and mascot reactions — for testing and screenshots. Sample data is never saved.",
 
     launchersTitle: "Game launchers",
     launchers: "Close game launchers when focus starts",

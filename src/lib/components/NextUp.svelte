@@ -28,18 +28,20 @@
   });
 
   const cfg = $derived(config.value);
-  const enabled = $derived(workEnabled(cfg));
+  const realEnabled = $derived(workEnabled(cfg));
+  /** A developer-mode sample (ADR-019) shows the card even without a connected tool. */
+  const enabled = $derived(realEnabled || work.sample !== null);
 
   // The list is on screen: read it through `get_work`, so the shell counts its items as seen ("nowe" and the
   // held count clear with the next status). Runs again when the tools are switched on.
   $effect(() => {
-    if (enabled) void work.reload();
+    if (realEnabled) void work.reload();
   });
   const status = $derived(work.status);
   const items = $derived(status?.items ?? []);
   const shown = $derived(items.slice(0, expanded ? MORE_COUNT : TOP_COUNT));
   const moreCount = $derived(Math.max(0, Math.min(items.length, MORE_COUNT) - TOP_COUNT));
-  const goal = $derived(session.snapshot.goal ?? null);
+  const goal = $derived(session.goal);
   /**
    * New items. While focus runs they are held (`heldCount`); when the break starts the shell announces them and
    * empties the count, so from then on they are the items still marked `unseen`.
@@ -99,7 +101,10 @@
           disabled={work.refreshing}
           aria-label={work.refreshing ? w.refreshing : w.refresh}
           title={work.refreshing ? w.refreshing : w.refresh}
-          onclick={() => work.refresh()}
+          onclick={() => {
+            // A developer-mode sample is shown: no tool is contacted for it (ADR-019).
+            if (work.sample === null) void work.refresh();
+          }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" class:spin={work.refreshing}>
             <path

@@ -2,9 +2,9 @@
   // Shell of the main window. The overlay window (/popup) uses the (overlay) group instead, so the
   // music player, the subscriptions and the toasts run in exactly one window.
   import "../../app.css";
-  import { onMount, type Snippet } from "svelte";
+  import { onMount, untrack, type Snippet } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
-  import { onNavigate } from "$app/navigation";
+  import { goto, onNavigate } from "$app/navigation";
   import { page } from "$app/state";
   import AppLogo from "$lib/components/AppLogo.svelte";
   import Background from "$lib/components/Background.svelte";
@@ -16,6 +16,7 @@
   import MusicPlayer from "$lib/player/MusicPlayer.svelte";
   import { initAppState } from "$lib/state/app";
   import { config } from "$lib/state/config.svelte";
+  import { dev, useDevRequests } from "$lib/state/dev.svelte";
   import { music } from "$lib/state/music.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
@@ -25,8 +26,12 @@
 
   onMount(() => initAppState());
 
-  /** In tab order: the highlight, the background pan and the page slide all follow this order. */
-  const links = [
+  interface NavLink {
+    href: string;
+    readonly label: string;
+  }
+
+  const BASE_LINKS: readonly NavLink[] = [
     {
       href: "/",
       get label() {
@@ -47,7 +52,51 @@
     },
   ];
 
+  /** The 4th tab, only in developer mode (ADR-019) and not while "Clean screenshots" hides it. */
+  const DEV_LINK: NavLink = {
+    href: "/dev",
+    get label() {
+      return strings.nav.developer;
+    },
+  };
+
+  /** In tab order: the highlight, the background pan and the page slide all follow this order. */
+  const links = $derived<readonly NavLink[]>(dev.tabVisible ? [...BASE_LINKS, DEV_LINK] : BASE_LINKS);
+
   const path = $derived(page.url.pathname);
+
+  // ---------------------------------------------------------------------------
+  // Developer mode (ADR-019)
+  // ---------------------------------------------------------------------------
+
+  /** Developer mode was on in this window (so switching it off resets the page's memory once). */
+  let devWasOn = false;
+
+  // Switched off (in Settings, or a config without it): stop the samples, and leave the Developer page.
+  $effect(() => {
+    if (!config.ready) return;
+    if (dev.enabled) {
+      devWasOn = true;
+      return;
+    }
+    if (devWasOn) {
+      devWasOn = false;
+      untrack(() => dev.reset());
+    }
+    if (path === "/dev" || path.startsWith("/dev/")) void goto("/settings", { replaceState: true });
+  });
+
+  // Banners and toasts asked for by the Developer page, once Skupienie is shown.
+  useDevRequests("layout", (request) => request.run());
+
+  /** Ctrl+Shift+D brings the Developer tab back after "Clean screenshots" and opens it. */
+  function onKeydown(event: KeyboardEvent): void {
+    const shortcut = event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.code === "KeyD";
+    if (!shortcut || !dev.enabled) return;
+    event.preventDefault();
+    void dev.showTab();
+  }
+
   const reserveVideo = $derived(music.videoVisible && music.videoExpanded);
   const reducedMotion = new MediaQuery("(prefers-reduced-motion: reduce)");
 
@@ -121,17 +170,30 @@
     };
   }
 
-  // After the DOM shows the new aria-current.
-  $effect(() => placeHighlight(activeIndex));
+  let navObserver: ResizeObserver | null = null;
+
+  // After the DOM shows the new aria-current, and after the Developer tab came or went (the links moved).
+  $effect(() => {
+    const index = activeIndex;
+    // Read so the effect re-runs when the tab count changes; a new link is measured too (observing an observed
+    // element again is a no-op).
+    const tabCount = links.length;
+    if (tabCount > 0 && navEl && navObserver) {
+      for (const link of navEl.querySelectorAll("a")) navObserver.observe(link);
+    }
+    placeHighlight(index);
+  });
 
   /** Re-measures when the nav or a link changes size (window width, theme font, wrapping on small screens). */
   function observeNav(nav: HTMLElement): () => void {
     navEl = nav;
     const observer = new ResizeObserver(() => placeHighlight(tabIndexOf(page.url.pathname)));
+    navObserver = observer;
     observer.observe(nav);
     for (const link of nav.querySelectorAll("a")) observer.observe(link);
     return () => {
       observer.disconnect();
+      navObserver = null;
       navEl = null;
     };
   }
@@ -184,7 +246,9 @@
   });
 </script>
 
-<Background {theme} pan={panIndex} />
+<svelte:window onkeydown={onKeydown} />
+
+<Background {theme} pan={panIndex} steps={links.length - 1} />
 
 <div class="app" class:with-video={reserveVideo}>
   <header class="top">

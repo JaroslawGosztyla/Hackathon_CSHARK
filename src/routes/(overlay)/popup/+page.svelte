@@ -123,6 +123,11 @@
    * window taller for it, hides it after a long upper bound).
    */
   const waitsForAnswer = $derived(kind === "meetingReminder" && meeting !== null);
+  /**
+   * A developer-mode sample with "Keep popup open" (ADR-019): it stays until X, and its countdown bar stays full
+   * (frozen) so a screenshot shows it like a fresh popup. After a button it still closes like any popup.
+   */
+  const sticky = $derived(info?.sticky === true);
 
   const title = $derived.by((): string => {
     if (!info?.kind) return "";
@@ -314,7 +319,7 @@
 
   function runCountdown(): void {
     stopCountdown();
-    if (!visible || busy || leaving || waitsForAnswer) return;
+    if (!visible || busy || leaving || waitsForAnswer || (sticky && !acted)) return;
     deadline = performance.now() + remainingMs;
     timer = setTimeout(() => {
       timer = null;

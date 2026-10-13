@@ -17,6 +17,7 @@ export const es: Strings = {
     focus: "Concentración",
     summary: "Resumen",
     settings: "Configuración",
+    developer: "Desarrollador",
   },
 
   phase: {
@@ -381,6 +382,11 @@ export const es: Strings = {
     launchOnLogin: "Abrir FocusMode al iniciar sesión",
     launchOnLoginHint:
       "Al iniciar sesión, FocusMode se abre minimizado en el área de notificación (el icono junto al reloj).",
+
+    developerTitle: "Desarrollador",
+    developerMode: "Activar el modo desarrollador",
+    developerModeHint:
+      "Añade una pestaña Desarrollador con botones que muestran las ventanas emergentes, las notificaciones y las reacciones de la mascota, para pruebas y capturas de pantalla. Los datos de ejemplo nunca se guardan.",
 
     launchersTitle: "Lanzadores de juegos",
     launchers: "Cerrar los lanzadores de juegos al empezar la concentración",

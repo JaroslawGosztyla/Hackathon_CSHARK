@@ -2,7 +2,7 @@
 import * as api from "$lib/api";
 import { unlockAudio } from "$lib/player/noise";
 import { strings } from "$lib/strings";
-import type { PhaseChange, SessionSnapshot } from "$lib/types";
+import type { MeetingHoldView, PhaseChange, SessionGoal, SessionSnapshot } from "$lib/types";
 import { config } from "./config.svelte";
 import { toasts } from "./toasts.svelte";
 
@@ -37,6 +37,17 @@ class SessionStore {
   isIdle = $derived(this.snapshot.phase === "idle");
   /** Focus or Break and not paused. */
   running = $derived(this.snapshot.phase !== "idle" && !this.snapshot.paused);
+
+  /**
+   * Developer-mode samples (ADR-019, memory only): shown instead of the session's goal / meeting hold until cleared.
+   * Never sent to the shell, so they cannot reach the summary or the history.
+   */
+  sampleGoal = $state.raw<SessionGoal | null>(null);
+  sampleHold = $state.raw<MeetingHoldView | null>(null);
+  /** The goal to show: the sample layer wins over the snapshot. */
+  goal = $derived(this.sampleGoal ?? this.snapshot.goal ?? null);
+  /** The meeting hold to show (only a running session has one; a sample shows in any phase). */
+  meetingHold = $derived(this.sampleHold ?? (this.snapshot.phase === "idle" ? null : this.snapshot.meetingHold));
 
   /** Takes a snapshot unless it is older than the one shown (it may come from the event or from `reload`). */
   apply(snapshot: SessionSnapshot): void {

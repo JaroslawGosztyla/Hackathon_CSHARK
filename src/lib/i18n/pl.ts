@@ -38,6 +38,7 @@ export const pl = {
     focus: "Skupienie",
     summary: "Podsumowanie",
     settings: "Ustawienia",
+    developer: "Deweloper",
   },
 
   phase: {
@@ -400,6 +401,11 @@ export const pl = {
     systemTitle: "System",
     launchOnLogin: "Uruchamiaj FocusMode przy logowaniu",
     launchOnLoginHint: "Po zalogowaniu do systemu FocusMode uruchamia się zminimalizowany do zasobnika (ikona obok zegara).",
+
+    developerTitle: "Deweloper",
+    developerMode: "Włącz tryb dewelopera",
+    developerModeHint:
+      "Dodaje zakładkę „Deweloper” z przyciskami, które wywołują okienka, powiadomienia i reakcje maskotki — do testów i zrzutów ekranu. Przykładowe dane nie są nigdzie zapisywane.",
 
     launchersTitle: "Launchery gier",
     launchers: "Zamykaj launchery gier na początku skupienia",

@@ -27,7 +27,8 @@
 
   const cfg = $derived(config.value);
   const wcfg = $derived((cfg?.work as Config["work"] | undefined) ?? null);
-  const status = $derived(work.status);
+  // Always the shell's status: developer-mode samples (ADR-019) are never shown in Settings.
+  const status = $derived(work.real);
   const anyOn = $derived(WORK_SOURCES.some((source) => sourceEnabled(cfg, source)));
 
   /** Token inputs (component state only; emptied after a save and when a tool is switched off). */

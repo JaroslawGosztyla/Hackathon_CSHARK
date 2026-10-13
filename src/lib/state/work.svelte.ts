@@ -4,10 +4,12 @@
 // Access tokens are secrets: they live only in the Settings input until they are sent, are never kept in this
 // store, and never appear in errors, toasts or logs. Nothing here sends work items anywhere.
 import * as api from "$lib/api";
+import { sampleTexts } from "$lib/i18n/dev";
 import { errorText, strings } from "$lib/strings";
 import type { AppError, Config, SessionGoal, WorkItem, WorkSource, WorkSourceStatus, WorkStatus } from "$lib/types";
 import { config } from "./config.svelte";
 import { redactLinks } from "./calendar.svelte";
+import { isSampleUrl } from "./samples";
 import { session } from "./session.svelte";
 import { toasts } from "./toasts.svelte";
 
@@ -101,21 +103,41 @@ export function isGoalItem(goal: SessionGoal | null, item: WorkItem): boolean {
 }
 
 class WorkStore {
-  status = $state.raw<WorkStatus | null>(null);
+  /** From the shell (`work://changed` and the commands below), revision-guarded. Settings shows only this. */
+  real = $state.raw<WorkStatus | null>(null);
+  /**
+   * Developer-mode sample (ADR-019): memory only, its items have `dev-sample-` ids and links that are never opened.
+   * Shown instead of `real` until `clearSample`.
+   */
+  sample = $state.raw<WorkStatus | null>(null);
   refreshing = $state(false);
   /** A `set_work_token` call is in flight for these tools (the buttons wait). */
   tokenBusy = $state<Partial<Record<WorkSource, boolean>>>({});
   /** A `set_session_goal` call is in flight. */
   goalBusy = $state(false);
 
-  apply(status: WorkStatus): void {
-    const current = this.status;
-    if (current && !api.isNewerRevision(status.revision, current.revision)) return;
-    this.status = status;
+  /** What "Co dalej?" shows: the sample layer wins over the shell's status. */
+  get status(): WorkStatus | null {
+    return this.sample ?? this.real;
   }
 
+  apply(status: WorkStatus): void {
+    const current = this.real;
+    if (current && !api.isNewerRevision(status.revision, current.revision)) return;
+    this.real = status;
+  }
+
+  /** The state of a connected tool (always the real one: Settings never shows samples). */
   source(source: WorkSource): WorkSourceStatus | null {
-    return this.status?.sources.find((s) => s.source === source) ?? null;
+    return this.real?.sources.find((s) => s.source === source) ?? null;
+  }
+
+  showSample(status: WorkStatus): void {
+    this.sample = status;
+  }
+
+  clearSample(): void {
+    this.sample = null;
   }
 
   /**
@@ -169,9 +191,18 @@ class WorkStore {
   /** Sets (or with `null` clears) the session goal; works in every phase. Resolves true when the shell took it. */
   async setGoal(goal: SessionGoal | null): Promise<boolean> {
     if (this.goalBusy) return false;
+    // Developer-mode samples (ADR-019): a sample goal is cleared, and a goal picked from sample items is set, only in
+    // memory (a goal in the shell would end up in the summary and the history). A real goal goes to the shell and
+    // replaces a sample goal on screen.
+    const sampleGoal = goal === null ? session.sampleGoal !== null : this.sample !== null || isSampleUrl(goal.url);
+    if (sampleGoal) {
+      session.sampleGoal = goal;
+      return true;
+    }
     this.goalBusy = true;
     try {
       await api.setSessionGoal(goal);
+      session.sampleGoal = null;
       // The shell emits a snapshot with the goal; read it too, so the goal shows at once also while idle.
       await session.reload();
       return true;
@@ -186,6 +217,11 @@ class WorkStore {
   /** Opens an item's (or the goal's) link in the default browser. */
   async open(url: string): Promise<void> {
     if (!isOpenableUrl(url)) return;
+    // Developer-mode sample links lead nowhere and never leave the computer (ADR-019).
+    if (isSampleUrl(url)) {
+      toasts.push(sampleTexts().linkNotOpened, "info");
+      return;
+    }
     try {
       await api.openExternal(url.trim());
     } catch (e) {

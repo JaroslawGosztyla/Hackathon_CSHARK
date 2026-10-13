@@ -1,7 +1,9 @@
 <script lang="ts">
   // Window background: the theme's sky (`--app-bg`) plus its decorations. Purely visual (aria-hidden). The layer is
   // a little wider than the window and pans left as the user moves right through the tabs (`pan` = tab index),
-  // so switching tabs feels like moving along one scene. Static when the user prefers reduced motion.
+  // so switching tabs feels like moving along one scene. The whole pan range stays the same with 3 or 4 tabs (the
+  // Developer tab, ADR-019): `steps` (tabs − 1) only divides it, so the scene never shows its edge or resizes.
+  // Static when the user prefers reduced motion.
   import type { Component } from "svelte";
   import type { Theme } from "$lib/themes";
   import Autumn from "./backgrounds/Autumn.svelte";
@@ -10,7 +12,11 @@
   import Pixel from "./backgrounds/Pixel.svelte";
   import Vaporwave from "./backgrounds/Vaporwave.svelte";
 
-  let { theme, pan = 0 }: { theme: Theme; pan?: number } = $props();
+  let { theme, pan = 0, steps = 2 }: { theme: Theme; pan?: number; steps?: number } = $props();
+
+  /** At least one step (a single tab never pans), and the pan never runs past the last step. */
+  const stepCount = $derived(Math.max(1, Math.trunc(steps)));
+  const panSteps = $derived(Math.min(Math.max(0, pan), stepCount));
 
   /** Basic dark and basic light are plain on purpose: no decorations. */
   const SCENES: Record<Theme, Component | null> = {
@@ -26,7 +32,7 @@
   const Scene = $derived(SCENES[theme]);
 </script>
 
-<div class="backdrop" aria-hidden="true" style:--pan={pan}>
+<div class="backdrop" aria-hidden="true" style:--pan={panSteps} style:--pan-steps={stepCount}>
   {#if Scene}
     <Scene />
   {/if}
@@ -34,13 +40,15 @@
 
 <style>
   .backdrop {
-    /* One tab step of the pan; the layer is two steps wider than the window so its edge never shows. */
-    --pan-step: 2.5vw;
+    /* The whole pan (first tab → last tab); the layer is that much wider than the window so its edge never shows. */
+    --pan-range: 5vw;
+    /* One tab step of the pan: 2.5vw with 3 tabs, a third of the range with 4. */
+    --pan-step: calc(var(--pan-range) / var(--pan-steps, 2));
     position: fixed;
     top: 0;
     left: 0;
     bottom: 0;
-    width: calc(100% + 2 * var(--pan-step) + 2px);
+    width: calc(100% + var(--pan-range) + 2px);
     z-index: 0;
     pointer-events: none;
     overflow: hidden;

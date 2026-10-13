@@ -17,6 +17,7 @@ export const fr: Strings = {
     focus: "Concentration",
     summary: "Résumé",
     settings: "Paramètres",
+    developer: "Développeur",
   },
 
   phase: {
@@ -385,6 +386,11 @@ export const fr: Strings = {
     launchOnLogin: "Lancer FocusMode à l'ouverture de session",
     launchOnLoginHint:
       "Après l'ouverture de session, FocusMode démarre réduit dans la zone de notification (l'icône à côté de l'horloge).",
+
+    developerTitle: "Développeur",
+    developerMode: "Activer le mode développeur",
+    developerModeHint:
+      "Ajoute un onglet Développeur avec des boutons qui déclenchent les fenêtres pop-up, les notifications et les réactions de la mascotte, pour les tests et les captures d'écran. Les données d'exemple ne sont jamais enregistrées.",
 
     launchersTitle: "Lanceurs de jeux",
     launchers: "Fermer les lanceurs de jeux au début de la concentration",

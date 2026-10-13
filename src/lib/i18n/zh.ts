@@ -13,6 +13,7 @@ export const zh: Strings = {
     focus: "专注",
     summary: "总结",
     settings: "设置",
+    developer: "开发者",
   },
 
   phase: {
@@ -367,6 +368,10 @@ export const zh: Strings = {
     systemTitle: "系统",
     launchOnLogin: "登录时启动 FocusMode",
     launchOnLoginHint: "登录后，FocusMode 会以最小化到系统托盘（时钟旁边的图标）的方式启动。",
+
+    developerTitle: "开发者",
+    developerMode: "启用开发者模式",
+    developerModeHint: "添加“开发者”标签页，其中的按钮可以触发弹窗、通知和吉祥物的反应，便于测试和截图。示例数据不会被保存。",
 
     launchersTitle: "游戏启动器",
     launchers: "专注开始时关闭游戏启动器",

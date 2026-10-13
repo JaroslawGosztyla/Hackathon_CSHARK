@@ -5,6 +5,7 @@
   import * as api from "$lib/api";
   import AppLogo from "$lib/components/AppLogo.svelte";
   import { config } from "$lib/state/config.svelte";
+  import { useDevRequests } from "$lib/state/dev.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
   import { errorText, strings } from "$lib/strings";
 
@@ -21,7 +22,7 @@
     let disposed = false;
     let unlisten: api.UnlistenFn | null = null;
     api
-      .listenCloseRequested(show)
+      .listenCloseRequested(() => show())
       .then((u) => {
         if (disposed) u();
         else unlisten = u;
@@ -33,13 +34,19 @@
     };
   });
 
-  function show(): void {
+  /** Shown from the Developer page (ADR-019): the buttons only close it (nothing stored, the app stays). */
+  let sample = false;
+
+  function show(asSample = false): void {
     if (!dialog || dialog.open) return;
+    sample = asSample;
     restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     error = null;
     dialog.showModal();
     primary?.focus();
   }
+
+  useDevRequests("closePrompt", () => show(true));
 
   /** `close` fires for the buttons and for Escape (the dialog's `cancel`), which just keeps the app open. */
   function onClosed(): void {
@@ -50,6 +57,10 @@
 
   async function answer(toTray: boolean): Promise<void> {
     if (busy) return;
+    if (sample) {
+      dialog?.close();
+      return;
+    }
     busy = true;
     try {
       const saved = await api.resolveClose(toTray);

@@ -6,7 +6,8 @@
 
   const c = strings.calendar;
 
-  const hold = $derived(session.isIdle ? null : session.snapshot.meetingHold);
+  /** A running session's meeting hold, or a developer-mode sample (ADR-019). */
+  const hold = $derived(session.meetingHold);
   const subject = $derived(hold ? hold.subject.trim() || c.untitled : "");
   const until = $derived(hold ? formatTimeNear(hold.untilMs) : "");
   const extended = $derived(hold?.choice === "extend");

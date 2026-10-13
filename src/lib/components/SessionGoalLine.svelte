@@ -7,7 +7,8 @@
 
   const w = strings.work;
 
-  const goal = $derived(session.snapshot.goal ?? null);
+  /** The session's goal, or a developer-mode sample (ADR-019). */
+  const goal = $derived(session.goal);
   const name = $derived(goal ? w.itemName(goal.key, goal.title) : "");
   const openable = $derived(goal !== null && isOpenableUrl(goal.url));
 </script>

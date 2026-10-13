@@ -23,6 +23,7 @@ export const de: Strings = {
     focus: "Fokus",
     summary: "Zusammenfassung",
     settings: "Einstellungen",
+    developer: "Entwickler",
   },
 
   phase: {
@@ -383,6 +384,11 @@ export const de: Strings = {
     systemTitle: "System",
     launchOnLogin: "FocusMode bei der Anmeldung starten",
     launchOnLoginHint: "Nach der Anmeldung startet FocusMode minimiert im Infobereich (das Symbol neben der Uhr).",
+
+    developerTitle: "Entwickler",
+    developerMode: "Entwicklermodus aktivieren",
+    developerModeHint:
+      "Fügt den Tab „Entwickler“ mit Schaltflächen hinzu, die Pop-ups, Benachrichtigungen und Reaktionen des Maskottchens auslösen – zum Testen und für Screenshots. Beispieldaten werden nie gespeichert.",
 
     launchersTitle: "Spiele-Launcher",
     launchers: "Spiele-Launcher zu Beginn des Fokus schließen",

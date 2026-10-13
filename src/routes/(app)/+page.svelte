@@ -13,10 +13,10 @@
   import { formatDuration } from "$lib/format";
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
   import FocusMascot, { MASCOT_WIDTH } from "$lib/mascot/FocusMascot.svelte";
-  import { calendarEnabled } from "$lib/state/calendar.svelte";
+  import { calendar, calendarEnabled } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
-  import { workEnabled } from "$lib/state/work.svelte";
+  import { work, workEnabled } from "$lib/state/work.svelte";
   import { strings } from "$lib/strings";
 
   const snap = $derived(session.snapshot);
@@ -30,10 +30,16 @@
   });
   const remaining = $derived(session.isIdle ? idleSecs : snap.remainingSecs);
   const total = $derived(session.isIdle ? idleSecs : snap.phaseTotalSecs);
-  const calendarOn = $derived(calendarEnabled(config.value));
-  const workOn = $derived(workEnabled(config.value));
-  /** "Co dalej?" stays out of the focus phase unless the user turned off holding notifications during focus. */
-  const workDuringFocus = $derived(workOn && config.value?.work.holdDuringFocus === false);
+  // A developer-mode sample (ADR-019) shows its card even without a connected calendar / tool.
+  const calendarOn = $derived(calendarEnabled(config.value) || calendar.sample !== null);
+  const workOn = $derived(workEnabled(config.value) || work.sample !== null);
+  /**
+   * "Co dalej?" stays out of the focus phase unless the user turned off holding notifications during focus; a
+   * developer-mode sample (ADR-019) shows in every phase, so the button always has something to capture.
+   */
+  const workDuringFocus = $derived(
+    work.sample !== null || (workOn && config.value?.work.holdDuringFocus === false),
+  );
   /** The axolotl stands at the hero's bottom-left: the centred content under the ring keeps clear of it. */
   const mascotOn = $derived(mascotEnabled(config.value));
 

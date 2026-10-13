@@ -23,6 +23,7 @@
   import { breakTip } from "$lib/state/breakTip.svelte";
   import { calendar, calendarEnabled } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
+  import { dev, useDevRequests } from "$lib/state/dev.svelte";
   import { nudge } from "$lib/state/nudge.svelte";
   import { session } from "$lib/state/session.svelte";
   import { work, workEnabled } from "$lib/state/work.svelte";
@@ -74,7 +75,8 @@
   // Face: the session decides the mood; events play a reaction on top of it.
   // ---------------------------------------------------------------------------
 
-  const mood = $derived(sessionMood(session.snapshot));
+  /** A mood held from the Developer page (ADR-019) wins over the session's. */
+  const mood = $derived(dev.mascotMood ?? sessionMood(session.snapshot));
   $effect(() => {
     const next = mood;
     untrack(() => mascot.setMood(next));
@@ -100,12 +102,14 @@
   // What it says about the current state (not urgent: at most one message per gap, the newest wins).
   // ---------------------------------------------------------------------------
 
-  /** First meeting of an idle session's plan that falls into a break and has no choice yet. */
+  /** First meeting of an idle session's plan that falls into a break and has no choice yet (or of a dev sample). */
   const undecided = $derived.by(() => {
-    if (!session.isIdle || !calendarEnabled(config.value)) return null;
+    if (!session.isIdle || !(calendarEnabled(config.value) || calendar.sample !== null)) return null;
     return calendar.status?.conflicts.find((c) => c.choice === null) ?? null;
   });
-  const topItem = $derived(workEnabled(config.value) ? (work.status?.items[0] ?? null) : null);
+  const topItem = $derived(
+    workEnabled(config.value) || work.sample !== null ? (work.status?.items[0] ?? null) : null,
+  );
 
   const idleLine = $derived.by((): MascotLine | null => {
     if (!session.isIdle) return null;
@@ -218,6 +222,33 @@
   function boingEnded(e: AnimationEvent): void {
     if (e.target === e.currentTarget) boinging = false;
   }
+
+  // ---------------------------------------------------------------------------
+  // Developer page (ADR-019): reactions, the tickle and sample lines, once this page has mounted.
+  // ---------------------------------------------------------------------------
+
+  /** Tag of the Developer page's lines (an urgent message, like an event's). */
+  const DEV_TAG = "dev";
+
+  useDevRequests("mascot", ({ action }) => {
+    if (!show) return;
+    speech.clear();
+    switch (action.type) {
+      case "react": {
+        mascot.react(action.reaction);
+        const lines = EVENT_LINES[action.reaction]?.();
+        if (lines) speech.say({ text: pick(lines), urgent: true, tag: "event" });
+        break;
+      }
+      case "tickle":
+        readyAt = 0;
+        tickle();
+        break;
+      case "say":
+        speech.say({ text: action.text, label: action.label, urgent: true, tag: DEV_TAG });
+        break;
+    }
+  });
 
   // A boing cut short (e.g. reduced motion switched on meanwhile) ends too, so it never replays by itself later.
   $effect(() => {

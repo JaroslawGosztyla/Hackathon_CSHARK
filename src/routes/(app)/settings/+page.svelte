@@ -351,6 +351,20 @@
         onchange={(on) => void setLaunchOnLogin(on)}
       />
     </section>
+
+    <!-- Last on purpose: a tool for tests and screenshots (ADR-019); its page itself is English only. -->
+    <section class="card" aria-labelledby="developer-settings">
+      <div class="card-title">
+        <h2 id="developer-settings">{strings.settings.developerTitle}</h2>
+      </div>
+      <Switch
+        id="developer-mode"
+        label={strings.settings.developerMode}
+        hint={strings.settings.developerModeHint}
+        checked={cfg.developerMode === true}
+        onchange={(on) => set((c) => (c.developerMode = on))}
+      />
+    </section>
   {/if}
 </div>
 

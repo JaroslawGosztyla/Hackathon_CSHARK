@@ -6,6 +6,7 @@ import * as api from "$lib/api";
 import { errorText } from "$lib/strings";
 import type { AppError, CalendarSource, CalendarSourceStatus, CalendarStatus, Config, MeetingChoice } from "$lib/types";
 import { config } from "./config.svelte";
+import { isSampleId } from "./samples";
 import { toasts } from "./toasts.svelte";
 
 /** Anything that looks like a link (`https://…`, `webcal://…`, `www.…`); cut out of every text shown to the user. */
@@ -64,21 +65,41 @@ export function parseIcsLines(text: string): { urls: string[]; invalidLines: num
 }
 
 class CalendarStore {
-  status = $state.raw<CalendarStatus | null>(null);
+  /** From the shell (`calendar://changed` and the commands below), revision-guarded. Settings shows only this. */
+  real = $state.raw<CalendarStatus | null>(null);
+  /**
+   * Developer-mode sample (ADR-019): memory only, its meetings have `dev-sample-` ids and its choices never reach the
+   * shell. Shown instead of `real` until `clearSample`.
+   */
+  sample = $state.raw<CalendarStatus | null>(null);
   /** Choice sent for a meeting id and not answered yet; shown right away and blocks a second click. */
   pending = $state<Record<string, MeetingChoice>>({});
   refreshing = $state(false);
   /** `connect_google` is being called (the shell then reports `googlePending` itself). */
   googleStarting = $state(false);
 
-  apply(status: CalendarStatus): void {
-    const current = this.status;
-    if (current && !api.isNewerRevision(status.revision, current.revision)) return;
-    this.status = status;
+  /** What the Skupienie page shows: the sample layer wins over the shell's status. */
+  get status(): CalendarStatus | null {
+    return this.sample ?? this.real;
   }
 
+  apply(status: CalendarStatus): void {
+    const current = this.real;
+    if (current && !api.isNewerRevision(status.revision, current.revision)) return;
+    this.real = status;
+  }
+
+  /** The state of a connected calendar (always the real one: Settings never shows samples). */
   source(source: CalendarSource): CalendarSourceStatus | null {
-    return this.status?.sources.find((s) => s.source === source) ?? null;
+    return this.real?.sources.find((s) => s.source === source) ?? null;
+  }
+
+  showSample(status: CalendarStatus): void {
+    this.sample = status;
+  }
+
+  clearSample(): void {
+    this.sample = null;
   }
 
   /** Reads the current status again (planned breaks move with the clock while idle). Failures stay quiet. */
@@ -107,6 +128,17 @@ class CalendarStore {
   /** Stores how a colliding meeting is handled. Resolves true when the shell accepted it. */
   async choose(meetingId: string, choice: MeetingChoice): Promise<boolean> {
     if (meetingId in this.pending) return false;
+    // A sample meeting: the choice is shown, never stored (ADR-019).
+    if (isSampleId(meetingId)) {
+      const sample = this.sample;
+      if (sample) {
+        this.sample = {
+          ...sample,
+          conflicts: sample.conflicts.map((c) => (c.meeting.id === meetingId ? { ...c, choice } : c)),
+        };
+      }
+      return true;
+    }
     this.pending[meetingId] = choice;
     try {
       this.apply(await api.setMeetingChoice(meetingId, choice));

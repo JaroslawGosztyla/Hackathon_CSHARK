@@ -1,17 +1,39 @@
-// Last session summary + history (newest first).
+// Last session summary + history (newest first). Two layers: `real` (from the shell) and `sample` (developer mode,
+// ADR-019: memory only, wins until cleared); the views read `last` / `history`, which pick the layer.
 import * as api from "$lib/api";
 import type { SessionSummary } from "$lib/types";
 import { config } from "./config.svelte";
+import { isSampleId } from "./samples";
 import { toasts } from "./toasts.svelte";
 
 export const HISTORY_LIMIT = 20;
 
+interface SummaryLayer {
+  last: SessionSummary | null;
+  history: SessionSummary[];
+}
+
 class SummaryStore {
-  last = $state<SessionSummary | null>(null);
-  history = $state<SessionSummary[]>([]);
-  loaded = $state(false);
+  /** From the shell (`get_last_summary`, `list_history`, `session://summary`). */
+  real = $state<SummaryLayer>({ last: null, history: [] });
+  /** Developer-mode sample (ADR-019): never saved, never sent; shown instead of `real` until `clearSample`. */
+  sample = $state<SummaryLayer | null>(null);
+  /** The real history finished loading (or failed). */
+  realLoaded = $state(false);
   /** Session picked in the history list; null = show the last one. */
   selectedId = $state<string | null>(null);
+
+  get last(): SessionSummary | null {
+    return this.sample ? this.sample.last : this.real.last;
+  }
+
+  get history(): SessionSummary[] {
+    return this.sample ? this.sample.history : this.real.history;
+  }
+
+  get loaded(): boolean {
+    return this.sample !== null || this.realLoaded;
+  }
 
   selected = $derived.by((): SessionSummary | null => {
     if (this.selectedId === null) return this.last;
@@ -29,34 +51,54 @@ class SummaryStore {
       // A session that ended while the list was loading is already in `history` via `add()`; keep it,
       // and never show one session id twice (keyed each blocks would throw on duplicates).
       const seen = new Set<string>();
-      const merged = [...$state.snapshot(this.history), ...history].filter((s) => {
+      const merged = [...$state.snapshot(this.real.history), ...history].filter((s) => {
         if (seen.has(s.sessionId)) return false;
         seen.add(s.sessionId);
         return true;
       });
       merged.sort((a, b) => b.endedAtMs - a.endedAtMs);
-      this.history = merged.slice(0, HISTORY_LIMIT);
-      this.last = this.last ?? last ?? this.history[0] ?? null;
-      this.loaded = true;
+      this.real.history = merged.slice(0, HISTORY_LIMIT);
+      this.real.last = this.real.last ?? last ?? this.real.history[0] ?? null;
+      this.realLoaded = true;
     } catch (e) {
       const err = api.toAppError(e);
       if (err.code !== api.ERR_NO_SHELL) toasts.error(err);
-      this.loaded = true;
+      this.realLoaded = true;
     }
   }
 
-  /** A session just ended (`session://summary`). With `keepHistory` off the shell did not store it: no history row. */
+  /**
+   * A session just ended (`session://summary`). With `keepHistory` off the shell did not store it: no history row.
+   * A developer-mode sample goes away: the app opens Podsumowanie for the session that just ended, not the sample.
+   */
   add(summary: SessionSummary): void {
-    this.last = summary;
+    this.real.last = summary;
+    this.sample = null;
     this.selectedId = null;
     if (config.value?.keepHistory !== false) {
-      this.history = [summary, ...this.history.filter((s) => s.sessionId !== summary.sessionId)].slice(0, HISTORY_LIMIT);
+      this.real.history = [summary, ...this.real.history.filter((s) => s.sessionId !== summary.sessionId)].slice(
+        0,
+        HISTORY_LIMIT,
+      );
     }
-    this.loaded = true;
+    this.realLoaded = true;
   }
 
   select(sessionId: string | null): void {
     this.selectedId = sessionId === this.last?.sessionId ? null : sessionId;
+  }
+
+  /** Shows a developer-mode sample instead of the real data (ADR-019). */
+  showSample(sample: SummaryLayer): void {
+    this.sample = sample;
+    this.selectedId = null;
+  }
+
+  /** Back to the real data. */
+  clearSample(): void {
+    if (this.sample === null) return;
+    this.sample = null;
+    this.selectedId = null;
   }
 
   /** A `mark_goal_done` call is in flight for this session. */
@@ -64,11 +106,17 @@ class SummaryStore {
 
   /**
    * "Zrobione?" for the goal of a finished session. Stored in the history by the shell; a session that was not saved
-   * (history off) is only marked here. Resolves true when the answer is shown.
+   * (history off) or a developer-mode sample is only marked here. Resolves true when the answer is shown.
    */
   async markGoalDone(sessionId: string, done: boolean): Promise<boolean> {
     if (this.goalBusyId !== null) return false;
-    const stored = config.value?.keepHistory !== false || this.history.some((s) => s.sessionId === sessionId);
+    if (isSampleId(sessionId)) {
+      for (const s of this.sample?.history ?? []) if (s.sessionId === sessionId) s.goalDone = done;
+      const last = this.sample?.last;
+      if (last?.sessionId === sessionId) last.goalDone = done;
+      return true;
+    }
+    const stored = config.value?.keepHistory !== false || this.real.history.some((s) => s.sessionId === sessionId);
     this.goalBusyId = sessionId;
     try {
       if (stored) await api.markGoalDone(sessionId, done);
@@ -78,8 +126,8 @@ class SummaryStore {
     } finally {
       this.goalBusyId = null;
     }
-    if (this.last?.sessionId === sessionId) this.last.goalDone = done;
-    for (const s of this.history) if (s.sessionId === sessionId) s.goalDone = done;
+    if (this.real.last?.sessionId === sessionId) this.real.last.goalDone = done;
+    for (const s of this.real.history) if (s.sessionId === sessionId) s.goalDone = done;
     return true;
   }
 
@@ -87,10 +135,9 @@ class SummaryStore {
   async clear(): Promise<void> {
     await api.clearHistory();
     this.generation++;
-    this.last = null;
-    this.history = [];
+    this.real = { last: null, history: [] };
     this.selectedId = null;
-    this.loaded = true;
+    this.realLoaded = true;
   }
 }
 

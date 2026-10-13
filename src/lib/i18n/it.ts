@@ -17,6 +17,7 @@ export const it: Strings = {
     focus: "Concentrazione",
     summary: "Riepilogo",
     settings: "Impostazioni",
+    developer: "Sviluppatore",
   },
 
   phase: {
@@ -380,6 +381,11 @@ export const it: Strings = {
     launchOnLogin: "Avvia FocusMode all'accesso",
     launchOnLoginHint:
       "Dopo l'accesso, FocusMode si avvia ridotto a icona nell'area di notifica (l'icona accanto all'orologio).",
+
+    developerTitle: "Sviluppatore",
+    developerMode: "Attiva la modalità sviluppatore",
+    developerModeHint:
+      "Aggiunge una scheda Sviluppatore con pulsanti che mostrano i pop-up, le notifiche e le reazioni della mascotte, per i test e gli screenshot. I dati di esempio non vengono mai salvati.",
 
     launchersTitle: "Launcher di gioco",
     launchers: "Chiudi i launcher di gioco all'inizio della concentrazione",

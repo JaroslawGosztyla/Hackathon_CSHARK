@@ -13,6 +13,7 @@ export const ja: Strings = {
     focus: "集中",
     summary: "まとめ",
     settings: "設定",
+    developer: "開発者",
   },
 
   phase: {
@@ -371,6 +372,10 @@ export const ja: Strings = {
     systemTitle: "システム",
     launchOnLogin: "サインイン時に FocusMode を起動",
     launchOnLoginHint: "サインインすると、FocusMode はシステムトレイ（時計の横のアイコン）に最小化された状態で起動します。",
+
+    developerTitle: "開発者",
+    developerMode: "開発者モードを有効にする",
+    developerModeHint: "ポップアップ、通知、マスコットの反応を表示するボタンを備えた「開発者」タブを追加します。テストやスクリーンショット用です。サンプルデータは保存されません。",
 
     launchersTitle: "ゲームランチャー",
     launchers: "集中の開始時にゲームランチャーを終了",
