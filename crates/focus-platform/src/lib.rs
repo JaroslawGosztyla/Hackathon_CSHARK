@@ -4,7 +4,11 @@
 //! * [`notifications`]: Windows "Do not disturb" (Windows 11) / "Focus assist" (Windows 10).
 //! * [`power`]: keep the display and the system awake during focus.
 //! * [`teams`]: Microsoft Teams presence "Do not disturb" through Microsoft Graph, plus the current presence so the
-//!   shell can skip it while the user appears offline or already chose Do not disturb.
+//!   shell can skip it while the user appears offline or already chose Do not disturb; the Microsoft 365 calendar
+//!   (`calendarView`) through the same sign-in.
+//! * [`calendar`]: meetings from Google Calendar (OAuth loopback + PKCE) and ICS subscription links (RFC 5545 with
+//!   recurring events), read-only.
+//! * [`secrets`]: DPAPI-encrypted files for refresh tokens and calendar links, secure random bytes.
 //! * [`logon`]: one-shot command at the next logon (crash-restore of muted notifications and Night light).
 //! * [`processes`]: close processes by executable name (game launchers when focus starts).
 //! * [`locale`]: the system UI language tag.
@@ -18,15 +22,19 @@
 
 mod base64;
 mod bond;
+pub mod calendar;
 pub mod clock;
 pub mod foreground;
 pub mod gamma;
 pub mod locale;
 pub mod logon;
+mod net;
 pub mod night_light;
 pub mod notifications;
 pub mod power;
 pub mod processes;
+pub mod secrets;
+mod sha256;
 pub mod teams;
 
 /// Error of a platform integration. The shell maps it to `AppError` / `IntegrationState::Error`
@@ -43,6 +51,10 @@ pub enum PlatformError {
     Auth(String),
     #[error("io error: {0}")]
     Io(String),
+    /// Input from the user that cannot be used (e.g. a calendar link that is not HTTPS). English detail that never
+    /// repeats a secret.
+    #[error("invalid input: {0}")]
+    Invalid(String),
 }
 
 impl PlatformError {
@@ -86,6 +98,10 @@ mod tests {
         );
         assert_eq!(PlatformError::Auth("x".into()).to_string(), "auth error: x");
         assert_eq!(PlatformError::Io("x".into()).to_string(), "io error: x");
+        assert_eq!(
+            PlatformError::Invalid("x".into()).to_string(),
+            "invalid input: x"
+        );
     }
 
     #[test]

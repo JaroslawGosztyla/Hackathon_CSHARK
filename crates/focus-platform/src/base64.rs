@@ -1,6 +1,43 @@
-//! Standard base64 (RFC 4648, `A-Z a-z 0-9 + /`, `=` padding) for raw registry values in restore files.
+//! Standard base64 (RFC 4648, `A-Z a-z 0-9 + /`, `=` padding) for raw registry values in restore files, and the
+//! URL-safe unpadded variant (`- _`, RFC 4648 §5) for OAuth PKCE values and JWT payloads.
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// URL-safe base64 without padding (`base64url`, as PKCE and JWT use it).
+pub(crate) fn encode_url(bytes: &[u8]) -> String {
+    encode(bytes)
+        .trim_end_matches('=')
+        .chars()
+        .map(|c| match c {
+            '+' => '-',
+            '/' => '_',
+            other => other,
+        })
+        .collect()
+}
+
+/// Decodes unpadded (or padded) URL-safe base64; `None` for anything else.
+pub(crate) fn decode_url(text: &str) -> Option<Vec<u8>> {
+    if text.contains(['+', '/']) {
+        return None;
+    }
+    let mut standard: String = text
+        .trim_end_matches('=')
+        .chars()
+        .map(|c| match c {
+            '-' => '+',
+            '_' => '/',
+            other => other,
+        })
+        .collect();
+    match standard.len() % 4 {
+        0 => {}
+        2 => standard.push_str("=="),
+        3 => standard.push('='),
+        _ => return None,
+    }
+    decode(&standard)
+}
 
 pub(crate) fn encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -64,7 +101,26 @@ pub(crate) fn decode(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, encode};
+    use super::{decode, decode_url, encode, encode_url};
+
+    #[test]
+    fn url_safe_variant() {
+        assert_eq!(encode_url(&[0xfb, 0xff]), "-_8");
+        assert_eq!(encode_url(b"foob"), "Zm9vYg");
+        assert_eq!(decode_url("-_8").as_deref(), Some(&[0xfb, 0xff][..]));
+        assert_eq!(decode_url("Zm9vYg").as_deref(), Some(&b"foob"[..]));
+        assert_eq!(decode_url("Zm9vYg==").as_deref(), Some(&b"foob"[..]));
+        assert_eq!(decode_url("").as_deref(), Some(&b""[..]));
+        assert_eq!(decode_url("Z"), None);
+        assert_eq!(decode_url("+/8"), None);
+        let bytes: Vec<u8> = (0..=255u8).collect();
+        for len in 0..bytes.len() {
+            assert_eq!(
+                decode_url(&encode_url(&bytes[..len])).as_deref(),
+                Some(&bytes[..len])
+            );
+        }
+    }
 
     #[test]
     fn rfc4648_vectors() {
