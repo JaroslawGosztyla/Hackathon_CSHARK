@@ -96,6 +96,7 @@ impl Default for Config {
             keep_history: true,
             calendar: CalendarConfig::default(),
             work: WorkConfig::default(),
+            show_mascot: true,
         }
     }
 }
@@ -199,6 +200,7 @@ impl Config {
             keep_history,
             calendar,
             work,
+            show_mascot,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -226,6 +228,7 @@ impl Config {
             keep_history,
             calendar: calendar.normalized()?,
             work: work.normalized()?,
+            show_mascot,
         })
     }
 }
@@ -1010,6 +1013,27 @@ mod tests {
                 hold_during_focus: true,
             }
         );
+        assert!(cfg.show_mascot);
+    }
+
+    #[test]
+    fn config_written_before_the_mascot_option_shows_the_mascot() {
+        let old: Config = serde_json::from_str(
+            r#"{"focusMinutes": 30, "theme": "pixel", "work": {"github": true}}"#,
+        )
+        .expect("old config");
+        assert!(old.show_mascot);
+        assert_eq!(old.clone().normalized(), Ok(old));
+
+        let hidden: Config = serde_json::from_str(r#"{"showMascot": false}"#).expect("hidden");
+        assert_eq!(
+            hidden,
+            Config {
+                show_mascot: false,
+                ..Config::default()
+            }
+        );
+        assert_eq!(hidden.clone().normalized(), Ok(hidden));
     }
 
     #[test]
@@ -1827,6 +1851,7 @@ mod tests {
                     linear: true,
                     hold_during_focus: false,
                 },
+                show_mascot: false,
                 ..Config::default()
             };
             let json = serde_json::to_string(&cfg).expect("serialize");
@@ -1935,6 +1960,7 @@ mod tests {
                 "holdDuringFocus": true,
             })
         );
+        assert_eq!(json["showMascot"], true);
 
         let gamma = serde_json::to_value(TintMode::Gamma).expect("serialize");
         assert_eq!(gamma, "gamma");

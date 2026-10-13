@@ -2,6 +2,7 @@
 //!
 //! * [`foreground`]: which app is in the foreground (process name, window title and class, idle time).
 //! * [`notifications`]: Windows "Do not disturb" (Windows 11) / "Focus assist" (Windows 10).
+//! * [`notification_state`]: whether the user is presenting or running a full-screen app right now (read-only).
 //! * [`power`]: keep the display and the system awake during focus.
 //! * [`teams`]: Microsoft Teams presence "Do not disturb" through Microsoft Graph, plus the current presence so the
 //!   shell can skip it while the user appears offline or already chose Do not disturb; the Microsoft 365 calendar
@@ -32,6 +33,7 @@ pub mod locale;
 pub mod logon;
 mod net;
 pub mod night_light;
+pub mod notification_state;
 pub mod notifications;
 pub mod power;
 pub mod processes;
