@@ -191,4 +191,5 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
 
 Co najmniej jedna maszyna deweloperska to Windows 10 (PowerShell). Wymagania narzędziowe: ARCHITECTURE §14.
 Nowa maszyna Windows: `powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1` (`-CheckOnly` tylko sprawdza).
-Końce linii normalizuje `.gitattributes` (LF w repo; `.ps1` w CRLF).
+Końce linii normalizuje `.gitattributes` (LF w repo; `.ps1` w CRLF). Pliki binarne (muzyka, grafiki, ikony) są w **Git LFS**:
+raz na maszynę `git lfs install` (robi to `setup-windows.ps1`), po sklonowaniu `git lfs pull`. Nowe typy binarne dopisuj do `.gitattributes` jako `filter=lfs`.

@@ -200,6 +200,12 @@ na pełnym ekranie; `--demo` przy działającej aplikacji; zgłoszenie wzorców,
   `disable` + `enable` (bieżąca ścieżka i `--autostart`); wpis wyłączony w Menedżerze zadań albo usunięty zostaje; błędy tylko w logu. DoD: wpis bez `--autostart`
   (ręcznie w `HKCU\…\Run`) → start FocusMode → wpis z `--autostart`; wpis wyłączony w Menedżerze zadań → po starcie nadal wyłączony; logowanie → FocusMode w zasobniku.
 
+- [x] **SR-43** (B) Git LFS dla plików binarnych (muzyka, grafiki maskotki, ikony): `.gitattributes` → `filter=lfs` dla png/jpg/gif/ico/icns/webp/ogg/mp3/flac/wav/woff/ttf,
+  pliki w gałęzi zamienione na wskaźniki LFS (bez przepisywania historii: `main` nie ma tych plików, squash merge wnosi tylko wskaźniki);
+  `scripts/setup-windows.ps1` instaluje Git LFS, robi `git lfs install` i `git lfs pull`.
+- [ ] **SR-44** (B) Mikser dźwięków otoczenia: warstwy deszczu, tłumu/kawiarni, burzy i podobnych, każda z własną głośnością, obok muzyki
+  (tylko pliki CC0/CC-BY z wpisem w `CREDITS.md` albo dźwięki syntetyczne; bez obietnic zdrowotnych). **Na później** (decyzja właściciela 2026-10-13).
+
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
 - [ ] `--demo`: Start → 40 s → dzwonek + toast, osłony w dół, muzyka gra dalej → 20 s → dzwonek, osłony w górę → Stop → podsumowanie z wykresem
@@ -459,3 +465,4 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   (sprawdzenie i input w aktorze, potem nowy plan dla kalendarza). Powłoka: `dev_trigger` w `commands.rs`, próbki w nowym `src-tauri/src/dev.rs`
   (spotkanie `dev-sample-meeting`, teksty próbek w `texts`), `popup.rs`: `PopupRequest.sample` / `sticky` (próbki od razu, także w czasie prezentacji,
   nigdy nie czekają; sticky bez timeoutu po załadowaniu strony; „Pomiń fazę” na próbce tylko zamyka), `set_meeting_choice` dla `dev-sample-…` → no-op.
+- [2026-10-13 13:05] (B→A) Git LFS: po `git pull` uruchom raz `git lfs install` i `git lfs pull` (albo `scripts/setup-windows.ps1`), inaczej muzyka, grafiki i ikony będą plikami-wskaźnikami i build Tauri się nie uda.

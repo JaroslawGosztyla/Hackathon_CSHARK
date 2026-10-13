@@ -6,6 +6,7 @@
   Idempotent: checks every component first and installs only what is missing.
     - MSVC C++ build tools + Windows SDK (adds them to an existing Visual Studio 2022,
       or installs VS 2022 Build Tools)
+    - Git LFS (binary assets: music, mascot art, icons) + git lfs install / lfs pull
     - Rust (rustup, stable toolchain, clippy, rustfmt)
     - Node.js LTS
     - GitHub CLI (gh) - optional, for pull requests from the terminal
@@ -111,6 +112,27 @@ if (-not ($hasMsvc -and $hasSdk)) {
         if (-not (Test-Msvc) -or -not (Test-WinSdk)) { throw 'MSVC or Windows SDK still missing after install.' }
         Write-Ok 'MSVC + Windows SDK installed'
     }
+}
+
+# --- Git LFS (music, mascot art, icons) -------------------------------------
+Write-Step 'Git LFS'
+$hasLfs = $false
+if (Test-Command git) {
+    git lfs version 2>$null | Out-Null
+    $hasLfs = ($LASTEXITCODE -eq 0)
+}
+if ($hasLfs) { Write-Ok "$(git lfs version 2>$null)" }
+else {
+    Write-Miss 'git-lfs'
+    $missing += 'git-lfs'
+    if (-not $CheckOnly) { Install-Winget 'GitHub.GitLFS' }
+}
+if (-not $CheckOnly -and (Test-Command git)) {
+    # Hooks + smudge filter for this user, then replace pointer files in this checkout with the real binaries.
+    git lfs install 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "git lfs install failed (exit $LASTEXITCODE)" }
+    git -C (Split-Path $PSScriptRoot -Parent) lfs pull 2>$null | Out-Null
+    Write-Ok 'git lfs install + lfs pull'
 }
 
 # --- Rust -----------------------------------------------------------------
