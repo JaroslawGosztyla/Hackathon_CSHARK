@@ -57,6 +57,12 @@ pub mod commands {
     pub const CONTROL_MEDIA_WINDOW: &str = "control_media_window";
     /// `() -> MediaWindowStatus`
     pub const GET_MEDIA_WINDOW: &str = "get_media_window";
+    /// `() -> BlocklistInfo` the parsed `websiteblacklist.txt` (created from the bundled default on first run).
+    pub const GET_BLOCKLIST: &str = "get_blocklist";
+    /// `() -> ()` opens `websiteblacklist.txt` in the system's default text editor.
+    pub const OPEN_BLOCKLIST_FILE: &str = "open_blocklist_file";
+    /// `() -> BlocklistInfo` re-reads the file now (it is also reloaded automatically when it changes).
+    pub const RELOAD_BLOCKLIST: &str = "reload_blocklist";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -77,6 +83,8 @@ pub mod events {
     pub const APP_ERROR: &str = "app://error";
     /// `MediaWindowStatus`, whenever the YouTube window opens, closes, navigates or changes its title.
     pub const MEDIA_WINDOW: &str = "media://window";
+    /// `BlocklistInfo`, whenever `websiteblacklist.txt` was (re)loaded with a different result.
+    pub const BLOCKLIST_CHANGED: &str = "blocklist://changed";
 }
 
 /// Loopback port of the browser-extension bridge (`GET http://127.0.0.1:{BRIDGE_PORT}/v1/state` → `BridgeState`).
@@ -238,9 +246,8 @@ pub struct ShieldsConfig {
     /// Tenant id or `organizations` / `common`. Default `organizations`.
     pub teams_tenant: String,
     /// Block distracting sites during focus (browser extension + window-title fallback). Default true.
+    /// The list itself lives in `websiteblacklist.txt` (see `BlocklistInfo`), not in the config.
     pub block_sites: bool,
-    /// Normalized domains, e.g. `reddit.com`.
-    pub blocklist: Vec<String>,
     /// Keep the display and system awake during focus. Default true.
     pub keep_awake: bool,
 }
@@ -351,7 +358,7 @@ pub struct SessionSummary {
 pub struct Nudge {
     /// Browser process, e.g. `chrome.exe`.
     pub process: String,
-    /// Blocklist entry that matched, e.g. `reddit.com`.
+    /// Blocklist entry that matched: a domain (`reddit.com`) or a regex source.
     pub matched: String,
     /// Window title that matched.
     pub title: String,
@@ -418,6 +425,41 @@ pub struct MediaWindowStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Site blocklist (websiteblacklist.txt)
+// ---------------------------------------------------------------------------
+
+/// A line of `websiteblacklist.txt` that was skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BlocklistIssue {
+    /// 1-based line number.
+    pub line: u32,
+    /// The line as written (trimmed, shortened to 200 characters).
+    pub text: String,
+    /// Polish explanation for the settings screen.
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BlocklistInfo {
+    /// Set by the shell; grows with every emitted info.
+    pub revision: u32,
+    /// Absolute path of `websiteblacklist.txt`.
+    pub path: String,
+    /// Normalized domains (plain lines), in file order without duplicates.
+    pub domains: Vec<String>,
+    /// Regex sources (lines in `/…/` or with regex characters), in file order without duplicates.
+    pub patterns: Vec<String>,
+    /// Skipped lines (invalid domain, invalid or too complex regex, limits exceeded).
+    pub issues: Vec<BlocklistIssue>,
+    /// The file could not be read; the previous list (or the bundled default) stays in use.
+    pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Browser extension bridge
 // ---------------------------------------------------------------------------
 
@@ -439,7 +481,11 @@ pub struct BridgeInfo {
 pub struct BridgeState {
     /// Block now (Focus running or paused, `block_sites` on).
     pub active: bool,
+    /// Normalized domains; each also blocks its subdomains. Empty when not blocking.
     pub blocklist: Vec<String>,
+    /// Regex sources (RE2-compatible, matched case-insensitively against the full URL). Empty when not blocking.
+    #[serde(default)]
+    pub patterns: Vec<String>,
     pub phase: Phase,
     pub remaining_secs: u32,
 }
@@ -475,6 +521,9 @@ mod tests {
             ("openMediaWindow", commands::OPEN_MEDIA_WINDOW),
             ("controlMediaWindow", commands::CONTROL_MEDIA_WINDOW),
             ("getMediaWindow", commands::GET_MEDIA_WINDOW),
+            ("getBlocklist", commands::GET_BLOCKLIST),
+            ("openBlocklistFile", commands::OPEN_BLOCKLIST_FILE),
+            ("reloadBlocklist", commands::RELOAD_BLOCKLIST),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),
@@ -485,6 +534,7 @@ mod tests {
             ("focusNudge", events::FOCUS_NUDGE),
             ("appError", events::APP_ERROR),
             ("mediaWindow", events::MEDIA_WINDOW),
+            ("blocklistChanged", events::BLOCKLIST_CHANGED),
         ];
         let mut out = String::from(
             "// This file was generated by `cargo test -p focus-core` (api.rs). Do not edit this file manually.\n\n",

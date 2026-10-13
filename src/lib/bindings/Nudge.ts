@@ -6,7 +6,7 @@ export type Nudge = {
  */
 process: string, 
 /**
- * Blocklist entry that matched, e.g. `reddit.com`.
+ * Blocklist entry that matched: a domain (`reddit.com`) or a regex source.
  */
 matched: string, 
 /**

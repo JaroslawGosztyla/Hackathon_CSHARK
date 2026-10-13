@@ -23,6 +23,9 @@ export const COMMANDS = {
   openMediaWindow: "open_media_window",
   controlMediaWindow: "control_media_window",
   getMediaWindow: "get_media_window",
+  getBlocklist: "get_blocklist",
+  openBlocklistFile: "open_blocklist_file",
+  reloadBlocklist: "reload_blocklist",
 } as const;
 
 export const EVENTS = {
@@ -34,6 +37,7 @@ export const EVENTS = {
   focusNudge: "focus://nudge",
   appError: "app://error",
   mediaWindow: "media://window",
+  blocklistChanged: "blocklist://changed",
 } as const;
 
 export const BRIDGE_PORT = 47615;

@@ -19,12 +19,9 @@ teamsClientId: string,
 teamsTenant: string, 
 /**
  * Block distracting sites during focus (browser extension + window-title fallback). Default true.
+ * The list itself lives in `websiteblacklist.txt` (see `BlocklistInfo`), not in the config.
  */
 blockSites: boolean, 
-/**
- * Normalized domains, e.g. `reddit.com`.
- */
-blocklist: Array<string>, 
 /**
  * Keep the display and system awake during focus. Default true.
  */

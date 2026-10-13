@@ -8,4 +8,12 @@ export type BridgeState = {
 /**
  * Block now (Focus running or paused, `block_sites` on).
  */
-active: boolean, blocklist: Array<string>, phase: Phase, remainingSecs: number, };
+active: boolean, 
+/**
+ * Normalized domains; each also blocks its subdomains. Empty when not blocking.
+ */
+blocklist: Array<string>, 
+/**
+ * Regex sources (RE2-compatible, matched case-insensitively against the full URL). Empty when not blocking.
+ */
+patterns: Array<string>, phase: Phase, remainingSecs: number, };
