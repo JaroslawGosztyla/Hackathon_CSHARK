@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getAutostart, setAutostart, testChime, toAppError, ERR_NO_SHELL } from "$lib/api";
+  import BlocklistFile from "$lib/components/BlocklistFile.svelte";
   import ExtensionGuide from "$lib/components/ExtensionGuide.svelte";
   import Switch from "$lib/components/Switch.svelte";
   import TeamsSettings from "$lib/components/TeamsSettings.svelte";
-  import { splitLines } from "$lib/player/sources";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
@@ -12,16 +12,6 @@
   import type { ChimeKind, Config } from "$lib/types";
 
   const cfg = $derived(config.value);
-
-  // Blocklist textarea: local text while focused; the shell normalizes domains on save.
-  let blocklistText = $state("");
-  let blocklistFocused = $state(false);
-  $effect(() => {
-    const list = config.value?.shields.blocklist;
-    if (list && !blocklistFocused) blocklistText = list.join("\n");
-  });
-  const blocklistCount = $derived(splitLines(blocklistText).length);
-  const blocklistError = $derived(config.fieldErrors["shields.blocklist"] ?? null);
   const chimeError = $derived(config.fieldErrors.chimeVolume ?? null);
 
   let autostart = $state<boolean | null>(null);
@@ -39,22 +29,6 @@
 
   function set(mutate: (c: Config) => void) {
     config.update(mutate, true);
-  }
-
-  function onBlocklistInput(event: Event & { currentTarget: HTMLTextAreaElement }) {
-    blocklistText = event.currentTarget.value;
-    const domains = splitLines(blocklistText);
-    config.update((c) => {
-      c.shields.blocklist = domains;
-    });
-  }
-
-  async function onBlocklistBlur() {
-    blocklistFocused = false;
-    // Save now so the normalized list (lowercase, no www./paths, deduped) comes back right away.
-    await config.flush();
-    // The user may have clicked back into the textarea while the save was running.
-    if (!blocklistFocused) blocklistText = (config.value?.shields.blocklist ?? []).join("\n");
   }
 
   function onRange(event: Event & { currentTarget: HTMLInputElement }, apply: (c: Config, v: number) => void) {
@@ -160,23 +134,7 @@
           >
             {#if cfg.shields.blockSites}
               <div class="stack">
-                <div class="field">
-                  <label for="blocklist">{strings.settings.blocklist}</label>
-                  <textarea
-                    id="blocklist"
-                    class="textarea"
-                    rows="7"
-                    spellcheck="false"
-                    value={blocklistText}
-                    onfocus={() => (blocklistFocused = true)}
-                    onblur={onBlocklistBlur}
-                    oninput={onBlocklistInput}
-                    aria-invalid={blocklistError ? "true" : undefined}
-                    aria-describedby="blocklist-count"
-                  ></textarea>
-                  <p class="hint" id="blocklist-count">{strings.settings.blocklistCount(blocklistCount)}</p>
-                  {#if blocklistError}<p class="field-error">{blocklistError}</p>{/if}
-                </div>
+                <BlocklistFile />
                 <ExtensionGuide />
               </div>
             {/if}

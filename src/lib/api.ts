@@ -8,6 +8,7 @@ import { openUrl as openerOpenUrl } from "@tauri-apps/plugin-opener";
 import { COMMANDS, EVENTS } from "./bindings/names";
 import type {
   AppError,
+  BlocklistInfo,
   BridgeInfo,
   ChimeKind,
   Config,
@@ -97,6 +98,13 @@ export const controlMediaWindow = (action: MediaAction, volume: number | null = 
   call<void>(COMMANDS.controlMediaWindow, { action, volume });
 export const getMediaWindow = () => call<MediaWindowStatus>(COMMANDS.getMediaWindow);
 
+/** The parsed `websiteblacklist.txt` (the shell creates it from the bundled default on first run). */
+export const getBlocklist = () => call<BlocklistInfo>(COMMANDS.getBlocklist);
+/** Opens `websiteblacklist.txt` in the system's default text editor. */
+export const openBlocklistFile = () => call<void>(COMMANDS.openBlocklistFile);
+/** Re-reads `websiteblacklist.txt` now (the shell also reloads it by itself after every save). */
+export const reloadBlocklist = () => call<BlocklistInfo>(COMMANDS.reloadBlocklist);
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -147,6 +155,8 @@ export const subscribeTeams = (apply: (s: TeamsStatus) => void, onError?: (e: Ap
   subscribe(EVENTS.teamsStatus, getTeamsStatus, apply, onError);
 export const subscribeMediaWindow = (apply: (s: MediaWindowStatus) => void, onError?: (e: AppError) => void) =>
   subscribe(EVENTS.mediaWindow, getMediaWindow, apply, onError);
+export const subscribeBlocklist = (apply: (b: BlocklistInfo) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.blocklistChanged, getBlocklist, apply, onError);
 
 export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
 export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);

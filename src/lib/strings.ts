@@ -245,9 +245,8 @@ export const strings = {
     ],
 
     sites: "Blokuj rozpraszające strony",
-    sitesHint: "W czasie skupienia rozszerzenie przeglądarki zamienia te strony na stronę „Wracaj do pracy”. Nic nie jest wysyłane do internetu.",
-    blocklist: "Blokowane domeny — jedna w każdej linii",
-    blocklistCount: (n: number) => `${n} ${plural(n, "domena", "domeny", "domen")}`,
+    sitesHint:
+      "W czasie skupienia rozszerzenie przeglądarki zamienia strony z listy poniżej na stronę „Wracaj do pracy”. Nic nie jest wysyłane do internetu.",
     extensionTitle: "Rozszerzenie przeglądarki (Chrome, Edge, Brave, Opera, Vivaldi)",
     extensionStep1: "Otwórz folder rozszerzenia:",
     extensionOpenDir: "Otwórz folder rozszerzenia",
@@ -279,9 +278,40 @@ export const strings = {
     demoNote: "Tryb prezentacji: skupienie trwa 40 s, przerwa 20 s.",
   },
 
+  blocklist: {
+    title: "Lista stron — websiteblacklist.txt",
+    pathLabel: "Plik listy",
+    loading: "Wczytuję listę stron…",
+    summary: (domains: number, patterns: number) =>
+      `${domains} ${plural(domains, "domena", "domeny", "domen")} · ${patterns} ${plural(patterns, "wyrażenie regularne", "wyrażenia regularne", "wyrażeń regularnych")}`,
+    empty: "Lista jest pusta — w czasie skupienia żadna strona nie będzie blokowana.",
+    open: "Otwórz websiteblacklist.txt",
+    reload: "Wczytaj ponownie",
+    reloaded: "Lista stron została wczytana ponownie.",
+    autoReload: "Po zapisaniu pliku lista wczytuje się sama — nie trzeba niczego restartować.",
+    allValid: "Wszystkie linie poprawne",
+    issuesTitle: (n: number) =>
+      `${n} ${plural(n, "linia pominięta", "linie pominięte", "linii pominiętych")} — popraw w pliku albo dopisz # na początku linii:`,
+    issueLine: (line: number) => `Linia ${line}`,
+    readError: "Nie udało się odczytać pliku — działa poprzednia lista:",
+    helpTitle: "Jak zapisywać wpisy?",
+    helpLines: "Jedna pozycja w linii. Linie zaczynające się od # to komentarze, puste linie są pomijane.",
+    helpDomain: "Zwykła domena blokuje siebie i wszystkie subdomeny (np. www., m.).",
+    helpRegex:
+      "Wyrażenie regularne to linia w ukośnikach /…/ albo zawierająca któryś ze znaków \\ ^ $ * + ? ( ) [ ] { } |. Jest dopasowywane do całego adresu strony, bez rozróżniania wielkości liter. Kropka oznacza dowolny znak, więc w domenach pisz \\.",
+    examplesLabel: "Przykłady:",
+    examples: [
+      { code: "kwejk.pl", note: "cały kwejk.pl razem z subdomenami" },
+      { code: "youtube\\.com/shorts", note: "tylko YouTube Shorts, reszta YouTube działa" },
+      { code: "linkedin\\.com/feed", note: "tylko tablica LinkedIn" },
+    ],
+  },
+
   nudge: {
     title: "Wracaj do pracy",
     body: (domain: string) => `${domain} poczeka do przerwy.`,
+    /** The match was a regex from websiteblacklist.txt, not a readable domain. */
+    bodyPattern: "Ta strona jest na liście blokowanych i poczeka do przerwy.",
     dismiss: "Zamknij",
   },
 
@@ -321,6 +351,8 @@ export const strings = {
       "persistence.history": "Problem z historią sesji (odczyt lub zapis).",
       "extension.missing": "Nie znaleziono folderu rozszerzenia przeglądarki.",
       "extension.open": "Nie udało się otworzyć folderu rozszerzenia.",
+      "blocklist.read": "Nie udało się odczytać pliku websiteblacklist.txt — działa poprzednia lista stron.",
+      "blocklist.open": "Nie udało się otworzyć websiteblacklist.txt w edytorze tekstu — otwórz plik ręcznie (ścieżka jest w Ustawieniach).",
       autostart: "Nie udało się zmienić uruchamiania przy logowaniu.",
       "session.unavailable": "Sesja nie odpowiada — uruchom aplikację ponownie.",
       "ipc.unavailable": "Ta funkcja działa tylko w aplikacji FocusMode.",
@@ -332,6 +364,7 @@ export const strings = {
       shields: "Jedna z osłon nie zadziałała — sesja trwa dalej.",
       teams: "Problem z połączeniem z Teams.",
       bridge: "Problem z mostkiem rozszerzenia przeglądarki.",
+      blocklist: "Problem z listą blokowanych stron (websiteblacklist.txt).",
       music: "Problem z muzyką.",
       media: "Problem z oknem YouTube.",
       persistence: "Nie udało się zapisać danych.",
@@ -348,7 +381,6 @@ export const strings = {
     "music.links": "linki",
     "music.streamUrl": "adres strumienia",
     "music.folder": "folder z muzyką",
-    "shields.blocklist": "lista blokowanych stron",
     "shields.teamsClientId": "Application (client) ID",
     "shields.teamsTenant": "tenant",
   } as Record<string, string>,

@@ -2,6 +2,7 @@
 import { goto } from "$app/navigation";
 import * as api from "$lib/api";
 import type { AppError } from "$lib/types";
+import { blocklist } from "./blocklist.svelte";
 import { config } from "./config.svelte";
 import { mediaWindow } from "./mediaWindow.svelte";
 import { nudge } from "./nudge.svelte";
@@ -40,6 +41,7 @@ export function initAppState(): () => void {
   keep(api.subscribeShields((s) => shields.apply(s), reportError));
   keep(api.subscribeTeams((s) => teams.apply(s), reportError));
   keep(api.subscribeMediaWindow((s) => mediaWindow.apply(s), reportError));
+  keep(api.subscribeBlocklist((b) => blocklist.apply(b), reportError));
   keep(api.onPhaseChanged((change) => session.announce(change)));
   keep(api.onNudge((n) => nudge.show(n)));
   keep(

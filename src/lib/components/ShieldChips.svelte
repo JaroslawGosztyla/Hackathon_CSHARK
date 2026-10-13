@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { blocklist } from "$lib/state/blocklist.svelte";
   import { shields } from "$lib/state/shields.svelte";
   import { strings } from "$lib/strings";
   import type { IntegrationStatus } from "$lib/types";
@@ -7,7 +8,14 @@
     key: string;
     name: string;
     status: IntegrationStatus;
+    /** Tooltip; defaults to the status detail. */
+    title?: string;
   }
+
+  /** "N domen · M wyrażeń regularnych" from websiteblacklist.txt, shown on hover over the sites chip. */
+  const listSummary = $derived(
+    blocklist.info ? strings.blocklist.summary(blocklist.info.domains.length, blocklist.info.patterns.length) : null,
+  );
 
   const chips = $derived.by((): Chip[] => {
     const s = shields.status;
@@ -19,6 +27,7 @@
         key: "sites",
         name: s.extensionConnected ? strings.shieldChip.sites : strings.shieldChip.sitesFallback,
         status: s.sites,
+        title: [listSummary, s.sites.detail].filter(Boolean).join(" — ") || undefined,
       },
       { key: "keepAwake", name: strings.shieldChip.keepAwake, status: s.keepAwake },
     ];
@@ -37,7 +46,7 @@
       {#each chips as chip (chip.key)}
         <li
           class="chip state-{chip.status.state}"
-          title={chip.status.detail ?? undefined}
+          title={chip.title ?? chip.status.detail ?? undefined}
           aria-label={strings.shieldChip.chipAria(chip.name, strings.shieldChip.state[chip.status.state])}
         >
           <span class="indicator" aria-hidden="true">

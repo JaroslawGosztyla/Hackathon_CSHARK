@@ -1,6 +1,14 @@
 <script lang="ts">
   import { strings } from "$lib/strings";
   import { nudge } from "$lib/state/nudge.svelte";
+
+  /** A plain domain from websiteblacklist.txt reads well in the banner; a regex source does not. */
+  const DOMAIN = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+
+  const body = $derived.by(() => {
+    const matched = nudge.current?.matched ?? "";
+    return DOMAIN.test(matched) ? strings.nudge.body(matched) : strings.nudge.bodyPattern;
+  });
 </script>
 
 {#if nudge.current}
@@ -19,7 +27,7 @@
       </svg>
     </span>
     <p>
-      <strong>{strings.nudge.title}</strong> — {strings.nudge.body(nudge.current.matched)}
+      <strong>{strings.nudge.title}</strong> — {body}
     </p>
     <button class="btn btn-sm btn-ghost" type="button" onclick={() => nudge.dismiss()}>{strings.nudge.dismiss}</button>
   </div>
