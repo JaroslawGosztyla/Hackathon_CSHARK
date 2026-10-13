@@ -284,14 +284,16 @@ impl Effects {
         let latest = Arc::clone(&self.last_summary);
         let app = self.app.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            if let Err(err) = persistence.append_history(&summary, &latest) {
-                emit_error(
+            match persistence.append_history(&summary, &latest) {
+                // The weekly stats ask again (ADR-023).
+                Ok(()) => crate::weekly::changed(&app),
+                Err(err) => emit_error(
                     &app,
                     AppError::new(
                         "persistence.history",
                         format!("cannot save session history: {err:#}"),
                     ),
-                );
+                ),
             }
         });
     }

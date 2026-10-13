@@ -26,6 +26,7 @@ mod texts;
 mod tint;
 mod tracker;
 mod tray;
+mod weekly;
 mod window_util;
 mod work;
 mod youtube_account;
@@ -208,6 +209,9 @@ pub fn run() {
             commands::play_reward_sound,
             commands::set_session_steps,
             commands::set_step_done,
+            commands::list_sun_cities,
+            commands::set_smart_break_opt_out,
+            commands::get_weekly_stats,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");

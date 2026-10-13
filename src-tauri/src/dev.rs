@@ -250,6 +250,7 @@ mod tests {
             meeting_hold: None,
             goal: None,
             steps: Vec::new(),
+            smart_break: None,
         }
     }
 

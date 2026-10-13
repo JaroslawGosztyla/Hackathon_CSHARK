@@ -571,6 +571,8 @@ async fn delete_one(
             let persistence = state.persistence.clone();
             blocking(move || persistence.clear_history()).await?;
             *lock(&state.last_summary) = None;
+            // The weekly stats ask again (ADR-023).
+            crate::weekly::changed(app);
             Ok(())
         }
         PrivacyItemKind::Rewards => {
@@ -840,7 +842,7 @@ impl Scanner {
                 PrivacyItemKind::Rewards => {
                     // The ledger, its backup and unreadable copies set aside at load together (what the delete
                     // takes); `count` = stored days of `rewards.json`.
-                    let count = cached_count(&mut self.rewards, &files.rewards, "days");
+                    let count = cached_count(&mut self.rewards, &files.rewards, &["days"]);
                     let sizes: Vec<u64> = [files.rewards.clone(), files.rewards_backup.clone()]
                         .into_iter()
                         .chain(crate::persistence::unreadable_rewards_in(&files.data_dir))
@@ -854,12 +856,16 @@ impl Scanner {
                     item(kind, bytes.is_some(), bytes, count)
                 }
                 PrivacyItemKind::MeetingChoices => {
-                    let count =
-                        cached_count(&mut self.meeting_choices, &files.meeting_choices, "choices");
+                    // Answers plus the "Ask me instead" entries of smart breaks (ADR-023), which can exist alone.
+                    let count = cached_count(
+                        &mut self.meeting_choices,
+                        &files.meeting_choices,
+                        &["choices", "optOuts"],
+                    );
                     file_item(kind, &files.meeting_choices, count)
                 }
                 PrivacyItemKind::WorkSeen => {
-                    let count = cached_count(&mut self.work_seen, &files.work_seen, "seen");
+                    let count = cached_count(&mut self.work_seen, &files.work_seen, &["seen"]);
                     file_item(kind, &files.work_seen, count)
                 }
                 PrivacyItemKind::MicrosoftToken => file_item(kind, &files.teams_token, None),
@@ -972,8 +978,13 @@ fn stamp_of(path: &Path) -> Option<Stamp> {
     Some((meta.modified().ok(), meta.len()))
 }
 
-/// The length of the array `key` of a JSON file (re-parsed only when the file changed).
-fn cached_count(cache: &mut Option<(Stamp, Option<u32>)>, path: &Path, key: &str) -> Option<u32> {
+/// The total length of the arrays `keys` of a JSON file (re-parsed only when the file changed); `None` when none of
+/// them is there.
+fn cached_count(
+    cache: &mut Option<(Stamp, Option<u32>)>,
+    path: &Path,
+    keys: &[&str],
+) -> Option<u32> {
     let Some(stamp) = stamp_of(path) else {
         *cache = None;
         return None;
@@ -983,7 +994,11 @@ fn cached_count(cache: &mut Option<(Stamp, Option<u32>)>, path: &Path, key: &str
     {
         return count;
     }
-    let count = read_json(path).and_then(|value| array_len(&value, key));
+    let count = read_json(path).and_then(|value| {
+        keys.iter()
+            .filter_map(|key| array_len(&value, key))
+            .reduce(u32::saturating_add)
+    });
     *cache = Some((stamp, count));
     count
 }
@@ -1268,6 +1283,17 @@ mod tests {
         let settings = find(&items, PrivacyItemKind::Settings);
         assert!(settings.present && settings.size_kib.is_some_and(|kib| kib >= 1));
         assert_eq!(find(&items, PrivacyItemKind::MeetingChoices).count, Some(3));
+        // "Ask me instead" entries of smart breaks (ADR-023) count too, also without any answer.
+        persistence
+            .save_meeting_choices(
+                &serde_json::json!({ "version": 1, "choices": [], "optOuts": [{}, {}] }),
+            )
+            .expect("opt-outs");
+        let opt_outs = scanner.scan(&folders, &live, true);
+        assert_eq!(
+            find(&opt_outs, PrivacyItemKind::MeetingChoices).count,
+            Some(2)
+        );
         let rewards = find(&items, PrivacyItemKind::Rewards);
         assert_eq!(
             (rewards.present, rewards.size_kib, rewards.count),

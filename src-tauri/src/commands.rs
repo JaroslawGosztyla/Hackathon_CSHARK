@@ -12,8 +12,8 @@ use focus_core::api::{
     CelebrationLevel, ChimeKind, ChimeSound, Config, DevAction, DeviceCodePrompt, Language,
     MediaAction, MediaWindowStatus, MeetingChoice, Phase, PopupAction, PopupInfo, PrivacyItemKind,
     PrivacyReport, RewardSound, RewardsStatus, SessionGoal, SessionSnapshot, SessionSummary,
-    ShieldStatus, StepDraft, TeamsStatus, TintStatus, Track, UsageReport, WorkSource, WorkStatus,
-    YoutubeAccount,
+    ShieldStatus, StepDraft, SunCity, TeamsStatus, TintStatus, Track, UsageReport, WeeklyStats,
+    WorkSource, WorkStatus, YoutubeAccount,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use focus_core::session::normalize_steps;
@@ -23,7 +23,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::session_actor::ActorCmd;
 use crate::{
     AppState, calendar, chimes, close, dev, effects, emit_error, lock, music, privacy, read_config,
-    tracker, work, write_config,
+    tracker, weekly, work, write_config,
 };
 
 /// Upper bound for `list_history(limit)`.
@@ -133,7 +133,8 @@ pub(crate) async fn store_config(
     if normalized.tint != previous.tint {
         state.tint.config_changed();
     }
-    if normalized.calendar != previous.calendar {
+    if normalized.calendar != previous.calendar || normalized.smart_breaks != previous.smart_breaks
+    {
         state.calendar.config_changed();
     }
     if normalized.work != previous.work {
@@ -146,6 +147,12 @@ pub(crate) async fn store_config(
     // Beta rewards (ADR-022): pause bookkeeping, a lower daily goal, the UI shows or hides the rewards.
     let phase = current_phase(state).await;
     state.rewards.config_changed(&previous, &normalized, phase);
+    if normalized.app_categories != previous.app_categories
+        || normalized.keep_history != previous.keep_history
+    {
+        // The weekly stats show the labels and whether history is kept (ADR-023).
+        weekly::changed(app);
+    }
     Ok(normalized)
 }
 
@@ -285,7 +292,7 @@ pub async fn list_history(
 }
 
 #[tauri::command]
-pub async fn clear_history(state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn clear_history(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     let persistence = state.persistence.clone();
     tauri::async_runtime::spawn_blocking(move || persistence.clear_history())
         .await
@@ -298,6 +305,7 @@ pub async fn clear_history(state: State<'_, AppState>) -> Result<(), AppError> {
         })?;
     *lock(&state.last_summary) = None;
     log::info!("session history deleted at the user's request");
+    weekly::changed(&app);
     Ok(())
 }
 
@@ -411,6 +419,7 @@ pub async fn set_session_goal(
 
 #[tauri::command]
 pub async fn mark_goal_done(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     done: bool,
@@ -453,6 +462,10 @@ pub async fn mark_goal_done(
             format!("cannot update the session history: {err:#}"),
         )
     })?;
+    if marked.in_file {
+        // The stored history changed (ADR-023).
+        weekly::changed(&app);
+    }
     // With the history off a session that is not in the file only lives in memory (or is gone): no-op.
     if keep_history && !marked.in_memory && !marked.in_file {
         return Err(unknown());
@@ -814,4 +827,38 @@ pub async fn reload_blocklist(state: State<'_, AppState>) -> Result<BlocklistInf
                 format!("cannot reload {BLACKLIST_FILE_NAME}: {err}"),
             )
         })
+}
+
+// ---------------------------------------------------------------------------
+// ADR-023: tint exceptions, smart breaks, weekly stats.
+// ---------------------------------------------------------------------------
+
+/// The built-in cities for the sunset / sunrise tint schedule (ADR-023).
+#[tauri::command]
+pub async fn list_sun_cities() -> Result<Vec<SunCity>, AppError> {
+    Ok(focus_core::sun::cities())
+}
+
+/// "Ask me instead" for one meeting fitted by smart breaks, or "fit it again" (ADR-023). The calendar thread stores it
+/// with the meeting answers (ids only) and re-plans; the session gets its new end through the actor.
+#[tauri::command]
+pub async fn set_smart_break_opt_out(
+    state: State<'_, AppState>,
+    meeting_id: String,
+    opt_out: bool,
+) -> Result<CalendarStatus, AppError> {
+    if dev::is_sample_meeting(&meeting_id) {
+        // A developer-mode sample (ADR-019): nothing is stored, sent to the session or synced.
+        return Ok(state.calendar.status());
+    }
+    state.calendar.set_smart_opt_out(meeting_id, opt_out).await
+}
+
+/// One ISO week of stats from `history.jsonl` (ADR-023, `weekly.rs`).
+#[tauri::command]
+pub async fn get_weekly_stats(
+    state: State<'_, AppState>,
+    week_start: String,
+) -> Result<WeeklyStats, AppError> {
+    weekly::weekly_stats(&state, &week_start).await
 }

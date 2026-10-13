@@ -1,15 +1,16 @@
 //! Pure calendar logic of the shell: merging the sources, the user's answer per meeting ("choices"),
-//! "remind later" scheduling and the parts of `CalendarStatus`. No IO and no clock: the wall clock
-//! (`now_ms`, Unix milliseconds) and the session plan come in as arguments.
+//! "remind later" scheduling, smart breaks (ADR-023) and the parts of `CalendarStatus`. No IO and no clock: the
+//! wall clock (`now_ms`, Unix milliseconds) and the session plan come in as arguments.
 
 use std::collections::HashMap;
 
 use focus_core::api::{
     AppError, CalendarSource, CalendarSourceStatus, IntegrationState, Meeting, MeetingChoice,
-    MeetingConflict, Phase,
+    MeetingConflict, Phase, SmartBreak,
 };
 use focus_core::calendar::{
-    BreakWindow, conflicts, meeting_hold_allowed, plan_breaks, reminder_schedule,
+    BreakWindow, FirstBreak, SmartMeeting, SmartPlan, conflicts, meeting_hold_allowed,
+    plan_smart_breaks, reminder_schedule, smart_break_view,
 };
 use focus_core::timing::TimingProfile;
 use serde::{Deserialize, Serialize};
@@ -37,17 +38,20 @@ const WEBCALS: &str = "webcals://";
 // ---------------------------------------------------------------------------------------------------
 
 /// The session as the calendar sees it; the actor sends a new one whenever its timing changes
-/// (phase, pause, cycle, profile, a meeting extension).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// (phase, pause, cycle, profile, a meeting extension, a smart-break fit).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionPlan {
     pub phase: Phase,
     pub paused: bool,
     /// Cycle of the running session (0 when idle).
     pub cycle: u32,
-    /// Exact time left in the phase when the plan was taken (0 when idle).
+    /// Exact time left in the phase when the plan was taken (0 when idle); a smart-break fit included.
     pub remaining_ms: u64,
     /// Profile of the running session, or the one a session started now would use.
     pub profile: TimingProfile,
+    /// Smart breaks (ADR-023): the session's own moved break (`SessionSnapshot.smart_break`): in Focus the break
+    /// after the running block, in a break the running one. The calendar never fits a running block itself.
+    pub smart: Option<SmartBreak>,
 }
 
 impl SessionPlan {
@@ -59,6 +63,7 @@ impl SessionPlan {
             cycle: 0,
             remaining_ms: 0,
             profile,
+            smart: None,
         }
     }
 
@@ -67,14 +72,45 @@ impl SessionPlan {
         self.phase == Phase::Idle
     }
 
+    /// Time left in the phase `elapsed_ms` after the plan was taken (a paused phase has used none of it).
+    fn left_ms(&self, elapsed_ms: u64) -> i64 {
+        let elapsed = if self.paused { 0 } else { elapsed_ms };
+        i64::try_from(self.remaining_ms.saturating_sub(elapsed)).unwrap_or(i64::MAX)
+    }
+
+    /// Smart breaks (ADR-023): the breaks of [`SessionPlan::breaks`] with every block the calendar plans fitted around
+    /// `meetings` (`focus_core::calendar::plan_smart_breaks`). A running focus block belongs to the session: its time
+    /// left already has the session's own fit, so it is never fitted here. With no meetings (smart breaks off) the
+    /// breaks are exactly those of [`SessionPlan::breaks`].
+    pub fn smart_plan(
+        &self,
+        now_ms: i64,
+        elapsed_ms: u64,
+        horizon_ms: i64,
+        meetings: &[SmartMeeting],
+    ) -> SmartPlan {
+        let left = self.left_ms(elapsed_ms);
+        let first = match self.phase {
+            Phase::Idle => FirstBreak::new(now_ms, None, None, 0, &self.profile),
+            Phase::Focus => FirstBreak {
+                fixed: true,
+                ..FirstBreak::new(now_ms, Some(left), None, self.cycle, &self.profile)
+            },
+            Phase::Break => FirstBreak::new(now_ms, None, Some(left), self.cycle, &self.profile),
+        };
+        plan_smart_breaks(now_ms, first, &self.profile, horizon_ms, meetings)
+    }
+
     /// The breaks that start within `horizon_ms` of `now_ms`, `elapsed_ms` after the plan was taken
     /// (a running phase has used that much of its remaining time; a paused one has not).
+    #[cfg(test)]
     pub fn breaks(&self, now_ms: i64, elapsed_ms: u64, horizon_ms: i64) -> Vec<BreakWindow> {
-        let elapsed = if self.paused { 0 } else { elapsed_ms };
-        let left = i64::try_from(self.remaining_ms.saturating_sub(elapsed)).unwrap_or(i64::MAX);
+        let left = self.left_ms(elapsed_ms);
         match self.phase {
-            Phase::Idle => plan_breaks(now_ms, None, None, 0, &self.profile, horizon_ms),
-            Phase::Focus => plan_breaks(
+            Phase::Idle => {
+                focus_core::calendar::plan_breaks(now_ms, None, None, 0, &self.profile, horizon_ms)
+            }
+            Phase::Focus => focus_core::calendar::plan_breaks(
                 now_ms,
                 Some(left),
                 None,
@@ -82,7 +118,7 @@ impl SessionPlan {
                 &self.profile,
                 horizon_ms,
             ),
-            Phase::Break => plan_breaks(
+            Phase::Break => focus_core::calendar::plan_breaks(
                 now_ms,
                 None,
                 Some(left),
@@ -191,18 +227,32 @@ pub struct StoredChoice {
     pub entry: ChoiceEntry,
 }
 
+/// One "Ask me instead" of `meeting-choices.json` (ADR-023): the meeting id and its end, after which it is forgotten.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredOptOut {
+    pub meeting_id: String,
+    pub end_ms: i64,
+}
+
 /// `meeting-choices.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredChoices {
     pub version: u32,
     pub choices: Vec<StoredChoice>,
+    /// Smart breaks (ADR-023): meetings the user wants to be asked about ("Ask me instead"). Missing in files written
+    /// before ADR-023 and left out while empty, so the file stays the same for users without smart breaks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opt_outs: Vec<StoredOptOut>,
 }
 
 /// The answers per meeting id.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Choices {
     entries: HashMap<String, ChoiceEntry>,
+    /// Smart breaks (ADR-023): "Ask me instead", meeting id → meeting end.
+    opt_outs: HashMap<String, i64>,
 }
 
 impl Choices {
@@ -215,6 +265,11 @@ impl Choices {
         for line in stored.choices {
             if line.entry.end_ms > now_ms && !line.meeting_id.is_empty() {
                 choices.entries.insert(line.meeting_id, line.entry);
+            }
+        }
+        for line in stored.opt_outs {
+            if line.end_ms > now_ms && !line.meeting_id.is_empty() {
+                choices.opt_outs.insert(line.meeting_id, line.end_ms);
             }
         }
         choices
@@ -231,10 +286,44 @@ impl Choices {
             })
             .collect();
         choices.sort_by(|a, b| a.meeting_id.cmp(&b.meeting_id));
+        let mut opt_outs: Vec<StoredOptOut> = self
+            .opt_outs
+            .iter()
+            .map(|(id, end_ms)| StoredOptOut {
+                meeting_id: id.clone(),
+                end_ms: *end_ms,
+            })
+            .collect();
+        opt_outs.sort_by(|a, b| a.meeting_id.cmp(&b.meeting_id));
         StoredChoices {
             version: CHOICES_VERSION,
             choices,
+            opt_outs,
         }
+    }
+
+    /// Smart breaks (ADR-023): "Ask me instead" for `meeting` (`true`): it is no longer fitted and gets the usual
+    /// question. `false` lets smart breaks fit it again: the opt-out goes and so does an answer given meanwhile (an
+    /// answer also keeps a meeting from being fitted). `true` when something changed.
+    pub fn set_opt_out(&mut self, meeting_id: &str, end_ms: i64, opt_out: bool) -> bool {
+        if opt_out {
+            self.opt_outs.insert(meeting_id.to_owned(), end_ms) != Some(end_ms)
+        } else {
+            let removed = self.opt_outs.remove(meeting_id).is_some();
+            self.entries.remove(meeting_id).is_some() || removed
+        }
+    }
+
+    /// Smart breaks (ADR-023): the user asked to decide about this meeting by hand.
+    pub fn opted_out(&self, meeting_id: &str) -> bool {
+        self.opt_outs.contains_key(meeting_id)
+    }
+
+    /// The opted-out meeting ids, sorted (`CalendarStatus.smart_opt_outs`).
+    pub fn opt_out_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.opt_outs.keys().cloned().collect();
+        ids.sort();
+        ids
     }
 
     pub fn get(&self, meeting_id: &str) -> Option<&ChoiceEntry> {
@@ -334,15 +423,17 @@ impl Choices {
             .min()
     }
 
-    /// Forgets the answers for meetings that ended by `now_ms`; `true` when something was removed.
+    /// Forgets the answers (and "Ask me instead") for meetings that ended by `now_ms`; `true` when something was
+    /// removed.
     pub fn prune(&mut self, now_ms: i64) -> bool {
-        let before = self.entries.len();
+        let before = (self.entries.len(), self.opt_outs.len());
         self.entries.retain(|_, entry| entry.end_ms > now_ms);
-        self.entries.len() != before
+        self.opt_outs.retain(|_, end_ms| *end_ms > now_ms);
+        (self.entries.len(), self.opt_outs.len()) != before
     }
 
-    /// Follows the meetings: an answer given for a dropped duplicate moves to the copy that was kept, and
-    /// a meeting that moved keeps its answer with the new end. `true` when something changed.
+    /// Follows the meetings: an answer (or "Ask me instead") given for a dropped duplicate moves to the copy that was
+    /// kept, and a meeting that moved keeps it with the new end. `true` when something changed.
     pub fn follow(&mut self, merged: &Merged) -> bool {
         let mut changed = false;
         for (dropped, kept) in &merged.aliases {
@@ -352,12 +443,24 @@ impl Choices {
                 self.entries.insert(kept.clone(), entry);
                 changed = true;
             }
+            if !self.opt_outs.contains_key(kept)
+                && let Some(end_ms) = self.opt_outs.remove(dropped)
+            {
+                self.opt_outs.insert(kept.clone(), end_ms);
+                changed = true;
+            }
         }
         for meeting in &merged.meetings {
             if let Some(entry) = self.entries.get_mut(&meeting.id)
                 && entry.end_ms != meeting.end_ms
             {
                 entry.end_ms = meeting.end_ms;
+                changed = true;
+            }
+            if let Some(end_ms) = self.opt_outs.get_mut(&meeting.id)
+                && *end_ms != meeting.end_ms
+            {
+                *end_ms = meeting.end_ms;
                 changed = true;
             }
         }
@@ -411,6 +514,56 @@ pub fn conflict_view(
         remind_later_allowed: choices.remind_later_allowed(meeting, now_ms),
         too_long: !meeting_hold_allowed(meeting.start_ms, meeting.end_ms),
     }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Smart breaks (ADR-023)
+// ---------------------------------------------------------------------------------------------------
+
+/// The meetings smart breaks plan around (for the session and the plan): every meeting, with whether a break may be
+/// moved for it: no answer from the user and no "Ask me instead". Empty while smart breaks are off. No subjects.
+/// All-day and free events never get here (the platform drops them); tentative ones count, as for the question.
+pub fn smart_meetings(meetings: &[Meeting], choices: &Choices, on: bool) -> Vec<SmartMeeting> {
+    if !on {
+        return Vec::new();
+    }
+    meetings
+        .iter()
+        .map(|meeting| SmartMeeting {
+            id: meeting.id.clone(),
+            start_ms: meeting.start_ms,
+            end_ms: meeting.end_ms,
+            eligible: choices.get(&meeting.id).is_none() && !choices.opted_out(&meeting.id),
+        })
+        .collect()
+}
+
+/// `CalendarStatus.smart_breaks`, in break order: the session's own moved break while a focus block runs (the
+/// snapshot's), then the breaks the plan moved.
+pub fn smart_break_views(
+    plan: &SessionPlan,
+    smart_plan: &SmartPlan,
+    meetings: &[SmartMeeting],
+) -> Vec<SmartBreak> {
+    let own = plan.smart.clone().filter(|_| plan.phase == Phase::Focus);
+    own.into_iter()
+        .chain(smart_plan.moves.iter().filter_map(|(window, fit)| {
+            let meeting = meetings.get(fit.meeting)?;
+            Some(smart_break_view(window, fit, meeting))
+        }))
+        .collect()
+}
+
+/// The conflicts without the meetings a break was moved for (a break that starts with its meeting overlaps it on
+/// purpose; the others no longer collide).
+pub fn without_moved(
+    conflicts: Vec<MeetingConflict>,
+    moved: &[SmartBreak],
+) -> Vec<MeetingConflict> {
+    conflicts
+        .into_iter()
+        .filter(|conflict| !moved.iter().any(|m| m.meeting_id == conflict.meeting.id))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -591,6 +744,7 @@ mod tests {
             cycle: 2,
             remaining_ms: 10 * MIN as u64,
             profile: p,
+            smart: None,
         };
         let breaks = focus.breaks(T0, 4 * MIN as u64, 2 * HOUR);
         assert_eq!((breaks[0].number, breaks[0].start_ms), (2, T0 + 6 * MIN));
@@ -598,7 +752,7 @@ mod tests {
         // Paused: the remaining time is frozen.
         let paused = SessionPlan {
             paused: true,
-            ..focus
+            ..focus.clone()
         };
         assert_eq!(
             paused.breaks(T0, 4 * MIN as u64, 2 * HOUR)[0].start_ms,
@@ -610,7 +764,7 @@ mod tests {
         let in_break = SessionPlan {
             phase: Phase::Break,
             remaining_ms: 5 * MIN as u64,
-            ..focus
+            ..focus.clone()
         };
         let breaks = in_break.breaks(T0, 0, 2 * HOUR);
         assert_eq!((breaks[0].number, breaks[0].start_ms), (3, T0 + 50 * MIN));
@@ -1151,5 +1305,244 @@ mod tests {
         );
         assert_eq!(redact("HTTP 404"), "HTTP 404");
         assert!(redact(&"x ".repeat(400)).ends_with('…'));
+    }
+
+    // -- Smart breaks (ADR-023) -----------------------------------------------------------------------------
+
+    fn smart_on(meetings: &[Meeting], choices: &Choices) -> Vec<SmartMeeting> {
+        smart_meetings(meetings, choices, true)
+    }
+
+    #[test]
+    fn smart_breaks_off_change_nothing() {
+        let p = profile(45, 15);
+        let planning = meeting(
+            CalendarSource::Ics,
+            "p",
+            "Planning",
+            T0 + 57 * MIN,
+            T0 + 90 * MIN,
+        );
+        let choices = Choices::default();
+        assert!(smart_meetings(std::slice::from_ref(&planning), &choices, false).is_empty());
+        let idle = SessionPlan::idle(p);
+        let focus = SessionPlan {
+            phase: Phase::Focus,
+            cycle: 2,
+            remaining_ms: 10 * MIN as u64,
+            ..idle.clone()
+        };
+        let in_break = SessionPlan {
+            phase: Phase::Break,
+            ..focus.clone()
+        };
+        for plan in [&idle, &focus, &in_break] {
+            let smart = plan.smart_plan(T0, 60_000, 4 * HOUR, &[]);
+            assert_eq!(smart.breaks, plan.breaks(T0, 60_000, 4 * HOUR), "{plan:?}");
+            assert!(smart.moves.is_empty());
+            assert!(smart_break_views(plan, &smart, &[]).is_empty());
+        }
+        // Without smart breaks the meeting is asked about as before.
+        let breaks = idle.smart_plan(T0, 0, 4 * HOUR, &[]).breaks;
+        let conflicts = conflict_views(&breaks, std::slice::from_ref(&planning), &choices, T0);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(without_moved(conflicts.clone(), &[]), conflicts);
+    }
+
+    #[test]
+    fn smart_breaks_move_planned_breaks_and_drop_their_conflicts() {
+        let p = profile(45, 15);
+        // 0:57–1:30 collides with break 1 (0:45–1:00); "Review" 2:40–2:50 with break 3, but it was answered.
+        let planning = meeting(
+            CalendarSource::Ics,
+            "p",
+            "Planning",
+            T0 + 57 * MIN,
+            T0 + 90 * MIN,
+        );
+        let review = meeting(
+            CalendarSource::Ics,
+            "r",
+            "Review",
+            T0 + 160 * MIN,
+            T0 + 170 * MIN,
+        );
+        let meetings = [planning.clone(), review.clone()];
+        let mut choices = Choices::default();
+        choices
+            .set(&review, MeetingChoice::Ignore, T0)
+            .expect("ignore");
+        let smart = smart_on(&meetings, &choices);
+        assert_eq!(
+            smart.iter().map(|m| m.eligible).collect::<Vec<_>>(),
+            [true, false]
+        );
+        let idle = SessionPlan::idle(p);
+        let planned = idle.smart_plan(T0, 0, 4 * HOUR, &smart);
+        // Break 1 ends when the planning starts (0:42–0:57); break 2 at 1:42, break 3 at 2:42 collides with the
+        // answered review and stays.
+        assert_eq!(
+            planned
+                .breaks
+                .iter()
+                .map(|w| (w.number, (w.start_ms - T0) / MIN))
+                .collect::<Vec<_>>(),
+            [(1, 42), (2, 102), (3, 162), (4, 222)]
+        );
+        let views = smart_break_views(&idle, &planned, &smart);
+        assert_eq!(views.len(), 1);
+        assert_eq!(
+            (
+                views[0].meeting_id.as_str(),
+                views[0].break_number,
+                views[0].focus_delta_secs
+            ),
+            (planning.id.as_str(), 1, -180)
+        );
+        let conflicts = without_moved(
+            conflict_views(&planned.breaks, &meetings, &choices, T0),
+            &views,
+        );
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(
+            (&conflicts[0].meeting, conflicts[0].break_number),
+            (&review, 3)
+        );
+
+        // "Ask me instead": the planning is asked about again, its break back at 0:45.
+        assert!(choices.set_opt_out(&planning.id, planning.end_ms, true));
+        assert!(!choices.set_opt_out(&planning.id, planning.end_ms, true));
+        assert_eq!(choices.opt_out_ids(), std::slice::from_ref(&planning.id));
+        let smart = smart_on(&meetings, &choices);
+        assert!(!smart[0].eligible);
+        let planned = idle.smart_plan(T0, 0, 4 * HOUR, &smart);
+        assert_eq!(planned.breaks[0].start_ms, T0 + 45 * MIN);
+        assert!(smart_break_views(&idle, &planned, &smart).is_empty());
+        let conflicts = conflict_views(&planned.breaks, &meetings, &choices, T0);
+        assert_eq!(conflicts[0].meeting, planning);
+
+        // Stored with the answers (ids only) and forgotten after the meeting.
+        let json = serde_json::to_value(choices.to_stored()).expect("json");
+        assert_eq!(json["optOuts"][0]["meetingId"], planning.id.as_str());
+        assert_eq!(json["optOuts"][0]["endMs"], planning.end_ms);
+        assert!(!json.to_string().contains("Planning"));
+        let back: StoredChoices = serde_json::from_value(json).expect("parse");
+        assert_eq!(Choices::from_stored(back.clone(), T0), choices);
+        assert!(!Choices::from_stored(back, T0 + 2 * HOUR).opted_out(&planning.id));
+        let mut pruned = choices.clone();
+        assert!(pruned.prune(T0 + 2 * HOUR));
+        assert!(pruned.opt_out_ids().is_empty());
+
+        // A file from before ADR-023 loads; an empty list is left out of the file.
+        let old: StoredChoices =
+            serde_json::from_str(r#"{"version":1,"choices":[]}"#).expect("old file");
+        assert!(old.opt_outs.is_empty());
+        let empty = serde_json::to_value(Choices::default().to_stored()).expect("json");
+        assert!(empty.get("optOuts").is_none());
+
+        // "Fit it again" also forgets an answer given meanwhile, so the meeting may be fitted.
+        choices
+            .set(&planning, MeetingChoice::Ignore, T0)
+            .expect("ignore");
+        assert!(choices.set_opt_out(&planning.id, planning.end_ms, false));
+        assert!(choices.get(&planning.id).is_none() && !choices.opted_out(&planning.id));
+        assert!(smart_on(&meetings, &choices)[0].eligible);
+        assert!(!choices.set_opt_out(&planning.id, planning.end_ms, false));
+    }
+
+    #[test]
+    fn opt_outs_follow_merged_duplicates_and_moved_ends() {
+        let kept = meeting(
+            CalendarSource::Microsoft,
+            "k",
+            "Sync",
+            T0 + HOUR,
+            T0 + 2 * HOUR,
+        );
+        let dropped = meeting(CalendarSource::Ics, "d", "Sync", T0 + HOUR, T0 + 2 * HOUR);
+        let mut choices = Choices::default();
+        choices.set_opt_out(&dropped.id, dropped.end_ms, true);
+        let longer = Meeting {
+            end_ms: T0 + 3 * HOUR,
+            ..kept.clone()
+        };
+        let merged = merge(
+            &[
+                std::slice::from_ref(&longer),
+                std::slice::from_ref(&dropped),
+            ],
+            T0,
+            T0 + 4 * HOUR,
+        );
+        assert!(choices.follow(&merged));
+        assert!(choices.opted_out(&kept.id) && !choices.opted_out(&dropped.id));
+        // The kept copy's new end keeps it until then.
+        assert!(!choices.prune(T0 + 2 * HOUR + 1));
+        assert!(choices.prune(T0 + 3 * HOUR));
+    }
+
+    #[test]
+    fn a_running_focus_block_belongs_to_the_session() {
+        let p = profile(45, 15);
+        let planning = meeting(
+            CalendarSource::Ics,
+            "p",
+            "Planning",
+            T0 + 12 * MIN,
+            T0 + 40 * MIN,
+        );
+        let smart = smart_on(std::slice::from_ref(&planning), &Choices::default());
+        // The session fitted its block (break at 0:12 with the meeting instead of 0:09) and reports it.
+        let own = SmartBreak {
+            meeting_id: planning.id.clone(),
+            meeting_start_ms: planning.start_ms,
+            meeting_end_ms: planning.end_ms,
+            break_number: 2,
+            kind: focus_core::api::SmartBreakKind::StartsAtMeeting,
+            focus_delta_secs: 180,
+            break_start_ms: T0 + 12 * MIN,
+            break_end_ms: T0 + 27 * MIN,
+        };
+        let focus = SessionPlan {
+            phase: Phase::Focus,
+            paused: false,
+            cycle: 2,
+            remaining_ms: 12 * MIN as u64,
+            profile: p,
+            smart: Some(own.clone()),
+        };
+        let planned = focus.smart_plan(T0, 0, 2 * HOUR, &smart);
+        // Not fitted again here: the break stays where the session put it.
+        assert_eq!(
+            planned.breaks[0],
+            BreakWindow {
+                number: 2,
+                start_ms: T0 + 12 * MIN,
+                end_ms: T0 + 27 * MIN,
+            }
+        );
+        assert!(planned.moves.is_empty());
+        let views = smart_break_views(&focus, &planned, &smart);
+        assert_eq!(views, std::slice::from_ref(&own));
+        let conflicts = conflict_views(
+            &planned.breaks,
+            std::slice::from_ref(&planning),
+            &Choices::default(),
+            T0,
+        );
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "the break overlaps the meeting on purpose"
+        );
+        assert!(without_moved(conflicts, &views).is_empty());
+        // During the moved break the session's view is not an upcoming break.
+        let in_break = SessionPlan {
+            phase: Phase::Break,
+            remaining_ms: 10 * MIN as u64,
+            ..focus.clone()
+        };
+        let planned = in_break.smart_plan(T0, 0, 2 * HOUR, &smart);
+        assert!(smart_break_views(&in_break, &planned, &smart).is_empty());
     }
 }

@@ -9,8 +9,19 @@
 //!   very warm ramps; the platform then applies the warmest accepted value (`TintStatus::capped`).
 //!
 //! A dedicated thread owns both. Every [`SCHEDULE_TICK`], on a config change and on a settings preview it
-//! computes the level (`focus_core::tint::tint_level` for the local time of day, or the preview strength)
-//! and the colour temperature (`kelvin_for_level`), then applies it, or restores the screen at level 0.
+//! computes the level (`focus_core::tint::window_level` for the local time of day in today's window, or the preview
+//! strength) and the colour temperature (`kelvin_for_level`), then applies it, or restores the screen at level 0.
+//!
+//! ADR-023:
+//! * Today's window (`focus_core::tint::tint_window`) is the fixed hours or local sunset → sunrise, computed offline
+//!   from the configured coordinates with the local date and UTC offset read here (`focus_platform::clock`).
+//! * Exceptions: while the window is warm and an exception is switched on, the same thread samples the foreground
+//!   window at most once per [`WATCH_EVERY`] (the tracker samples only during focus, the tint runs all evening):
+//!   its exe name (the window title of the sample is dropped at once) and whether a full-screen app is in front
+//!   (`focus_platform::notification_state`). `focus_core::tint::TintExceptions` pauses at once and releases after
+//!   its hysteresis; the level fades in steps of [`FADE_TICK`]. A pause brings the level to 0, which restores the
+//!   screen exactly like the end of the window (restore file and logon entry cleared; saved again before the warmth
+//!   comes back). The app name stays in memory and in `TintStatus` only, never in the log.
 //!
 //! Crash safety, like muted notifications (`crate::shields`): **before the first change** the previous state
 //! of the mechanism is written to `tint-restore.json` and the logon safety net is armed
@@ -23,9 +34,14 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use focus_core::api::{AppError, TintMode, TintStatus, events};
-use focus_core::tint::{MAX_STRENGTH, kelvin_for_level, tint_level};
+use focus_core::api::{AppError, TintConfig, TintMode, TintPause, TintStatus, events};
+use focus_core::sun;
+use focus_core::tint::{
+    LocalDate, MAX_STRENGTH, TintExceptions, TintWindow, kelvin_for_level, pause_reason,
+    tint_window, window_level,
+};
 use focus_platform::PlatformError;
+use focus_platform::foreground::ForegroundProbe;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -36,8 +52,14 @@ use crate::{
     restore_only_launch, restore_only_pending,
 };
 
-/// How often the schedule is re-evaluated (a fade of 30 min moves in steps of ~1/60).
+/// How often the schedule is re-evaluated (a fade of 30 min moves in steps of ~1/60). Also the longest a level is
+/// kept without applying it again (gamma ramps are re-applied this often).
 const SCHEDULE_TICK: Duration = Duration::from_secs(30);
+/// The foreground is sampled at most this often for the exceptions (ADR-023: at most 1 Hz).
+const WATCH_EVERY: Duration = Duration::from_secs(1);
+/// Step of the exception fade (`focus_core::tint::PAUSE_FADE_MS`); Night light writes take longer, so it simply
+/// takes fewer, larger steps.
+const FADE_TICK: Duration = Duration::from_millis(100);
 /// A preview shows its strength this long after the last `preview_tint` call.
 const PREVIEW_FOR: Duration = Duration::from_secs(6);
 /// A `--restore-shields` launch runs early at logon: the crash-restore is tried this many times in total,
@@ -312,8 +334,14 @@ impl Engine {
         }
         match self.backend(mode).apply(kelvin) {
             Ok(applied) => {
-                if self.applied != Some((mode, kelvin)) {
-                    log::info!("screen tint: {kelvin} K via {}", name(mode));
+                match self.applied {
+                    // Each step of a fade (the schedule, or an exception coming and going, ADR-023) only at debug
+                    // level, so switching windows all evening does not fill the log.
+                    Some((shown, previous)) if shown == mode && previous != kelvin => {
+                        log::debug!("screen tint: {kelvin} K via {}", name(mode));
+                    }
+                    Some(shown) if shown == (mode, kelvin) => {}
+                    _ => log::info!("screen tint: {kelvin} K via {}", name(mode)),
                 }
                 self.applied = Some((mode, kelvin));
                 self.last = applied.clone();
@@ -447,6 +475,7 @@ impl TintHandle {
     pub fn spawn(ctx: TintContext) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel();
         let tint = read_config(&ctx.config).tint;
+        let window = today_window(&tint);
         let status = Arc::new(Mutex::new(TintStatus {
             revision: 0,
             enabled: tint.enabled,
@@ -456,6 +485,10 @@ impl TintHandle {
             mode: tint.mode,
             capped: false,
             error: None,
+            paused_by: None,
+            schedule: window.schedule,
+            window_start_minutes: window.start_minutes,
+            window_end_minutes: window.end_minutes,
         }));
         let shared = Arc::clone(&status);
         std::thread::Builder::new()
@@ -478,6 +511,9 @@ impl TintHandle {
                     preview: None,
                     reported_error: None,
                     last_published: None,
+                    last_set: None,
+                    force: true,
+                    watch: Watch::new(focus_platform::foreground::probe()),
                 }
                 .run(rx);
             })?;
@@ -525,6 +561,21 @@ struct Worker {
     /// Last error sent as `app://error` (each distinct error is reported once).
     reported_error: Option<String>,
     last_published: Option<TintStatus>,
+    /// What was last handed to the engine; an unchanged level is handed again only every [`SCHEDULE_TICK`] (the
+    /// worker wakes every second while it watches the foreground).
+    last_set: Option<LastSet>,
+    /// Hand the level to the engine on the next evaluation even when unchanged (startup, a command).
+    force: bool,
+    /// Foreground sampling and the hysteresis of the exceptions (ADR-023).
+    watch: Watch,
+}
+
+/// One [`Engine::set`] call and how it went.
+struct LastSet {
+    level: u32,
+    mode: TintMode,
+    at: Instant,
+    outcome: Outcome,
 }
 
 impl Worker {
@@ -564,21 +615,35 @@ impl Worker {
 
     fn handle(&mut self, cmd: TintCmd) {
         match cmd {
-            TintCmd::Refresh => self.engine.retry_night_light(),
+            TintCmd::Refresh => {
+                self.engine.retry_night_light();
+                // New switches or apps: look at the foreground again now.
+                self.watch.invalidate();
+                self.force = true;
+            }
             TintCmd::Preview(Some(strength)) => {
                 self.preview = Some((strength, Instant::now() + PREVIEW_FOR));
+                self.force = true;
             }
-            TintCmd::Preview(None) => self.preview = None,
+            TintCmd::Preview(None) => {
+                self.preview = None;
+                self.force = true;
+            }
             // Handled by `run`.
             TintCmd::Exit(_) => {}
         }
     }
 
     fn next_wait(&self) -> Duration {
-        match self.preview {
-            Some((_, until)) => SCHEDULE_TICK.min(until.saturating_duration_since(Instant::now())),
-            None => SCHEDULE_TICK,
+        let now = Instant::now();
+        let mut wait = SCHEDULE_TICK;
+        if let Some((_, until)) = self.preview {
+            wait = wait.min(until.saturating_duration_since(now));
         }
+        if let Some(watch) = self.watch.next_wait(now) {
+            wait = wait.min(watch);
+        }
+        wait
     }
 
     /// A previous run left the screen warm (crash, power loss): put it back before anything else.
@@ -608,28 +673,31 @@ impl Worker {
     /// Re-evaluates the level and brings the screen in line with it.
     fn apply(&mut self) {
         let tint = read_config(&self.config).tint;
-        if self
-            .preview
-            .is_some_and(|(_, until)| Instant::now() >= until)
-        {
+        let now = Instant::now();
+        if self.preview.is_some_and(|(_, until)| now >= until) {
             self.preview = None;
+            self.force = true;
         }
         let preview = self.preview.map(|(strength, _)| strength);
+        let (date, minute_of_day, utc_offset) = local_now();
+        let window = tint_window(&tint, date, utc_offset);
         let scheduled = if tint.enabled {
-            tint_level(&tint, local_minutes_of_day())
+            window_level(&tint, &window, minute_of_day)
         } else {
             0
         };
         // A `--restore-shields` launch only repairs what a crash left behind and exits: no warmth.
-        let level = if restore_only_launch() {
+        let restore_only = restore_only_launch();
+        // The exceptions apply to the schedule only: a preview shows its strength whatever is in front.
+        let shown = self
+            .watch
+            .level(&tint, scheduled, !restore_only && preview.is_none(), now);
+        let level = if restore_only {
             0
         } else {
-            preview.unwrap_or(scheduled)
+            preview.unwrap_or(shown)
         };
-        let outcome = self.engine.set(level, tint.mode);
-        if let Some(error) = outcome.error.as_deref().filter(|_| outcome.report) {
-            self.report(error);
-        }
+        let outcome = self.set(level, tint.mode, now);
         self.publish(TintStatus {
             revision: 0,
             enabled: tint.enabled,
@@ -639,7 +707,37 @@ impl Worker {
             mode: outcome.mode,
             capped: outcome.capped,
             error: outcome.error,
+            paused_by: self.watch.paused_by(),
+            schedule: window.schedule,
+            window_start_minutes: window.start_minutes,
+            window_end_minutes: window.end_minutes,
         });
+    }
+
+    /// Hands `level` to the engine when it changed, when forced, or [`SCHEDULE_TICK`] after the last time (gamma is
+    /// re-applied then, a failure retried); otherwise the previous outcome stands.
+    fn set(&mut self, level: u32, mode: TintMode, now: Instant) -> Outcome {
+        if !self.force
+            && let Some(last) = self.last_set.as_ref().filter(|last| {
+                last.level == level
+                    && last.mode == mode
+                    && now.saturating_duration_since(last.at) < SCHEDULE_TICK
+            })
+        {
+            return last.outcome.clone();
+        }
+        self.force = false;
+        let outcome = self.engine.set(level, mode);
+        if let Some(error) = outcome.error.as_deref().filter(|_| outcome.report) {
+            self.report(error);
+        }
+        self.last_set = Some(LastSet {
+            level,
+            mode,
+            at: now,
+            outcome: outcome.clone(),
+        });
+        outcome
     }
 
     /// Quit: restore the screen. A failure leaves the restore file and the logon entry in place.
@@ -682,9 +780,31 @@ impl Worker {
     }
 }
 
-/// Local minutes after midnight; UTC when the local time is unavailable (non-Windows).
-fn local_minutes_of_day() -> f64 {
-    focus_platform::clock::local_minutes_of_day().unwrap_or_else(utc_minutes_of_day)
+/// The warm window of today's local date (ADR-023: the fixed hours or sunset → sunrise).
+fn today_window(tint: &TintConfig) -> TintWindow {
+    let (date, _, utc_offset) = local_now();
+    tint_window(tint, date, utc_offset)
+}
+
+/// The local date, the local minutes after midnight (with fractions) and the UTC offset in effect, in minutes; the
+/// UTC date and time with offset 0 when the local time is unavailable (non-Windows, best effort, ADR-008).
+fn local_now() -> (LocalDate, f64, i32) {
+    let utc_ms = unix_ms();
+    if let (Some((year, month, day, minute)), Some(minutes)) = (
+        focus_platform::clock::local_date_time(),
+        focus_platform::clock::local_minutes_of_day(),
+    ) && let Some(offset) = sun::utc_offset_minutes(year, month, day, minute, utc_ms)
+    {
+        return ((year, month, day), minutes, offset);
+    }
+    (sun::utc_date(utc_ms), utc_minutes_of_day(), 0)
+}
+
+fn unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 fn utc_minutes_of_day() -> f64 {
@@ -694,6 +814,166 @@ fn utc_minutes_of_day() -> f64 {
         .unwrap_or(0);
     // `secs % SECS_PER_DAY` < 86 400: exact in f64, and the result stays below 1440.
     (secs % SECS_PER_DAY) as f64 / 60.0
+}
+
+/// Whether a full-screen app or game is in front (a fake in the tests).
+type FullScreenProbe = Box<dyn FnMut() -> bool + Send>;
+
+/// The exceptions over time (ADR-023): samples the foreground at most once per [`WATCH_EVERY`] while the window is
+/// warm and an exception is switched on, and feeds `focus_core::tint::TintExceptions` (pause at once, release after
+/// the hysteresis, fade both ways). Keeps only the exe name of a sample; the window title is dropped right away and
+/// nothing about the app is logged.
+struct Watch {
+    probe: Box<dyn ForegroundProbe>,
+    full_screen: FullScreenProbe,
+    exceptions: TintExceptions,
+    /// Origin of the monotonic milliseconds handed to `TintExceptions`.
+    epoch: Instant,
+    /// When the foreground was last sampled and what it said.
+    last_sample: Option<(Instant, Option<TintPause>)>,
+    /// The exceptions applied at the last evaluation (warm window, no preview).
+    active: bool,
+    /// At least one exception was switched on at the last evaluation (the foreground is sampled).
+    sampling: bool,
+    /// The warmth was suspended at the last evaluation (logged on change, without the app).
+    was_paused: bool,
+    probe_failing: bool,
+}
+
+impl Watch {
+    fn new(probe: Box<dyn ForegroundProbe>) -> Self {
+        Self::with(
+            probe,
+            Box::new(focus_platform::notification_state::user_is_presenting),
+        )
+    }
+
+    fn with(probe: Box<dyn ForegroundProbe>, full_screen: FullScreenProbe) -> Self {
+        Self {
+            probe,
+            full_screen,
+            exceptions: TintExceptions::new(),
+            epoch: Instant::now(),
+            last_sample: None,
+            active: false,
+            sampling: false,
+            was_paused: false,
+            probe_failing: false,
+        }
+    }
+
+    /// The level shown for the `scheduled` one at `now`. `applies`: the exceptions may suspend the warmth now (no
+    /// preview, not a restore-only launch); outside the warm window (`scheduled == 0`) nothing is sampled and the
+    /// exceptions start afresh next time (the first sample in the window jumps, so a colour-critical app in front at
+    /// sunset never sees the warmth).
+    fn level(&mut self, tint: &TintConfig, scheduled: u32, applies: bool, now: Instant) -> u32 {
+        if !applies || scheduled == 0 {
+            if self.active {
+                self.exceptions.reset();
+                self.last_sample = None;
+            }
+            self.active = false;
+            self.sampling = false;
+            self.note_pause(false);
+            return scheduled;
+        }
+        self.active = true;
+        self.sampling =
+            (tint.pause_for_apps && !tint.pause_apps.is_empty()) || tint.pause_for_fullscreen;
+        let seen = if self.sampling {
+            match &self.last_sample {
+                Some((at, seen)) if now.saturating_duration_since(*at) < WATCH_EVERY => {
+                    seen.clone()
+                }
+                _ => {
+                    let seen = self.sample(tint);
+                    self.last_sample = Some((now, seen.clone()));
+                    seen
+                }
+            }
+        } else {
+            self.last_sample = None;
+            None
+        };
+        let ms = u64::try_from(now.saturating_duration_since(self.epoch).as_millis())
+            .unwrap_or(u64::MAX);
+        self.exceptions.observe(ms, seen);
+        self.note_pause(self.exceptions.paused_by().is_some());
+        self.exceptions.level(scheduled)
+    }
+
+    /// One look at the foreground: what suspends the warmth according to it.
+    fn sample(&mut self, tint: &TintConfig) -> Option<TintPause> {
+        let process = match self.probe.sample() {
+            Ok(info) => {
+                if self.probe_failing {
+                    log::info!("screen tint: foreground probe recovered");
+                    self.probe_failing = false;
+                }
+                // Only the exe name goes on; the title is dropped with `info`.
+                info.process
+            }
+            Err(PlatformError::Unsupported) => None,
+            Err(err) => {
+                if !self.probe_failing {
+                    log::warn!("screen tint: foreground probe failed: {err}");
+                    self.probe_failing = true;
+                }
+                None
+            }
+        };
+        let full_screen = tint.pause_for_fullscreen && (self.full_screen)();
+        pause_reason(tint, process.as_deref(), full_screen)
+    }
+
+    fn note_pause(&mut self, paused: bool) {
+        if paused != self.was_paused {
+            // Never the app: process names of the exceptions stay in `TintStatus` (ADR-023).
+            log::info!(
+                "screen tint: {}",
+                if paused {
+                    "suspended by an exception"
+                } else {
+                    "exception over"
+                }
+            );
+            self.was_paused = paused;
+        }
+    }
+
+    /// The next evaluation samples the foreground again (the switches or the apps changed).
+    fn invalidate(&mut self) {
+        self.last_sample = None;
+    }
+
+    /// The exception in effect, `None` while the exceptions do not apply.
+    fn paused_by(&self) -> Option<TintPause> {
+        if self.active {
+            self.exceptions.paused_by().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// How soon the worker has to evaluate again for the exceptions: [`FADE_TICK`] during a fade, the next sample
+    /// while sampling, [`WATCH_EVERY`] while a release is pending without sampling; `None` when nothing is pending.
+    fn next_wait(&self, now: Instant) -> Option<Duration> {
+        if !self.active {
+            return None;
+        }
+        if self.exceptions.is_fading() {
+            return Some(FADE_TICK);
+        }
+        if self.sampling {
+            let since = self
+                .last_sample
+                .as_ref()
+                .map_or(WATCH_EVERY, |(at, _)| now.saturating_duration_since(*at));
+            // Never a busy loop, whatever the clock says.
+            return Some(WATCH_EVERY.saturating_sub(since).max(FADE_TICK));
+        }
+        (!self.exceptions.is_settled()).then_some(WATCH_EVERY)
+    }
 }
 
 /// Adapters from the `focus_platform` colour APIs to [`Warmth`].
@@ -1302,5 +1582,239 @@ mod tests {
     fn utc_fallback_is_within_a_day() {
         let minutes = utc_minutes_of_day();
         assert!((0.0..f64::from(MINUTES_PER_DAY)).contains(&minutes));
+    }
+
+    #[test]
+    fn local_now_is_a_valid_date_time_and_offset() {
+        let ((year, month, day), minutes, offset) = local_now();
+        assert!(year >= 2020 && (1..=12).contains(&month) && (1..=31).contains(&day));
+        assert!((0.0..f64::from(MINUTES_PER_DAY)).contains(&minutes));
+        assert!(offset.abs() <= 18 * 60, "{offset}");
+        // Today's window always has valid minutes, whatever the schedule.
+        let window = today_window(&focus_core::api::TintConfig {
+            schedule: focus_core::api::TintSchedule::Sun,
+            location: Some(focus_core::api::TintLocation {
+                latitude: 52.2297,
+                longitude: 21.0122,
+                city: Some("pl-warszawa".into()),
+            }),
+            ..Default::default()
+        });
+        assert!(window.start_minutes < MINUTES_PER_DAY && window.end_minutes < MINUTES_PER_DAY);
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR-023: exceptions (foreground sampling, hysteresis, fade)
+    // -----------------------------------------------------------------------
+
+    use focus_core::api::{TintPauseReason, TintSchedule};
+    use focus_core::tint::{PAUSE_FADE_MS, PAUSE_RELEASE_MS};
+    use focus_platform::foreground::ForegroundInfo;
+
+    /// Foreground with a settable exe name; counts the samples.
+    #[derive(Clone, Default)]
+    struct FakeForeground {
+        process: Arc<Mutex<Option<String>>>,
+        samples: Arc<Mutex<u32>>,
+        full_screen: Arc<Mutex<bool>>,
+    }
+
+    impl FakeForeground {
+        fn front(&self, process: &str) {
+            *lock(&self.process) = Some(process.to_owned());
+        }
+
+        fn samples(&self) -> u32 {
+            *lock(&self.samples)
+        }
+
+        fn watch(&self) -> Watch {
+            let full_screen = Arc::clone(&self.full_screen);
+            Watch::with(
+                Box::new(self.clone()),
+                Box::new(move || *lock(&full_screen)),
+            )
+        }
+    }
+
+    impl ForegroundProbe for FakeForeground {
+        fn sample(&mut self) -> Result<ForegroundInfo, PlatformError> {
+            *lock(&self.samples) += 1;
+            Ok(ForegroundInfo {
+                process: lock(&self.process).clone(),
+                title: "A private document".into(),
+                class_name: String::new(),
+                idle_secs: 0,
+            })
+        }
+    }
+
+    fn warm() -> TintConfig {
+        TintConfig {
+            enabled: true,
+            ..TintConfig::default()
+        }
+    }
+
+    fn ms(ms: u64) -> Duration {
+        Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn a_colour_critical_app_fades_the_warmth_out_and_back() {
+        let fg = FakeForeground::default();
+        fg.front("Code.exe");
+        let mut watch = fg.watch();
+        let t0 = watch.epoch;
+        let tint = warm();
+        assert_eq!(watch.level(&tint, 45, true, t0), 45);
+        assert_eq!(watch.paused_by(), None);
+        assert_eq!(fg.samples(), 1);
+
+        // Photoshop comes to the front; the foreground is looked at again only a second after the last look.
+        fg.front("Photoshop.exe");
+        assert_eq!(watch.level(&tint, 45, true, t0 + ms(500)), 45);
+        assert_eq!(fg.samples(), 1, "at most one sample per second");
+        let seen = t0 + WATCH_EVERY;
+        assert_eq!(
+            watch.level(&tint, 45, true, seen),
+            45,
+            "the fade starts here"
+        );
+        assert_eq!(fg.samples(), 2);
+        let paused = watch.paused_by().expect("paused");
+        assert_eq!(paused.reason, TintPauseReason::App);
+        assert_eq!(paused.app.as_deref(), Some("Photoshop.exe"));
+        assert_eq!(watch.next_wait(seen), Some(FADE_TICK));
+        let half = watch.level(&tint, 45, true, seen + ms(PAUSE_FADE_MS / 2));
+        assert!(half > 0 && half < 45, "{half}");
+        assert_eq!(watch.level(&tint, 45, true, seen + ms(PAUSE_FADE_MS)), 0);
+
+        // Alt+Tab to the editor: still paused through the hysteresis, then the warmth fades back in.
+        fg.front("Code.exe");
+        let gone = seen + ms(PAUSE_FADE_MS) + WATCH_EVERY;
+        assert_eq!(watch.level(&tint, 45, true, gone), 0);
+        assert!(watch.paused_by().is_some());
+        let wait = watch.next_wait(gone).expect("sampling");
+        assert!(wait >= FADE_TICK && wait <= WATCH_EVERY, "{wait:?}");
+        let released = gone + ms(PAUSE_RELEASE_MS);
+        assert_eq!(watch.level(&tint, 45, true, released), 0);
+        assert_eq!(watch.paused_by(), None);
+        assert_eq!(
+            watch.level(&tint, 45, true, released + ms(PAUSE_FADE_MS)),
+            45
+        );
+        assert_eq!(
+            watch
+                .next_wait(released + ms(PAUSE_FADE_MS))
+                .map(|w| w <= WATCH_EVERY),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_colour_critical_app_in_front_at_the_start_of_the_window_never_sees_the_warmth() {
+        let fg = FakeForeground::default();
+        fg.front("photoshop.EXE");
+        let mut watch = fg.watch();
+        let t0 = watch.epoch;
+        // Outside the window: nothing sampled, nothing pending.
+        assert_eq!(watch.level(&warm(), 0, true, t0), 0);
+        assert_eq!(fg.samples(), 0);
+        assert_eq!(watch.next_wait(t0), None);
+        // The window opens: the first sample jumps straight to "paused".
+        assert_eq!(watch.level(&warm(), 3, true, t0 + ms(30_000)), 0);
+        assert!(watch.paused_by().is_some());
+    }
+
+    #[test]
+    fn a_preview_and_switched_off_exceptions_do_not_sample() {
+        let fg = FakeForeground::default();
+        fg.front("Photoshop.exe");
+        let mut watch = fg.watch();
+        let t0 = watch.epoch;
+        // Settings preview (or a restore-only launch): the exceptions do not apply.
+        assert_eq!(watch.level(&warm(), 45, false, t0), 45);
+        assert_eq!(watch.paused_by(), None);
+        assert_eq!(fg.samples(), 0);
+        assert_eq!(watch.next_wait(t0), None);
+
+        // Both switches off: the schedule shows as it is, without looking at the foreground.
+        let off = TintConfig {
+            pause_for_apps: false,
+            pause_for_fullscreen: false,
+            ..warm()
+        };
+        assert_eq!(watch.level(&off, 45, true, t0), 45);
+        assert_eq!(fg.samples(), 0);
+        assert_eq!(watch.next_wait(t0), None);
+        // An empty list with only the apps switch on: nothing to look for either.
+        let empty = TintConfig {
+            pause_apps: Vec::new(),
+            ..warm()
+        };
+        assert_eq!(watch.level(&empty, 45, true, t0), 45);
+        assert_eq!(fg.samples(), 0);
+    }
+
+    #[test]
+    fn full_screen_pauses_only_when_switched_on() {
+        let fg = FakeForeground::default();
+        fg.front("game.exe");
+        *lock(&fg.full_screen) = true;
+        let mut watch = fg.watch();
+        let t0 = watch.epoch;
+        // Default: full screen keeps the warmth (games, ADR-015).
+        assert_eq!(watch.level(&warm(), 45, true, t0), 45);
+        assert_eq!(watch.paused_by(), None);
+
+        let tint = TintConfig {
+            pause_for_fullscreen: true,
+            ..warm()
+        };
+        watch.invalidate();
+        assert_eq!(watch.level(&tint, 45, true, t0 + ms(100)), 45);
+        let paused = watch.paused_by().expect("paused");
+        assert_eq!(paused.reason, TintPauseReason::Fullscreen);
+        assert_eq!(paused.app.as_deref(), Some("game.exe"));
+        assert_eq!(
+            watch.level(&tint, 45, true, t0 + ms(100 + PAUSE_FADE_MS)),
+            0
+        );
+    }
+
+    #[test]
+    fn leaving_the_window_forgets_the_pause() {
+        let fg = FakeForeground::default();
+        fg.front("krita.exe");
+        let mut watch = fg.watch();
+        let t0 = watch.epoch;
+        let tint = TintConfig {
+            schedule: TintSchedule::Fixed,
+            ..warm()
+        };
+        assert_eq!(watch.level(&tint, 45, true, t0), 0);
+        assert!(watch.paused_by().is_some());
+        // Sunrise: the schedule is 0, the pause is dropped and the foreground is no longer watched.
+        assert_eq!(watch.level(&tint, 0, true, t0 + WATCH_EVERY), 0);
+        assert_eq!(watch.paused_by(), None);
+        assert_eq!(watch.next_wait(t0 + WATCH_EVERY), None);
+        let samples = fg.samples();
+        assert_eq!(watch.level(&tint, 0, true, t0 + 3 * WATCH_EVERY), 0);
+        assert_eq!(fg.samples(), samples);
+    }
+
+    /// "Restore the default list" in the settings uses a copy of `focus_core::tint::DEFAULT_PAUSE_APPS`
+    /// (`DEFAULT_TINT_PAUSE_APPS` in `src/lib/state/config.svelte.ts`): both must list the same apps in the same order.
+    #[test]
+    fn the_settings_copy_of_the_default_pause_apps_matches_the_core() {
+        const SOURCE: &str = include_str!("../../src/lib/state/config.svelte.ts");
+        let start = SOURCE
+            .find("DEFAULT_TINT_PAUSE_APPS")
+            .expect("DEFAULT_TINT_PAUSE_APPS in config.svelte.ts");
+        let list = &SOURCE[start..];
+        let list = &list[list.find("= [").expect("array")..list.find("];").expect("end of array")];
+        let copy: Vec<&str> = list.split('"').skip(1).step_by(2).collect();
+        assert_eq!(copy, focus_core::tint::DEFAULT_PAUSE_APPS);
     }
 }

@@ -24,7 +24,12 @@
 //! * "remind later" shows a `MeetingReminder` popup 30 / 20 / 10 minutes before the meeting
 //!   (`focus_core::calendar::reminder_schedule`), whatever `phase_popups` says (a toast with the subject and
 //!   time when the popup window cannot be shown). A reminder is skipped when the meeting no longer
-//!   collides with a break.
+//!   collides with a break;
+//! * smart breaks (ADR-023, `Config.smart_breaks`): every meeting goes to the session actor with whether a break may be
+//!   moved for it (no answer, no "Ask me instead"); the session fits its running focus block itself, the plan here fits
+//!   the later ones with the same function (`focus_core::calendar`). A meeting whose break was moved leaves
+//!   `conflicts` for `smart_breaks`; one without a fit is asked about as before. "Ask me instead" is kept with the
+//!   answers in `meeting-choices.json` (ids only).
 //!
 //! Secrets (the Google refresh token, the ICS links) never reach `config.json` or the log; meeting subjects,
 //! links and tokens are never logged either (only counts and redacted errors).
@@ -41,6 +46,7 @@ use focus_core::api::{
     AppError, CalendarConfig, CalendarSource, CalendarSourceStatus, CalendarStatus, Meeting,
     MeetingChoice, MeetingConflict, PopupKind, events,
 };
+use focus_core::calendar::{SmartMeeting, SmartPlan};
 use tauri::{AppHandle, Emitter, Listener};
 use tokio::sync::oneshot;
 
@@ -85,6 +91,12 @@ pub enum CalendarCmd {
         choice: MeetingChoice,
         reply: oneshot::Sender<Result<CalendarStatus, AppError>>,
     },
+    /// Smart breaks (ADR-023): "Ask me instead" (`true`) or "fit it again" (`false`) for one meeting.
+    SetSmartOptOut {
+        meeting_id: String,
+        opt_out: bool,
+        reply: oneshot::Sender<Result<CalendarStatus, AppError>>,
+    },
     ConnectGoogle(oneshot::Sender<Result<(), AppError>>),
     Disconnect {
         source: CalendarSource,
@@ -125,6 +137,8 @@ impl CalendarHandle {
             planned: true,
             last_sync_ms: None,
             google_pending: false,
+            smart_breaks: Vec::new(),
+            smart_opt_outs: Vec::new(),
         };
         (
             Self {
@@ -169,6 +183,20 @@ impl CalendarHandle {
         self.request(|reply| CalendarCmd::SetChoice {
             meeting_id,
             choice,
+            reply,
+        })
+        .await?
+    }
+
+    /// Smart breaks (ADR-023): "Ask me instead" (`opt_out`) or "fit it again" for one meeting.
+    pub async fn set_smart_opt_out(
+        &self,
+        meeting_id: String,
+        opt_out: bool,
+    ) -> Result<CalendarStatus, AppError> {
+        self.request(|reply| CalendarCmd::SetSmartOptOut {
+            meeting_id,
+            opt_out,
             reply,
         })
         .await?
@@ -303,6 +331,8 @@ struct Service {
     tx: Sender<CalendarCmd>,
     fetcher: fetch::Fetcher,
     config: CalendarConfig,
+    /// `Config.smart_breaks` (ADR-023).
+    smart_on: bool,
     plan: SessionPlan,
     plan_at: Instant,
     teams_connected: bool,
@@ -326,6 +356,8 @@ struct Service {
     next_recompute: Instant,
     /// Holds last sent to the actor.
     sent_holds: Option<Vec<(Meeting, MeetingChoice)>>,
+    /// Smart-break meetings last sent to the actor (ADR-023).
+    sent_smart: Option<Vec<SmartMeeting>>,
     revision: u32,
     last_published: Option<CalendarStatus>,
 }
@@ -339,7 +371,8 @@ impl Service {
     ) -> Self {
         let now = Instant::now();
         let now_ms = wall_ms();
-        let config = read_config(&ctx.config).calendar;
+        let stored = read_config(&ctx.config);
+        let (config, smart_on) = (stored.calendar, stored.smart_breaks);
         let choices = ctx
             .persistence
             .load_meeting_choices::<StoredChoices>()
@@ -354,7 +387,7 @@ impl Service {
         };
         let teams = ctx.teams.status();
         let (teams_connected, teams_signing_in) = (teams.connected, teams.pending.is_some());
-        let plan = ctx.initial_plan;
+        let plan = ctx.initial_plan.clone();
         log::info!(
             "calendar: {} stored answers, {} ICS links, Google {}connected",
             choices.to_stored().choices.len(),
@@ -367,6 +400,7 @@ impl Service {
             tx,
             fetcher,
             config,
+            smart_on,
             plan,
             plan_at: now,
             teams_connected,
@@ -386,6 +420,7 @@ impl Service {
             last_sync_ms: None,
             next_recompute: now,
             sent_holds: None,
+            sent_smart: None,
             revision: 0,
             last_published: None,
         }
@@ -498,6 +533,14 @@ impl Service {
                 reply,
             } => {
                 let result = self.set_choice(&meeting_id, choice);
+                let _ = reply.send(result);
+            }
+            CalendarCmd::SetSmartOptOut {
+                meeting_id,
+                opt_out,
+                reply,
+            } => {
+                let result = self.set_smart_opt_out(&meeting_id, opt_out);
                 let _ = reply.send(result);
             }
             CalendarCmd::ConnectGoogle(reply) => self.connect_google(reply),
@@ -624,7 +667,20 @@ impl Service {
     // -- commands ------------------------------------------------------------------------------------
 
     fn config_changed(&mut self) {
-        let config = read_config(&self.ctx.config).calendar;
+        let stored = read_config(&self.ctx.config);
+        let config = stored.calendar;
+        if stored.smart_breaks != self.smart_on {
+            // Smart breaks on or off (ADR-023): the same meetings, planned and sent to the session again.
+            self.smart_on = stored.smart_breaks;
+            log::info!(
+                "calendar: smart breaks {}",
+                if self.smart_on { "on" } else { "off" }
+            );
+            if config == self.config {
+                self.rebuild();
+                return;
+            }
+        }
         if config == self.config {
             // Focus / break minutes are reported by the actor (the idle plan).
             return;
@@ -668,6 +724,44 @@ impl Service {
         log::info!("calendar: a meeting was answered with {choice:?}");
         // The reminder popup of that meeting (if any) has its answer.
         self.ctx.popup.resolve_meeting(&meeting.id);
+        self.rebuild();
+        Ok(lock(&self.shared).clone())
+    }
+
+    /// Smart breaks (ADR-023): "Ask me instead" (`opt_out`) takes the meeting out of smart breaks (the session gets its
+    /// unfitted end back, the meeting gets the usual question); `false` lets them fit it again and forgets an answer
+    /// given meanwhile. An unknown meeting: `calendar.unknownMeeting` for an opt-out, nothing to undo otherwise.
+    fn set_smart_opt_out(
+        &mut self,
+        meeting_id: &str,
+        opt_out: bool,
+    ) -> Result<CalendarStatus, AppError> {
+        let end_ms = self
+            .meetings
+            .iter()
+            .find(|meeting| meeting.id == meeting_id)
+            .map(|meeting| meeting.end_ms);
+        let changed = match end_ms {
+            Some(end_ms) => self.choices.set_opt_out(meeting_id, end_ms, opt_out),
+            None if opt_out => {
+                return Err(AppError::new(
+                    "calendar.unknownMeeting",
+                    "the meeting is no longer in the calendar",
+                ));
+            }
+            None => self.choices.set_opt_out(meeting_id, 0, false),
+        };
+        if changed {
+            self.choices_dirty = true;
+            log::info!(
+                "calendar: smart breaks {} a meeting",
+                if opt_out { "leave out" } else { "fit again" }
+            );
+            if !opt_out {
+                // A reminder popup of that meeting (an answer given meanwhile) has nothing left to ask.
+                self.ctx.popup.resolve_meeting(meeting_id);
+            }
+        }
         self.rebuild();
         Ok(lock(&self.shared).clone())
     }
@@ -903,6 +997,7 @@ impl Service {
         self.deliver_reminders(now_ms);
         self.save_choices();
         self.send_holds();
+        self.send_smart();
         self.publish(now_ms);
     }
 
@@ -913,7 +1008,7 @@ impl Service {
             return;
         }
         self.choices_dirty = true;
-        let breaks = self.breaks(now_ms);
+        let breaks = self.smart_plan(now_ms, &self.smart_meetings()).breaks;
         let all_read = self.all_sources_read();
         for id in due {
             let Some(meeting) = self.meetings.iter().find(|meeting| meeting.id == id) else {
@@ -948,9 +1043,16 @@ impl Service {
         }
     }
 
-    fn breaks(&self, now_ms: i64) -> Vec<focus_core::calendar::BreakWindow> {
+    /// The meetings smart breaks plan around (empty while they are off; ADR-023).
+    fn smart_meetings(&self) -> Vec<SmartMeeting> {
+        model::smart_meetings(&self.meetings, &self.choices, self.smart_on)
+    }
+
+    /// The planned breaks (the running focus block as the session fitted it, later ones fitted around `smart`).
+    fn smart_plan(&self, now_ms: i64, smart: &[SmartMeeting]) -> SmartPlan {
         let elapsed = u64::try_from(self.plan_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.plan.breaks(now_ms, elapsed, self.config.horizon_ms())
+        self.plan
+            .smart_plan(now_ms, elapsed, self.config.horizon_ms(), smart)
     }
 
     fn save_choices(&mut self) {
@@ -978,17 +1080,45 @@ impl Service {
         }
     }
 
+    /// Sends the smart-break meetings (ADR-023) to the session actor when they changed: the session fits its running
+    /// focus block around them (an empty list while smart breaks are off gives it its unfitted end back).
+    fn send_smart(&mut self) {
+        let smart = self.smart_meetings();
+        if self.sent_smart.as_ref() == Some(&smart) {
+            return;
+        }
+        match self
+            .ctx
+            .actor
+            .send(ActorCmd::SetSmartMeetings(smart.clone()))
+        {
+            Ok(()) => self.sent_smart = Some(smart),
+            Err(err) => log::warn!(
+                "calendar: cannot update the smart-break meetings: {}",
+                err.message
+            ),
+        }
+    }
+
     /// Emits `calendar://changed` when anything but the revision changed.
     fn publish(&mut self, now_ms: i64) {
-        let breaks = self.breaks(now_ms);
+        let smart = self.smart_meetings();
+        let plan = self.smart_plan(now_ms, &smart);
+        let smart_breaks = model::smart_break_views(&self.plan, &plan, &smart);
+        let conflicts = model::without_moved(
+            model::conflict_views(&plan.breaks, &self.meetings, &self.choices, now_ms),
+            &smart_breaks,
+        );
         let mut status = CalendarStatus {
             revision: self.revision,
             sources: self.source_statuses(),
             meetings: self.meetings.clone(),
-            conflicts: model::conflict_views(&breaks, &self.meetings, &self.choices, now_ms),
+            conflicts,
             planned: self.plan.planned(),
             last_sync_ms: self.last_sync_ms,
             google_pending: self.google.pending,
+            smart_breaks,
+            smart_opt_outs: self.choices.opt_out_ids(),
         };
         let unchanged = self.last_published.as_ref().is_some_and(|last| {
             let mut last = last.clone();

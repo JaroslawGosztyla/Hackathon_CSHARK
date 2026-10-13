@@ -9,7 +9,7 @@
 //! `history.jsonl` additionally holds the history lock for the whole read-modify-write.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -45,6 +45,10 @@ const REWARDS_BACKUP_FILE: &str = "rewards.json.bak";
 const REWARDS_UNREADABLE_PREFIX: &str = "rewards.unreadable-";
 /// Folder (in the app data directory) with the user's imported chime files.
 const SOUNDS_DIR: &str = "sounds";
+/// The weekly stats read at most this much of the end of `history.jsonl` (ADR-023; roughly 30 000 sessions).
+const HISTORY_SCAN_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// A `history.jsonl` line longer than this is skipped by the weekly stats (a session line is a few kB).
+const HISTORY_SCAN_MAX_LINE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone)]
 pub struct Persistence {
@@ -359,12 +363,14 @@ impl Persistence {
         self.inner.blocklist_path.clone()
     }
 
-    /// Loads `config.json`. A missing file gives defaults silently; a corrupted or invalid file is
-    /// renamed to `config.json.bak` and defaults are used, with an error to report to the UI.
+    /// Loads `config.json`. A missing file is a first start (a fresh install, or the next start after a factory
+    /// reset): the defaults with the first-run wizard still to show (`Config::first_run`, ADR-023), silently. A
+    /// corrupted or invalid file is renamed to `config.json.bak` and defaults are used (no wizard: the user had a
+    /// config), with an error to report to the UI.
     pub fn load_config(&self) -> (Config, Option<AppError>) {
         let text = match fs::read_to_string(&self.inner.config_path) {
             Ok(text) => text,
-            Err(err) if err.kind() == ErrorKind::NotFound => return (Config::default(), None),
+            Err(err) if err.kind() == ErrorKind::NotFound => return (Config::first_run(), None),
             Err(err) => {
                 return (
                     Config::default(),
@@ -466,6 +472,61 @@ impl Persistence {
             })
             .take(limit)
             .collect())
+    }
+
+    /// Streams the stored sessions, oldest first, into `each` (the weekly stats, ADR-023) without holding the file in
+    /// memory: at most the newest [`HISTORY_SCAN_MAX_BYTES`] (an older part of a huge file is left out), lines longer
+    /// than [`HISTORY_SCAN_MAX_LINE_BYTES`] and unparseable lines are skipped. A missing file is an empty history.
+    /// Reads without the history lock: writers append or replace the file whole, so a scan sees the old or the new one.
+    pub fn scan_history(&self, mut each: impl FnMut(SessionSummary)) -> anyhow::Result<()> {
+        let path = &self.inner.history_path;
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
+        };
+        let len = file
+            .metadata()
+            .with_context(|| format!("stat {}", path.display()))?
+            .len();
+        let mut reader = BufReader::new(file);
+        // Starting inside a line: its rest is not a whole session.
+        let mut skip_first = false;
+        if len > HISTORY_SCAN_MAX_BYTES {
+            reader
+                .seek(SeekFrom::Start(len - HISTORY_SCAN_MAX_BYTES))
+                .with_context(|| format!("seek {}", path.display()))?;
+            skip_first = true;
+        }
+        let mut reader = reader.take(HISTORY_SCAN_MAX_BYTES);
+        let mut line = Vec::new();
+        let (mut skipped, mut too_long) = (0_u32, 0_u32);
+        while let Some(fits) =
+            read_bounded_line(&mut reader, &mut line, HISTORY_SCAN_MAX_LINE_BYTES)
+                .with_context(|| format!("read {}", path.display()))?
+        {
+            if std::mem::take(&mut skip_first) {
+                continue;
+            }
+            if !fits {
+                too_long += 1;
+                continue;
+            }
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            match serde_json::from_slice::<SessionSummary>(&line) {
+                Ok(summary) => each(summary),
+                Err(_) => skipped += 1,
+            }
+        }
+        if skipped > 0 || too_long > 0 {
+            // Counts only: a history line may hold window titles (privacy rule 11).
+            log::warn!(
+                "weekly stats skipped {skipped} unreadable and {too_long} oversized history lines"
+            );
+        }
+        Ok(())
     }
 
     /// Marks the goal of session `session_id` as done / not done ("Zrobione?"): in `latest` (the last summary,
@@ -660,6 +721,38 @@ pub fn unreadable_rewards_in(data_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Reads one `\n`-terminated line (without the `\n`) into `line`, keeping at most `max` bytes of it. `Ok(None)` at the
+/// end of the input; `Ok(Some(false))` for a longer line, which is read to its end but not kept (`line` is empty).
+fn read_bounded_line(
+    reader: &mut impl BufRead,
+    line: &mut Vec<u8>,
+    max: usize,
+) -> std::io::Result<Option<bool>> {
+    line.clear();
+    let mut fits = true;
+    let mut read_any = false;
+    loop {
+        let buf = reader.fill_buf()?;
+        if buf.is_empty() {
+            return Ok(read_any.then_some(fits));
+        }
+        read_any = true;
+        let newline = buf.iter().position(|byte| *byte == b'\n');
+        let part = newline.map_or(buf, |at| &buf[..at]);
+        if fits && line.len() + part.len() <= max {
+            line.extend_from_slice(part);
+        } else {
+            fits = false;
+            line.clear();
+        }
+        let used = newline.map_or(buf.len(), |at| at + 1);
+        reader.consume(used);
+        if newline.is_some() {
+            return Ok(Some(fits));
+        }
+    }
+}
+
 /// The text of `path`; `Ok(None)` when it does not exist.
 fn read_optional(path: &Path) -> std::io::Result<Option<String>> {
     match fs::read_to_string(path) {
@@ -719,9 +812,11 @@ mod tests {
     #[test]
     fn config_round_trip_and_corruption() {
         let (root, p) = temp_dirs("config");
+        // No config.json yet: a first start, with the first-run wizard to show (ADR-023).
         let (cfg, err) = p.load_config();
         assert!(err.is_none());
-        assert_eq!(cfg, Config::default());
+        assert_eq!(cfg, Config::first_run());
+        assert!(!cfg.onboarding_done);
 
         let changed = Config {
             focus_minutes: 25,
@@ -737,6 +832,39 @@ mod tests {
         assert_eq!(loaded, Config::default());
         assert_eq!(err.map(|e| e.code), Some("config.corrupt".to_owned()));
         assert!(root.join("config").join(CONFIG_BACKUP_FILE).exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn first_run_wizard_stays_until_finished_and_never_returns() {
+        let (root, p) = temp_dirs("onboarding");
+        // A fresh install changes a setting in the wizard before finishing it: the wizard is still due.
+        let (fresh, _) = p.load_config();
+        let edited = Config {
+            focus_minutes: 30,
+            ..fresh
+        };
+        p.save_config(&edited).expect("save");
+        let (loaded, err) = p.load_config();
+        assert!(err.is_none());
+        assert!(!loaded.onboarding_done);
+        assert_eq!(loaded.focus_minutes, 30);
+
+        // Finished (or skipped): stored, and never shown again.
+        let done = Config {
+            onboarding_done: true,
+            ..loaded
+        };
+        p.save_config(&done).expect("save");
+        assert!(p.load_config().0.onboarding_done);
+
+        // A config written before ADR-023 has no field: an existing user, no wizard.
+        fs::write(
+            root.join("config").join(CONFIG_FILE),
+            br#"{"focusMinutes":25}"#,
+        )
+        .expect("write");
+        assert!(p.load_config().0.onboarding_done);
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -759,6 +887,7 @@ mod tests {
             goal_done: None,
             steps: Vec::new(),
             sparks: None,
+            focus_spans: Vec::new(),
         }
     }
 
@@ -783,6 +912,66 @@ mod tests {
         // Clearing an empty history is fine too.
         p.clear_history().expect("clear again");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_streams_history_oldest_first_and_skips_bad_lines() {
+        let (root, p) = temp_dirs("history-scan");
+        let scanned = |p: &Persistence| {
+            let mut ids = Vec::new();
+            p.scan_history(|s| ids.push(s.session_id)).expect("scan");
+            ids
+        };
+        // No file yet: an empty history.
+        assert!(scanned(&p).is_empty());
+        let none = Mutex::new(None);
+        p.append_history(&summary("s0", 0), &none).expect("append");
+        let history = root.join("data").join(HISTORY_FILE);
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&history)
+            .expect("open");
+        file.write_all(b"not json\n\n  \r\n").expect("garbage");
+        let long = format!(
+            "{{\"x\":\"{}\"}}\n",
+            "y".repeat(HISTORY_SCAN_MAX_LINE_BYTES)
+        );
+        file.write_all(long.as_bytes()).expect("long line");
+        drop(file);
+        p.append_history(&summary("s1", 1), &none).expect("append");
+        assert_eq!(scanned(&p), ["s0", "s1"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bounded_lines_keep_short_lines_and_drop_long_ones() {
+        let mut input = std::io::BufReader::with_capacity(4, &b"ab\nabcdef\n\nxyz"[..]);
+        let mut line = Vec::new();
+        assert_eq!(
+            read_bounded_line(&mut input, &mut line, 3).expect("read"),
+            Some(true)
+        );
+        assert_eq!(line, b"ab");
+        assert_eq!(
+            read_bounded_line(&mut input, &mut line, 3).expect("read"),
+            Some(false)
+        );
+        assert!(line.is_empty());
+        assert_eq!(
+            read_bounded_line(&mut input, &mut line, 3).expect("read"),
+            Some(true)
+        );
+        assert!(line.is_empty());
+        // The last line has no newline.
+        assert_eq!(
+            read_bounded_line(&mut input, &mut line, 3).expect("read"),
+            Some(true)
+        );
+        assert_eq!(line, b"xyz");
+        assert_eq!(
+            read_bounded_line(&mut input, &mut line, 3).expect("read"),
+            None
+        );
     }
 
     #[test]
@@ -1015,6 +1204,8 @@ mod tests {
         assert!(!files.config_backup.exists());
         assert!(!files.sounds.exists(), "an empty sounds folder goes");
         assert!(files.history.exists(), "other files are not this helper's");
+        // The next start is a first start: the first-run wizard shows again (ADR-023).
+        assert!(!p.load_config().0.onboarding_done);
 
         // A file that is not ours keeps the sounds folder (and the file).
         p.ensure_sounds_dir().expect("sounds");

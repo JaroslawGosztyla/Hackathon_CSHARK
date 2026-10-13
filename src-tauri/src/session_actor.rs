@@ -9,7 +9,9 @@
 //! wall-clock meetings; the actor turns them into meeting holds with its own clock when they arrive, at
 //! every Start and Resume and every [`HOLDS_RESYNC`] while a session runs (so the monotonic times follow
 //! the wall clock after a sleep). Whenever the session timing changes (phase, pause, cycle, profile, a
-//! meeting extension) the actor tells `crate::calendar`, which plans the breaks from it.
+//! meeting extension, a smart-break fit) the actor tells `crate::calendar`, which plans the breaks from it.
+//! Smart breaks (ADR-023): the calendar also sends every meeting with whether a break may be moved for it
+//! (`ActorCmd::SetSmartMeetings`); the core fits the running focus block itself (`Input::SetSmartMeetings`).
 //!
 //! The session goal ("Co dalej?", `set_session_goal`) lives in the core session: it is part of every
 //! snapshot and moves into the summary on Stop. Every phase change is reported to `crate::work`, which holds
@@ -24,8 +26,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
     AppError, Meeting, MeetingChoice, MeetingConflict, Phase, SessionGoal, SessionSnapshot,
-    StepDraft, events,
+    SmartBreak, StepDraft, events,
 };
+use focus_core::calendar::SmartMeeting;
 use focus_core::session::{Effect, Input, MeetingHold, NotifyKind, Now, Session};
 use focus_core::timing::TimingProfile;
 use tauri::{AppHandle, Emitter};
@@ -70,6 +73,9 @@ pub enum ActorCmd {
     /// Every meeting answered with `Extend` / `PauseAtBreak` (from `crate::calendar`): replaces the
     /// session's meeting holds.
     SetMeetings(Vec<(Meeting, MeetingChoice)>),
+    /// Smart breaks (ADR-023, from `crate::calendar`): every meeting with whether a break may be moved for it (empty
+    /// while smart breaks are off). The session fits its focus blocks around them itself.
+    SetSmartMeetings(Vec<SmartMeeting>),
     /// The goal of the coming or running session (`set_session_goal`); `None` clears it.
     SetGoal(Option<SessionGoal>),
     /// Developer mode (`dev_trigger`, ADR-019): the current phase ends in `secs` (`Input::DevSetRemaining`);
@@ -241,8 +247,9 @@ struct Actor {
 }
 
 /// What the calendar's break plan depends on; a new plan is sent when it changes. A running phase keeps
-/// its deadline, so its remaining time is not part of the key (a paused one's is frozen and is).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// its deadline, so its remaining time is not part of the key (a paused one's is frozen and is). A smart-break fit
+/// (ADR-023) changes the phase length and the moved break.
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanKey {
     phase: Phase,
     paused: bool,
@@ -250,6 +257,7 @@ struct PlanKey {
     profile: TimingProfile,
     phase_total_secs: u32,
     frozen_ms: u64,
+    smart: Option<SmartBreak>,
 }
 
 impl Actor {
@@ -273,6 +281,8 @@ impl Actor {
                 self.sync_holds();
                 self.publish(false);
             }
+            // Wall-clock meetings: the core fits the running block with the clock of this input (no effects).
+            ActorCmd::SetSmartMeetings(meetings) => self.apply(Input::SetSmartMeetings(meetings)),
             // Cleaned by the core; shown by every snapshot, copied into the summary on Stop.
             ActorCmd::SetGoal(goal) => self.apply(Input::SetGoal(goal)),
             ActorCmd::DevSetRemaining { secs, reply } => {
@@ -540,8 +550,9 @@ impl Actor {
             profile,
             phase_total_secs: snapshot.phase_total_secs,
             frozen_ms: if snapshot.paused { remaining_ms } else { 0 },
+            smart: snapshot.smart_break.clone(),
         };
-        if self.last_plan == Some(key) {
+        if self.last_plan.as_ref() == Some(&key) {
             return;
         }
         self.last_plan = Some(key);
@@ -551,6 +562,7 @@ impl Actor {
             cycle: snapshot.cycle,
             remaining_ms,
             profile,
+            smart: snapshot.smart_break.clone(),
         });
     }
 
