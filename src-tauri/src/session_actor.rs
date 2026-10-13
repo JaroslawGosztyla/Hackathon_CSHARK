@@ -4,22 +4,34 @@
 //! (monotonic `Instant` since process start + wall clock) to `Session::handle`, dispatches the
 //! returned effects without waiting for slow work, and publishes `session://snapshot` with a
 //! growing `revision`. It also mirrors the state into the extension bridge and the tray.
+//!
+//! Calendar meetings the user answered with `Extend` / `PauseAtBreak` arrive from `crate::calendar` as
+//! wall-clock meetings; the actor turns them into meeting holds with its own clock when they arrive, at
+//! every Start and Resume and every [`HOLDS_RESYNC`] while a session runs (so the monotonic times follow
+//! the wall clock after a sleep). Whenever the session timing changes (phase, pause, cycle, profile, a
+//! meeting extension) the actor tells `crate::calendar`, which plans the breaks from it.
 
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use focus_core::api::{AppError, Phase, SessionSnapshot, events};
-use focus_core::session::{Input, Now, Session};
+use focus_core::api::{
+    AppError, Meeting, MeetingChoice, MeetingConflict, Phase, SessionSnapshot, events,
+};
+use focus_core::session::{Effect, Input, MeetingHold, NotifyKind, Now, Session};
 use focus_core::timing::TimingProfile;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 
 use crate::bridge::SharedBridge;
-use crate::effects::Effects;
+use crate::calendar::{CalendarHandle, SessionPlan};
+use crate::effects::{Effects, HeldBreak};
 use crate::tracker::TrackerHandle;
 use crate::tray::Tray;
 use crate::{SharedConfig, lock, read_config};
+
+/// While a session runs, the meeting holds are rebuilt from the wall clock this often.
+const HOLDS_RESYNC: Duration = Duration::from_secs(60);
 
 pub enum ActorCmd {
     Start,
@@ -32,6 +44,9 @@ pub enum ActorCmd {
     /// Config saved: refresh the profile shown while idle.
     ConfigChanged,
     GetSnapshot(oneshot::Sender<SessionSnapshot>),
+    /// Every meeting answered with `Extend` / `PauseAtBreak` (from `crate::calendar`): replaces the
+    /// session's meeting holds.
+    SetMeetings(Vec<(Meeting, MeetingChoice)>),
     /// App exit: stop the session (history written synchronously), then ack.
     Shutdown(std_mpsc::Sender<()>),
 }
@@ -79,6 +94,8 @@ pub struct ActorContext {
     pub tracker: TrackerHandle,
     pub bridge: SharedBridge,
     pub tray: Option<Tray>,
+    /// Plans the breaks against the calendars; told about every timing change.
+    pub calendar: CalendarHandle,
 }
 
 pub fn spawn(ctx: ActorContext, rx: mpsc::UnboundedReceiver<ActorCmd>) {
@@ -96,6 +113,9 @@ async fn run(ctx: ActorContext, mut rx: mpsc::UnboundedReceiver<ActorCmd>) {
         last_published: None,
         started: 0,
         shutting_down: false,
+        meetings: Vec::new(),
+        holds_synced_at: Instant::now(),
+        last_plan: None,
     };
     let profile = actor.profile();
     actor.session.set_idle_profile(profile);
@@ -145,6 +165,24 @@ struct Actor {
     /// Sessions started by this process (part of the session id).
     started: u32,
     shutting_down: bool,
+    /// The meetings behind the session's meeting holds (`ActorCmd::SetMeetings`).
+    meetings: Vec<(Meeting, MeetingChoice)>,
+    /// When the holds were last rebuilt from `meetings`.
+    holds_synced_at: Instant,
+    /// Timing last reported to the calendar.
+    last_plan: Option<PlanKey>,
+}
+
+/// What the calendar's break plan depends on; a new plan is sent when it changes. A running phase keeps
+/// its deadline, so its remaining time is not part of the key (a paused one's is frozen and is).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlanKey {
+    phase: Phase,
+    paused: bool,
+    cycle: u32,
+    profile: TimingProfile,
+    phase_total_secs: u32,
+    frozen_ms: u64,
 }
 
 impl Actor {
@@ -152,16 +190,21 @@ impl Actor {
         match cmd {
             ActorCmd::Start => self.start(),
             ActorCmd::Pause => self.apply(Input::Pause),
-            ActorCmd::Resume => self.apply(Input::Resume),
+            ActorCmd::Resume => self.resume(),
             ActorCmd::TogglePause => {
                 if self.session.phase() == Phase::Idle {
                     return;
                 }
                 if self.session.is_paused() {
-                    self.apply(Input::Resume);
+                    self.resume();
                 } else {
                     self.apply(Input::Pause);
                 }
+            }
+            ActorCmd::SetMeetings(meetings) => {
+                self.meetings = meetings;
+                self.sync_holds();
+                self.publish(false);
             }
             ActorCmd::Stop => self.apply(Input::Stop),
             ActorCmd::Skip => self.apply(Input::SkipPhase),
@@ -203,10 +246,76 @@ impl Actor {
         );
         // Reset before the core emits `Tracking(true)`; the tracker channel keeps the order.
         self.ctx.tracker.reset(profile.idle_after_secs);
+        self.sync_holds();
         self.apply(Input::Start {
             session_id,
             profile,
         });
+    }
+
+    /// Resume, with the meeting holds rebuilt first (the monotonic clock may have drifted during a sleep).
+    fn resume(&mut self) {
+        self.sync_holds();
+        self.apply(Input::Resume);
+    }
+
+    /// Rebuilds the session's meeting holds from `meetings` with the clock now. No effects.
+    fn sync_holds(&mut self) {
+        let now = self.clock.now();
+        let holds = self
+            .meetings
+            .iter()
+            .filter_map(|(meeting, choice)| MeetingHold::from_meeting(meeting, *choice, now))
+            .collect();
+        let effects = self.session.handle(now, Input::SetMeetingHolds(holds));
+        self.dispatch(effects, now);
+        self.holds_synced_at = Instant::now();
+    }
+
+    /// Executes the effects; a held break gets its meeting and length for the popup.
+    fn dispatch(&mut self, effects: Vec<Effect>, now: Now) {
+        let held = effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Notify(NotifyKind::BreakHeld { .. })))
+            .then(|| self.held_break(now));
+        self.ctx
+            .effects
+            .dispatch(effects, self.shutting_down, held.as_ref());
+    }
+
+    /// The break that just started paused: its length and the meeting holding it.
+    fn held_break(&self, now: Now) -> HeldBreak {
+        let break_secs = self
+            .session
+            .profile()
+            .map_or(0, |profile| profile.break_secs);
+        let snapshot = self.session.snapshot(now);
+        let meeting = snapshot.meeting_hold.as_ref().and_then(|view| {
+            self.meetings
+                .iter()
+                .find(|(meeting, choice)| {
+                    *choice == view.choice
+                        && meeting.end_ms == view.until_ms
+                        && meeting.subject == view.subject
+                })
+                .map(|(meeting, choice)| MeetingConflict {
+                    meeting: meeting.clone(),
+                    break_number: snapshot.cycle,
+                    break_start_ms: now.wall_ms,
+                    break_end_ms: now
+                        .wall_ms
+                        .saturating_add(i64::from(break_secs).saturating_mul(1000)),
+                    choice: Some(*choice),
+                    next_reminder_ms: None,
+                    remind_later_allowed: false,
+                    // The session held the break, so the meeting is short enough.
+                    too_long: false,
+                })
+        });
+        HeldBreak {
+            break_secs,
+            meeting,
+        }
     }
 
     /// Demo profile, or the profile from the current config.
@@ -219,8 +328,9 @@ impl Actor {
     }
 
     fn apply(&mut self, input: Input) {
-        let effects = self.session.handle(self.clock.now(), input);
-        self.ctx.effects.dispatch(effects, self.shutting_down);
+        let now = self.clock.now();
+        let effects = self.session.handle(now, input);
+        self.dispatch(effects, now);
         self.publish(true);
     }
 
@@ -228,15 +338,48 @@ impl Actor {
         if self.session.phase() == Phase::Idle {
             return;
         }
-        let effects = self.session.handle(self.clock.now(), Input::Tick);
+        if !self.meetings.is_empty() && self.holds_synced_at.elapsed() >= HOLDS_RESYNC {
+            self.sync_holds();
+        }
+        let now = self.clock.now();
+        let effects = self.session.handle(now, Input::Tick);
         let changed = !effects.is_empty();
-        self.ctx.effects.dispatch(effects, self.shutting_down);
+        self.dispatch(effects, now);
         self.publish(changed);
+    }
+
+    /// Tells the calendar about a new session timing (only when it changed).
+    fn report_plan(&mut self, snapshot: &SessionSnapshot, now: Now) {
+        let remaining_ms = self.session.remaining_ms(now).unwrap_or(0);
+        let profile = self.session.profile().unwrap_or_else(|| self.profile());
+        let key = PlanKey {
+            phase: snapshot.phase,
+            paused: snapshot.paused,
+            cycle: snapshot.cycle,
+            profile,
+            phase_total_secs: snapshot.phase_total_secs,
+            frozen_ms: if snapshot.paused { remaining_ms } else { 0 },
+        };
+        if self.last_plan == Some(key) {
+            return;
+        }
+        self.last_plan = Some(key);
+        self.ctx.calendar.session_changed(SessionPlan {
+            phase: snapshot.phase,
+            paused: snapshot.paused,
+            cycle: snapshot.cycle,
+            remaining_ms,
+            profile,
+        });
     }
 
     /// Emits `session://snapshot` when forced (after an input) or when the view changed.
     fn publish(&mut self, force: bool) {
-        let mut snapshot = self.session.snapshot(self.clock.now());
+        let now = self.clock.now();
+        let mut snapshot = self.session.snapshot(now);
+        if !self.shutting_down {
+            self.report_plan(&snapshot, now);
+        }
         if !force {
             let unchanged = self.last_published.as_ref().is_some_and(|last| {
                 let mut last = last.clone();

@@ -411,12 +411,8 @@ impl Worker {
         let toast = texts::launchers_closed_toast(&launcher_names(closed));
         if popups {
             self.ctx.popup.show(PopupRequest {
-                kind: PopupKind::LaunchersClosed,
-                cycle: 0,
-                phase_secs: 0,
                 launchers: closed.to_vec(),
-                reminder: None,
-                fallback: toast,
+                ..PopupRequest::new(PopupKind::LaunchersClosed, 0, 0, toast)
             });
         } else {
             self.show_toast(&toast);

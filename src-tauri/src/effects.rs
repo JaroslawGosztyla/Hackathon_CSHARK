@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use focus_audio::{AudioEvent, Chime, ChimePlayer, ChimeSource, SoundPack};
-use focus_core::api::{AppError, ChimeKind, ChimeSound, Config, PopupKind, SessionSummary, events};
+use focus_core::api::{
+    AppError, ChimeKind, ChimeSound, Config, MeetingConflict, PopupKind, SessionSummary, events,
+};
 use focus_core::config::reminder_for_break;
 use focus_core::session::{Effect, NotifyKind, SessionTotals};
 use tauri::{AppHandle, Emitter};
@@ -94,6 +96,16 @@ pub fn forward_audio_errors(app: AppHandle, events_rx: Receiver<AudioEvent>) -> 
     Ok(())
 }
 
+/// Details of a break that started paused because of a meeting (`NotifyKind::BreakHeld`), known only to
+/// the session actor.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeldBreak {
+    /// Break length of the running session.
+    pub break_secs: u32,
+    /// The meeting holding the break, when the actor still knows it.
+    pub meeting: Option<MeetingConflict>,
+}
+
 pub struct Effects {
     pub app: AppHandle,
     pub config: SharedConfig,
@@ -109,12 +121,17 @@ pub struct Effects {
 
 impl Effects {
     /// Dispatches effects in order. `shutting_down` writes the history synchronously so a session
-    /// stopped by "Zakończ" is not lost.
-    pub fn dispatch(&mut self, effects: Vec<Effect>, shutting_down: bool) {
+    /// stopped by "Zakończ" is not lost. `held` describes a `Notify(BreakHeld)` among the effects.
+    pub fn dispatch(
+        &mut self,
+        effects: Vec<Effect>,
+        shutting_down: bool,
+        held: Option<&HeldBreak>,
+    ) {
         for effect in effects {
             match effect {
                 Effect::Chime(kind) => self.chime.play(kind, &read_config(&self.config)),
-                Effect::Notify(kind) => self.notify(kind),
+                Effect::Notify(kind) => self.notify(kind, held),
                 Effect::Shields(up) => self.shields.set_up(up),
                 Effect::Tracking(on) => self.tracker.set_enabled(on),
                 Effect::PhaseChanged(change) => {
@@ -135,9 +152,9 @@ impl Effects {
     }
 
     /// The app's own popup when `phase_popups` is on, otherwise the Windows toast (never both).
-    fn notify(&self, kind: NotifyKind) {
+    fn notify(&self, kind: NotifyKind, held: Option<&HeldBreak>) {
         let config = read_config(&self.config);
-        let request = notification(kind, self.last_cycle, &config);
+        let request = notification(kind, self.last_cycle, &config, held);
         if config.phase_popups {
             self.popup.show(request);
         } else {
@@ -194,17 +211,34 @@ impl Effects {
 
 /// Popup (and its toast fallback) of a session notification. `last_cycle` is the cycle of the latest
 /// phase change: for a break, the focus cycle that just ended, which is also the break's number
-/// (the break after cycle 1 is break 1) for the user's per-break reminder.
-fn notification(kind: NotifyKind, last_cycle: u32, config: &Config) -> PopupRequest {
+/// (the break after cycle 1 is break 1) for the user's per-break reminder. `held` details a `BreakHeld`.
+fn notification(
+    kind: NotifyKind,
+    last_cycle: u32,
+    config: &Config,
+    held: Option<&HeldBreak>,
+) -> PopupRequest {
     let request = |kind, cycle, phase_secs, reminder, fallback| PopupRequest {
-        kind,
-        cycle,
-        phase_secs,
-        launchers: Vec::new(),
         reminder,
-        fallback,
+        ..PopupRequest::new(kind, cycle, phase_secs, fallback)
     };
     match kind {
+        NotifyKind::BreakHeld { subject } => {
+            let held = held.cloned().unwrap_or_default();
+            let reminder = reminder_for_break(config, last_cycle);
+            let toast =
+                texts::break_held_toast(subject.as_deref(), held.break_secs, reminder.as_deref());
+            PopupRequest {
+                meeting: held.meeting,
+                ..request(
+                    PopupKind::BreakHeld,
+                    last_cycle,
+                    held.break_secs,
+                    reminder,
+                    toast,
+                )
+            }
+        }
         NotifyKind::BreakStarted { break_secs } => {
             let reminder = reminder_for_break(config, last_cycle);
             let toast = texts::break_toast(break_secs, reminder.as_deref());
@@ -240,7 +274,12 @@ mod tests {
     #[test]
     fn notifications_map_to_popups_and_toasts() {
         let config = Config::default();
-        let popup = notification(NotifyKind::BreakStarted { break_secs: 900 }, 3, &config);
+        let popup = notification(
+            NotifyKind::BreakStarted { break_secs: 900 },
+            3,
+            &config,
+            None,
+        );
         assert_eq!(
             (popup.kind, popup.cycle, popup.phase_secs),
             (PopupKind::BreakStarted, 3, 900)
@@ -255,6 +294,7 @@ mod tests {
             },
             3,
             &config,
+            None,
         );
         assert_eq!(
             (popup.kind, popup.cycle, popup.phase_secs),
@@ -262,10 +302,69 @@ mod tests {
         );
         assert_eq!(popup.fallback, texts::focus_toast(2700, 4));
 
-        let popup = notification(NotifyKind::Interrupted, 2, &config);
+        let popup = notification(NotifyKind::Interrupted, 2, &config, None);
         assert_eq!(
             (popup.kind, popup.cycle, popup.phase_secs),
             (PopupKind::Interrupted, 2, 0)
+        );
+        assert_eq!(popup.meeting, None);
+    }
+
+    #[test]
+    fn a_held_break_names_its_meeting() {
+        let config = Config {
+            break_reminders: vec!["woda".into()],
+            ..Config::default()
+        };
+        let conflict = MeetingConflict {
+            meeting: focus_core::api::Meeting {
+                id: "ics:1:0".into(),
+                source: focus_core::api::CalendarSource::Ics,
+                subject: "Planowanie".into(),
+                start_ms: 0,
+                end_ms: 1_800_000,
+                online: true,
+            },
+            break_number: 1,
+            break_start_ms: 600_000,
+            break_end_ms: 1_500_000,
+            choice: Some(focus_core::api::MeetingChoice::PauseAtBreak),
+            next_reminder_ms: None,
+            remind_later_allowed: false,
+            too_long: false,
+        };
+        let held = HeldBreak {
+            break_secs: 900,
+            meeting: Some(conflict.clone()),
+        };
+        let popup = notification(
+            NotifyKind::BreakHeld {
+                subject: Some("Planowanie".into()),
+            },
+            1,
+            &config,
+            Some(&held),
+        );
+        assert_eq!(
+            (popup.kind, popup.cycle, popup.phase_secs),
+            (PopupKind::BreakHeld, 1, 900)
+        );
+        assert_eq!(popup.meeting, Some(conflict));
+        assert_eq!(popup.reminder.as_deref(), Some("woda"));
+        assert_eq!(
+            popup.fallback,
+            texts::break_held_toast(Some("Planowanie"), 900, Some("woda"))
+        );
+
+        // Without details (the actor lost the meeting) the popup still says the break is held.
+        let popup = notification(NotifyKind::BreakHeld { subject: None }, 2, &config, None);
+        assert_eq!((popup.kind, popup.phase_secs), (PopupKind::BreakHeld, 0));
+        assert_eq!(popup.meeting, None);
+        assert!(
+            popup
+                .fallback
+                .body
+                .starts_with("Przerwa wstrzymana — trwa spotkanie.")
         );
     }
 
@@ -321,14 +420,25 @@ mod tests {
             ..Config::default()
         };
         let reminder = |cycle| {
-            notification(NotifyKind::BreakStarted { break_secs: 600 }, cycle, &config).reminder
+            notification(
+                NotifyKind::BreakStarted { break_secs: 600 },
+                cycle,
+                &config,
+                None,
+            )
+            .reminder
         };
         assert_eq!(reminder(1).as_deref(), Some("rozciąganie"));
         assert_eq!(reminder(2), None);
         assert_eq!(reminder(3).as_deref(), Some("obiad"));
         assert_eq!(reminder(4), None);
 
-        let popup = notification(NotifyKind::BreakStarted { break_secs: 600 }, 3, &config);
+        let popup = notification(
+            NotifyKind::BreakStarted { break_secs: 600 },
+            3,
+            &config,
+            None,
+        );
         assert_eq!(popup.fallback, texts::break_toast(600, Some("obiad")));
         // Focus popups never carry a break reminder.
         let focus = notification(
@@ -338,6 +448,7 @@ mod tests {
             },
             0,
             &config,
+            None,
         );
         assert_eq!(focus.reminder, None);
     }

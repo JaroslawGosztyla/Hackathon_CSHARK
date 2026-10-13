@@ -7,6 +7,11 @@
 //!   It reads the current presence first: a user who appears offline stays invisible, a DND the user
 //!   set themselves is left alone, and only a DND we set (and that is still there) is cleared.
 //!
+//! - calendar: `crate::calendar` reads the Microsoft 365 / Outlook calendar through this worker
+//!   (`calendar_view`, same sign-in, `Calendars.Read`), so one thread owns the tokens. The sign-in asks
+//!   for `Calendars.Read` only while `calendar.microsoft` is on; turning the calendar off (or
+//!   `disconnect_calendar(microsoft)`) never signs out of Teams.
+//!
 //! The client is recreated when the client id or tenant changes in the config.
 
 use std::path::PathBuf;
@@ -28,6 +33,7 @@ use tokio::sync::oneshot;
 
 use crate::shields::ShieldsHandle;
 use crate::{SharedConfig, emit_error, lock, read_config};
+use focus_platform::calendar::CalEvent;
 
 /// Wake up at least this often (login expiry, DND refresh).
 const MAX_SLEEP: Duration = Duration::from_secs(30);
@@ -45,6 +51,13 @@ pub enum TeamsCmd {
     SetDnd {
         on: bool,
         minutes: u32,
+    },
+    /// Reads the Microsoft calendar (Graph `calendarView`) of `[from_ms, to_ms)` with the same sign-in
+    /// (`crate::calendar`). The error is English and carries no tokens.
+    CalendarView {
+        from_ms: i64,
+        to_ms: i64,
+        reply: Sender<Result<Vec<CalEvent>, String>>,
     },
     /// Clear presence if we set it, then ack and stop.
     Exit(Sender<()>),
@@ -98,6 +111,26 @@ impl TeamsHandle {
 
     pub fn set_dnd(&self, on: bool, minutes: u32) {
         let _ = self.send(TeamsCmd::SetDnd { on, minutes });
+    }
+
+    /// Blocking (calendar fetch thread only): the Microsoft calendar events of `[from_ms, to_ms)`, waiting
+    /// at most `timeout` for the worker.
+    pub fn calendar_view(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        timeout: Duration,
+    ) -> Result<Vec<CalEvent>, String> {
+        let (reply, response) = mpsc::channel();
+        self.send(TeamsCmd::CalendarView {
+            from_ms,
+            to_ms,
+            reply,
+        })
+        .map_err(|err| err.message)?;
+        response
+            .recv_timeout(timeout)
+            .map_err(|_| "the Microsoft calendar did not answer in time".to_owned())?
     }
 
     /// Clears presence (if set) and stops the worker, waiting at most `timeout`.
@@ -271,6 +304,14 @@ impl Worker {
                 }
                 self.desired_minutes = minutes;
             }
+            TeamsCmd::CalendarView {
+                from_ms,
+                to_ms,
+                reply,
+            } => {
+                let result = self.calendar_view(from_ms, to_ms);
+                let _ = reply.send(result);
+            }
             TeamsCmd::Exit(ack) => {
                 self.desired_on = false;
                 self.reconcile_dnd(false);
@@ -336,8 +377,20 @@ impl Worker {
                 field: Some("shields.teamsClientId".into()),
             });
         }
-        match self.client.begin_login() {
+        // `Calendars.Read` only when the Microsoft calendar is on now: a Teams-only user is never asked for it.
+        // With the calendar on, the same call is "Połącz ponownie" for a sign-in that lacks the scope (the
+        // stored sign-in keeps working until the new one succeeds).
+        let calendar = read_config(&self.ctx.config).calendar.microsoft;
+        match self.client.begin_login(calendar) {
             Ok(login) => {
+                log::info!(
+                    "Teams sign-in started ({})",
+                    if login.includes_calendar() {
+                        "presence and calendar"
+                    } else {
+                        "presence only"
+                    }
+                );
                 let now = Instant::now();
                 let prompt = DeviceCodePrompt {
                     user_code: login.user_code.clone(),
@@ -419,6 +472,32 @@ impl Worker {
     fn schedule_next_poll(&mut self, now: Instant) {
         if let Some(pending) = self.login.as_mut() {
             pending.next_poll = now + pending.interval;
+        }
+    }
+
+    /// The calendar events of `[from_ms, to_ms)` through Graph. A sign-in that is gone (the token was
+    /// rejected and deleted) updates the Teams status; a refused calendar permission only fails the
+    /// calendar (presence keeps working).
+    fn calendar_view(&mut self, from_ms: i64, to_ms: i64) -> Result<Vec<CalEvent>, String> {
+        if !self.client.is_configured() {
+            return Err("the Microsoft app registration (client id) is not set".into());
+        }
+        if !self.connected {
+            return Err("the Microsoft account is not connected".into());
+        }
+        match self.client.calendar_view(from_ms, to_ms) {
+            Ok(events) => Ok(events),
+            // "reconnect needed: …" (no calendar permission) or a rejected sign-in.
+            Err(PlatformError::Auth(message)) => {
+                if !self.client.has_token() {
+                    self.connected = false;
+                    self.account = None;
+                    self.error = Some(message.clone());
+                    self.publish();
+                }
+                Err(message)
+            }
+            Err(err) => Err(err.to_string()),
         }
     }
 

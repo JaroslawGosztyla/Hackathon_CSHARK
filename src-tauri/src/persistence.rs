@@ -1,5 +1,6 @@
 //! All file IO of the app: config, session history, the crash-restore files of the shields (muted
-//! notifications) and of the screen tint, the custom chime folder and the Teams token path.
+//! notifications) and of the screen tint, the custom chime folder, the meeting choices and the paths of the
+//! sealed secrets (Teams and Google tokens, ICS links; read and written through `focus_platform`).
 //! `websiteblacklist.txt` lives next to `config.json`, but `crate::blocklist` reads and watches it.
 //!
 //! Every method is blocking. Callers on the async runtime use `spawn_blocking`; the shields
@@ -26,6 +27,12 @@ const HISTORY_FILE: &str = "history.jsonl";
 const SHIELDS_RESTORE_FILE: &str = "shields-restore.json";
 const TINT_RESTORE_FILE: &str = "tint-restore.json";
 const TEAMS_TOKEN_FILE: &str = "teams-token.bin";
+/// Google Calendar refresh token (DPAPI-sealed by `focus_platform::secrets`).
+const GOOGLE_TOKEN_FILE: &str = "google-token.bin";
+/// ICS subscription links (DPAPI-sealed; they often carry a private token).
+const ICS_LINKS_FILE: &str = "ics-links.bin";
+/// How the user answered meetings that collide with breaks (meeting ids only, no subjects).
+const MEETING_CHOICES_FILE: &str = "meeting-choices.json";
 /// Folder (in the app data directory) with the user's imported chime files.
 const SOUNDS_DIR: &str = "sounds";
 
@@ -42,6 +49,9 @@ struct Inner {
     restore_path: PathBuf,
     tint_restore_path: PathBuf,
     teams_token_path: PathBuf,
+    google_token_path: PathBuf,
+    ics_links_path: PathBuf,
+    meeting_choices_path: PathBuf,
     sounds_dir: PathBuf,
     write_lock: Mutex<()>,
 }
@@ -71,6 +81,9 @@ impl Persistence {
                 restore_path: data_dir.join(SHIELDS_RESTORE_FILE),
                 tint_restore_path: data_dir.join(TINT_RESTORE_FILE),
                 teams_token_path: data_dir.join(TEAMS_TOKEN_FILE),
+                google_token_path: data_dir.join(GOOGLE_TOKEN_FILE),
+                ics_links_path: data_dir.join(ICS_LINKS_FILE),
+                meeting_choices_path: data_dir.join(MEETING_CHOICES_FILE),
                 sounds_dir: data_dir.join(SOUNDS_DIR),
                 write_lock: Mutex::new(()),
             }),
@@ -79,6 +92,46 @@ impl Persistence {
 
     pub fn teams_token_path(&self) -> PathBuf {
         self.inner.teams_token_path.clone()
+    }
+
+    /// The sealed Google Calendar refresh token (read and written by `focus_platform`).
+    pub fn google_token_path(&self) -> PathBuf {
+        self.inner.google_token_path.clone()
+    }
+
+    /// The sealed ICS subscription links (read and written by `crate::calendar` via `focus_platform::secrets`).
+    pub fn ics_links_path(&self) -> PathBuf {
+        self.inner.ics_links_path.clone()
+    }
+
+    /// Stores the meeting choices (`crate::calendar`) atomically.
+    pub fn save_meeting_choices<T: Serialize>(&self, choices: &T) -> anyhow::Result<()> {
+        let json = serde_json::to_vec_pretty(choices).context("serialize meeting choices")?;
+        let _guard = lock(&self.inner.write_lock);
+        write_atomic(&self.inner.meeting_choices_path, &json)
+    }
+
+    /// The stored meeting choices; `None` when there are none. A corrupted file is deleted.
+    pub fn load_meeting_choices<T: DeserializeOwned>(&self) -> Option<T> {
+        let text = match fs::read_to_string(&self.inner.meeting_choices_path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == ErrorKind::NotFound => return None,
+            Err(err) => {
+                log::warn!("cannot read meeting choices: {err}");
+                return None;
+            }
+        };
+        match serde_json::from_str::<T>(&text) {
+            Ok(choices) => Some(choices),
+            Err(err) => {
+                log::warn!("corrupted meeting choices file, deleting it: {err}");
+                let _guard = lock(&self.inner.write_lock);
+                if let Err(err) = remove_if_present(&self.inner.meeting_choices_path) {
+                    log::warn!("cannot delete meeting choices: {err:#}");
+                }
+                None
+            }
+        }
     }
 
     /// Folder of the imported chime files (`Config::custom_chimes` names files in it). Created on demand
@@ -392,6 +445,26 @@ mod tests {
         assert_eq!(p.load_tint_restore::<Vec<u32>>(), None);
         assert!(!p.has_tint_restore(), "a corrupted file is deleted");
         p.clear_tint_restore();
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn meeting_choices_round_trip_and_corruption() {
+        let (root, p) = temp_dirs("choices");
+        assert_eq!(p.load_meeting_choices::<Vec<String>>(), None);
+        p.save_meeting_choices(&vec!["a".to_owned()]).expect("save");
+        assert_eq!(
+            p.load_meeting_choices::<Vec<String>>(),
+            Some(vec!["a".to_owned()])
+        );
+        fs::write(root.join("data").join(MEETING_CHOICES_FILE), b"[1,").expect("write");
+        assert_eq!(p.load_meeting_choices::<Vec<String>>(), None);
+        assert!(!root.join("data").join(MEETING_CHOICES_FILE).exists());
+        assert_eq!(
+            p.google_token_path(),
+            root.join("data").join(GOOGLE_TOKEN_FILE)
+        );
+        assert_eq!(p.ics_links_path(), root.join("data").join(ICS_LINKS_FILE));
         let _ = fs::remove_dir_all(&root);
     }
 

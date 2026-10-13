@@ -6,6 +6,7 @@
 
 mod blocklist;
 mod bridge;
+mod calendar;
 mod chimes;
 mod close;
 mod commands;
@@ -83,6 +84,8 @@ pub struct AppState {
     pub popup: popup::PopupHandle,
     /// Warm screen tint (Night light or display gamma).
     pub tint: tint::TintHandle,
+    /// Calendar meetings against the planned breaks.
+    pub calendar: calendar::CalendarHandle,
     /// The open "minimize to tray?" question of the first X.
     pub close: close::ClosePrompt,
 }
@@ -163,6 +166,13 @@ pub fn run() {
             commands::remove_custom_chime,
             commands::list_library_tracks,
             commands::clear_history,
+            commands::get_calendar,
+            commands::refresh_calendar,
+            commands::set_meeting_choice,
+            commands::connect_google,
+            commands::disconnect_calendar,
+            commands::set_ics_urls,
+            commands::get_ics_urls,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the FocusMode application");
@@ -278,6 +288,27 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
             None
         }
     };
+    // The calendar and the actor talk both ways (holds one way, the session timing the other).
+    let (calendar, calendar_rx) = calendar::CalendarHandle::channel();
+    let idle_profile = if demo {
+        focus_core::timing::TimingProfile::demo()
+    } else {
+        focus_core::timing::TimingProfile::from_config(&read_config(&config))
+    };
+    calendar::spawn(
+        calendar::CalendarContext {
+            app: handle.clone(),
+            config: Arc::clone(&config),
+            persistence: persistence.clone(),
+            actor: actor.clone(),
+            teams: teams.clone(),
+            popup: popup.clone(),
+            initial_plan: calendar::SessionPlan::idle(idle_profile),
+        },
+        &calendar,
+        calendar_rx,
+    )
+    .context("spawn calendar thread")?;
     session_actor::spawn(
         session_actor::ActorContext {
             app: handle.clone(),
@@ -297,6 +328,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
             tracker: tracker.clone(),
             bridge: Arc::clone(&bridge),
             tray,
+            calendar: calendar.clone(),
         },
         actor_rx,
     );
@@ -322,6 +354,7 @@ fn setup(app: &mut tauri::App, launch: Launch) -> anyhow::Result<()> {
         media: media_window::MediaWindow::default(),
         popup,
         tint,
+        calendar,
         close: close::ClosePrompt::default(),
     });
     chimes::clean_up_at_startup(&handle);

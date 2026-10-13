@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use focus_core::api::{
-    AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, ChimeKind, ChimeSound, Config,
-    DeviceCodePrompt, Language, MediaAction, MediaWindowStatus, Phase, PopupAction, PopupInfo,
-    SessionSnapshot, SessionSummary, ShieldStatus, TeamsStatus, TintStatus, Track, UsageReport,
+    AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, CalendarSource, CalendarStatus, ChimeKind,
+    ChimeSound, Config, DeviceCodePrompt, Language, MediaAction, MediaWindowStatus, MeetingChoice,
+    Phase, PopupAction, PopupInfo, SessionSnapshot, SessionSummary, ShieldStatus, TeamsStatus,
+    TintStatus, Track, UsageReport,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use tauri::{AppHandle, State};
@@ -17,7 +18,8 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::session_actor::ActorCmd;
 use crate::{
-    AppState, chimes, close, effects, emit_error, lock, music, read_config, tracker, write_config,
+    AppState, calendar, chimes, close, effects, emit_error, lock, music, read_config, tracker,
+    write_config,
 };
 
 /// Upper bound for `list_history(limit)`.
@@ -116,6 +118,9 @@ async fn store_config(
     }
     if normalized.tint != previous.tint {
         state.tint.config_changed();
+    }
+    if normalized.calendar != previous.calendar {
+        state.calendar.config_changed();
     }
     Ok(normalized)
 }
@@ -280,6 +285,64 @@ pub async fn teams_connect(state: State<'_, AppState>) -> Result<DeviceCodePromp
 #[tauri::command]
 pub async fn teams_disconnect(state: State<'_, AppState>) -> Result<(), AppError> {
     state.teams.disconnect().await
+}
+
+#[tauri::command]
+pub async fn get_calendar(state: State<'_, AppState>) -> Result<CalendarStatus, AppError> {
+    Ok(state.calendar.status())
+}
+
+#[tauri::command]
+pub async fn refresh_calendar(state: State<'_, AppState>) -> Result<CalendarStatus, AppError> {
+    state.calendar.refresh().await
+}
+
+#[tauri::command]
+pub async fn set_meeting_choice(
+    state: State<'_, AppState>,
+    meeting_id: String,
+    choice: MeetingChoice,
+) -> Result<CalendarStatus, AppError> {
+    state.calendar.set_choice(meeting_id, choice).await
+}
+
+#[tauri::command]
+pub async fn connect_google(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.calendar.connect_google().await
+}
+
+#[tauri::command]
+pub async fn disconnect_calendar(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source: CalendarSource,
+) -> Result<CalendarStatus, AppError> {
+    if source == CalendarSource::Microsoft {
+        // The Microsoft calendar shares the Teams sign-in, which stays (Teams presence keeps working):
+        // only the calendar is switched off, saved like an `update_config`.
+        let _serial = state.config_update.lock().await;
+        let mut config = read_config(&state.config);
+        if config.calendar.microsoft {
+            config.calendar.microsoft = false;
+            store_config(&app, &state, config).await?;
+        }
+    }
+    // Drops the source's meetings (and for Google / ICS the stored token / links).
+    state.calendar.disconnect(source).await
+}
+
+#[tauri::command]
+pub async fn set_ics_urls(
+    state: State<'_, AppState>,
+    urls: Vec<String>,
+) -> Result<CalendarStatus, AppError> {
+    let urls = calendar::normalize_ics_urls(&urls)?;
+    state.calendar.set_ics_urls(urls).await
+}
+
+#[tauri::command]
+pub async fn get_ics_urls(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
+    state.calendar.ics_urls().await
 }
 
 #[tauri::command]
