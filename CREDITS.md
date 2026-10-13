@@ -26,6 +26,8 @@ Zasoby dołączone do FocusMode (CLAUDE.md, zasada 10). Każdy nowy plik muzyki,
   licencja BSD-3, model `realesrgan-x4plus-anime`), a potem wycięte na klatki i wyrównane (wspólna skala i kotwica, usunięta miękka poświata krawędzi;
   `tools/mascot/`, opis w `art/mascot/README.md`). Grafika **nie jest wektoryzowana, przerysowywana ani przekolorowana**: klatki to oryginalne rysunki autora.
   Real-ESRGAN służył tylko do przygotowania plików i nie trafia do aplikacji. Pikselowy wygląd w motywie 8-bit to efekt wyświetlania, pliki się nie zmieniają (ADR-018).
+- **Rozszerzenie przeglądarki:** pasek `browser-extension/images/axo-angry.webp` (3 klatki „angry” po 296 × 300 px, ten sam autor i prawa) na stronie
+  „Wracaj do pracy”; strona pokazuje jedną nieruchomą klatkę, bez zmian w pliku.
 
 ## Dźwięki
 

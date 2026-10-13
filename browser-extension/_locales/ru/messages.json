@@ -325,6 +325,22 @@
     "message": "Маленький шаг в задаче дает больше, чем долгая прокрутка ленты.",
     "description": "Blocked page: encouraging line."
   },
+  "axolotlLine1": {
+    "message": "Эй! Сейчас должно быть время фокуса.",
+    "description": "Blocked page (focus): what the angry axolotl says in its speech bubble, one line picked at random."
+  },
+  "axolotlLine2": {
+    "message": "Попались! Этот сайт подождет до перерыва.",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine3": {
+    "message": "Нет-нет! Вернитесь к задаче — я слежу.",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine4": {
+    "message": "Не в этот раз. Сначала работа, потом перерыв!",
+    "description": "Blocked page: angry axolotl's line."
+  },
   "lineBreak": {
     "message": "Отойдите ненадолго от экрана или загляните сюда — перерыв ваш.",
     "description": "Blocked page line during a break."

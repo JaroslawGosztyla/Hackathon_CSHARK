@@ -325,6 +325,22 @@
     "message": "Ein kleiner Schritt in deiner Aufgabe bringt mehr als langes Scrollen.",
     "description": "Blocked page: encouraging line."
   },
+  "axolotlLine1": {
+    "message": "Hey! Jetzt ist Fokuszeit, nicht das hier.",
+    "description": "Blocked page (focus): what the angry axolotl says in its speech bubble, one line picked at random."
+  },
+  "axolotlLine2": {
+    "message": "Erwischt! Diese Seite kann bis zur Pause warten.",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine3": {
+    "message": "Na, na! Zurück zur Aufgabe — ich pass auf.",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine4": {
+    "message": "Diesmal nicht. Erst die Arbeit, dann die Pause!",
+    "description": "Blocked page: angry axolotl's line."
+  },
   "lineBreak": {
     "message": "Geh kurz weg vom Bildschirm oder schau hier vorbei — die Pause gehört dir.",
     "description": "Blocked page line during a break."

@@ -20,6 +20,15 @@
     </div>
 
     <main class="card" id="card" data-mode="loading">
+      <!-- Focus only: the angry axolotl (one still frame of images/axo-angry.webp) and what it says, letter by letter. -->
+      <div class="axo" id="axo" hidden>
+        <div class="axo__art" id="axo-art" aria-hidden="true"></div>
+        <p class="axo__bubble" id="axo-bubble">
+          <span class="visually-hidden" id="axo-text"></span>
+          <span class="axo__letters" id="axo-letters" aria-hidden="true"></span>
+        </p>
+      </div>
+
       <p class="card__eyebrow">FocusMode</p>
 
       <h1 class="card__headline">

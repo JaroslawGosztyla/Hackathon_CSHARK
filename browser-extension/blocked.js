@@ -27,6 +27,8 @@ const BREAK_LINE = t('lineBreak');
 const IDLE_LINE = t('lineIdle');
 const OFFLINE_LINE = t('lineOffline');
 const UNBLOCKED_LINE = t('lineUnblocked');
+/** What the angry axolotl says during focus (_locales: axolotlLine1…4), one picked per page. */
+const AXOLOTL_LINES = [1, 2, 3, 4].map((n) => t(`axolotlLine${n}`));
 
 /** @param {string} id */
 function byId(id) {
@@ -50,6 +52,11 @@ const ui = {
   open: /** @type {HTMLAnchorElement} */ (byId('open')),
   back: /** @type {HTMLButtonElement} */ (byId('back')),
   status: byId('status'),
+  axo: byId('axo'),
+  axoArt: byId('axo-art'),
+  axoBubble: byId('axo-bubble'),
+  axoText: byId('axo-text'),
+  axoLetters: byId('axo-letters'),
 };
 
 /**
@@ -82,6 +89,7 @@ const viaTab = params.get('via') === 'tab';
  */
 const framed = window.top !== window;
 const focusLine = FOCUS_LINES[Math.floor(Math.random() * FOCUS_LINES.length)] ?? FOCUS_LINES[0];
+const axolotlLine = AXOLOTL_LINES[Math.floor(Math.random() * AXOLOTL_LINES.length)] ?? AXOLOTL_LINES[0];
 
 /** @type {string | null} */
 let originalUrl = urlFromLocation();
@@ -219,6 +227,7 @@ function render(view) {
   }
 
   ui.timer.hidden = mode !== 'focus' && mode !== 'break';
+  showAxolotl(mode === 'focus');
   setText(ui.timerClock, clock);
   renderMatch(view.state, mode);
 
@@ -254,6 +263,109 @@ function announce(mode, previous) {
   if (autoReturnStarted || autoReturnRefused) return; // keeps "Wracasz na stronę…" or the loop-guard notice
   const host = displayHost();
   setText(ui.status, host !== null ? t('statusReturnHost', host) : t('statusReturn'));
+}
+
+// ---------------------------------------------------------------------------
+// The angry axolotl (focus only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Frames of images/axo-angry.webp (the owner's art, 3 frames of 296 × 300 px side by side): 0 = angry-1,
+ * 1 = angry-2 (the same pose as angry-1, so never picked), 2 = angry-3. One still frame per page, never animated.
+ */
+const AXOLOTL_FRAMES = [0, 2];
+/** Time between two letters (random within the range), and the extra pause after punctuation. */
+const LETTER_MS = { min: 45, max: 60 };
+const PAUSE_SHORT_MS = 170;
+const PAUSE_LONG_MS = 320;
+const SHORT_PAUSE = new Set([',', ';', ':', '，', '、', '；', '：']);
+const LONG_PAUSE = new Set(['.', '!', '?', '…', '—', '–', '。', '！', '？']);
+
+/** @type {HTMLSpanElement[]} */
+let axolotlLetters = [];
+let axolotlShown = 0;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let axolotlTimer;
+let axolotlStarted = false;
+
+/** @param {string} text @returns {string[]} the text as user-perceived characters */
+function graphemes(text) {
+  try {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    return Array.from(segmenter.segment(text), (part) => part.segment);
+  } catch {
+    return Array.from(text);
+  }
+}
+
+/** @param {string} unit @returns {number} */
+function pauseAfter(unit) {
+  const base = LETTER_MS.min + Math.random() * (LETTER_MS.max - LETTER_MS.min);
+  if (LONG_PAUSE.has(unit)) return base + PAUSE_LONG_MS;
+  if (SHORT_PAUSE.has(unit)) return base + PAUSE_SHORT_MS;
+  return base;
+}
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+}
+
+/** Shows the axolotl while the page blocks; the first time, it starts saying its line. @param {boolean} visible */
+function showAxolotl(visible) {
+  ui.axo.hidden = !visible;
+  if (!visible || axolotlStarted) return;
+  axolotlStarted = true;
+  ui.axoArt.dataset.frame = String(AXOLOTL_FRAMES[Math.floor(Math.random() * AXOLOTL_FRAMES.length)] ?? 0);
+  sayLetterByLetter(axolotlLine);
+}
+
+/**
+ * Lays out every letter of `text` (invisible), then fades them in one by one. Screen readers get the whole text at
+ * once from the visually hidden copy; with reduced motion the text is shown at once.
+ * @param {string} text
+ */
+function sayLetterByLetter(text) {
+  setText(ui.axoText, text);
+  const units = graphemes(text);
+  axolotlLetters = units.map((unit) => {
+    const span = document.createElement('span');
+    span.className = 'axo__letter';
+    span.textContent = unit;
+    return span;
+  });
+  ui.axoLetters.replaceChildren(...axolotlLetters);
+  axolotlShown = 0;
+  if (prefersReducedMotion()) {
+    showAllLetters();
+    return;
+  }
+  ui.axoBubble.classList.add('is-revealing');
+  revealNextLetter();
+}
+
+function revealNextLetter() {
+  axolotlTimer = undefined;
+  const span = axolotlLetters[axolotlShown];
+  if (span === undefined) {
+    ui.axoBubble.classList.remove('is-revealing');
+    return;
+  }
+  span.classList.add('is-on');
+  axolotlShown += 1;
+  axolotlTimer = setTimeout(revealNextLetter, pauseAfter(span.textContent ?? ''));
+}
+
+/** A click on the bubble shows the rest of the line at once. */
+function showAllLetters() {
+  if (axolotlTimer !== undefined) clearTimeout(axolotlTimer);
+  axolotlTimer = undefined;
+  for (const span of axolotlLetters) span.classList.add('is-on');
+  axolotlShown = axolotlLetters.length;
+  ui.axoBubble.classList.remove('is-revealing');
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +531,7 @@ if (framed) {
   ui.card.hidden = true;
 } else {
   ui.back.addEventListener('click', goBack);
+  ui.axoBubble.addEventListener('click', showAllLetters);
   ui.open.addEventListener('click', (event) => {
     // A plain click navigates this tab; a modified click opens another tab and this page stays.
     if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {

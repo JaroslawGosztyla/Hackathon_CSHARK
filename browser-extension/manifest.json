@@ -30,7 +30,15 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["blocked.html", "blocked.css", "blocked.js", "common.js", "theme.css", "icons/icon-32.png"],
+      "resources": [
+        "blocked.html",
+        "blocked.css",
+        "blocked.js",
+        "common.js",
+        "theme.css",
+        "icons/icon-32.png",
+        "images/axo-angry.webp"
+      ],
       "matches": ["<all_urls>"]
     }
   ],

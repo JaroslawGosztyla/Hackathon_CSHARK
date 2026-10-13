@@ -325,6 +325,22 @@
     "message": "長いスクロールより、タスクの小さな一歩。",
     "description": "Blocked page: encouraging line."
   },
+  "axolotlLine1": {
+    "message": "ちょっと！今は集中する時間ですよ。",
+    "description": "Blocked page (focus): what the angry axolotl says in its speech bubble, one line picked at random."
+  },
+  "axolotlLine2": {
+    "message": "見つけましたよ！このサイトは休憩まで待てます。",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine3": {
+    "message": "だめだめ！タスクに戻りましょう。ちゃんと見てますからね。",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine4": {
+    "message": "今回はだめです。まず仕事、休憩はそのあと！",
+    "description": "Blocked page: angry axolotl's line."
+  },
   "lineBreak": {
     "message": "少し画面から離れるか、ここを見てもかまいません。休憩はあなたのものです。",
     "description": "Blocked page line during a break."

@@ -325,6 +325,22 @@
     "message": "在任务上迈出一小步，胜过长时间刷屏。",
     "description": "Blocked page: encouraging line."
   },
+  "axolotlLine1": {
+    "message": "喂！现在是专注时间，不是看这个的时候。",
+    "description": "Blocked page (focus): what the angry axolotl says in its speech bubble, one line picked at random."
+  },
+  "axolotlLine2": {
+    "message": "抓到你啦！这个网站可以等到休息时再看。",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine3": {
+    "message": "不行不行！回到你的任务上去，我在盯着呢。",
+    "description": "Blocked page: angry axolotl's line."
+  },
+  "axolotlLine4": {
+    "message": "这次不行。先工作，再休息！",
+    "description": "Blocked page: angry axolotl's line."
+  },
   "lineBreak": {
     "message": "离开屏幕一会儿，或者看看这里也行，休息时间属于你。",
     "description": "Blocked page line during a break."
