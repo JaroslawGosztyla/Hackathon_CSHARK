@@ -201,9 +201,10 @@ export const markGoalDone = (sessionId: string, done: boolean) =>
   call<void>(COMMANDS.markGoalDone, { sessionId, done });
 
 /**
- * A button on the developer page (ADR-019): a sample popup, a phase toast or a shorter running phase. The shell rejects
+ * A button on the developer page (ADR-019): a sample popup, a phase toast, a shorter running phase, presentation mode,
+ * a factory reset or a rewards cheat (`rewardsOff` while the beta rewards are off). The shell rejects
  * it with `developerModeOff` unless `config.developerMode` is on (and `setRemaining` with `notRunning` when idle).
- * Nothing is persisted and nothing leaves the computer.
+ * Nothing leaves the computer; only the factory reset and a rewards cheat on the real ledger (`rewards.json`) write.
  */
 export const devTrigger = (action: DevAction) => call<void>(COMMANDS.devTrigger, { action });
 

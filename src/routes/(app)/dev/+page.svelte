@@ -23,6 +23,7 @@
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
   import PoseGallery from "$lib/mascot/PoseGallery.svelte";
   import DevRewards from "$lib/components/rewards/DevRewards.svelte";
+  import DevRewardsCheats from "$lib/components/rewards/DevRewardsCheats.svelte";
   import { config, reminderForBreak } from "$lib/state/config.svelte";
   import { dev, SEQUENCE_STEP_MS } from "$lib/state/dev.svelte";
   import { presentation } from "$lib/state/presentation.svelte";
@@ -589,6 +590,9 @@
 
         <!-- Rewards (beta, ADR-022) -->
         <DevRewards />
+
+        <!-- Rewards cheats (dev, ADR-019 / ADR-024): the real ledger, or the showcase in presentation mode -->
+        <DevRewardsCheats />
       </div>
     </div>
 

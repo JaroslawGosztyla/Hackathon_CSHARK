@@ -11,9 +11,9 @@ use focus_core::api::{
     AppError, BRIDGE_PORT, BlocklistInfo, BridgeInfo, CalendarSource, CalendarStatus,
     CelebrationLevel, ChimeKind, ChimeSound, Config, DevAction, DeviceCodePrompt, Language,
     MediaAction, MediaWindowStatus, MeetingChoice, Phase, PopupAction, PopupInfo, PrivacyItemKind,
-    PrivacyReport, RewardSound, RewardsStatus, SessionGoal, SessionSnapshot, SessionSummary,
-    ShieldStatus, StepDraft, SunCity, TeamsStatus, TintStatus, Track, UsageReport, WeeklyStats,
-    WorkSource, WorkStatus, YoutubeAccount,
+    PrivacyReport, RewardSound, RewardsCheat, RewardsStatus, SessionGoal, SessionSnapshot,
+    SessionSummary, ShieldStatus, StepDraft, SunCity, TeamsStatus, TintStatus, Track, UsageReport,
+    WeeklyStats, WorkSource, WorkStatus, YoutubeAccount,
 };
 use focus_core::blocklist::BLACKLIST_FILE_NAME;
 use focus_core::session::normalize_steps;
@@ -507,7 +507,8 @@ pub async fn mark_goal_done(
 
 /// A button on the developer page (ADR-019). Only while `developerMode` is on (or in a `--presentation` run); sample
 /// data stays in memory and nothing leaves the computer. Presentation mode (demo timings + the showcase, `showcase.rs`)
-/// is kept in memory only; the factory reset deletes the app's own data (`privacy::factory_reset`) and restarts it.
+/// is kept in memory only; the factory reset deletes the app's own data (`privacy::factory_reset`) and restarts it; a
+/// rewards cheat changes the real ledger (`rewards.json`) or, in presentation mode, the showcase ledger.
 #[tauri::command]
 pub async fn dev_trigger(
     app: AppHandle,
@@ -551,6 +552,14 @@ pub async fn dev_trigger(
         DevAction::SetRemaining { secs } => state.actor.dev_set_remaining(secs).await?,
         DevAction::PresentationMode { on } => showcase::set(&state, on).await?,
         DevAction::FactoryReset => privacy::factory_reset(&app, &state).await?,
+        DevAction::RewardsCheat { cheat } => {
+            let phase = state.actor.snapshot().await?.phase;
+            let real = state.rewards.cheat(cheat, &config, phase)?;
+            if real && cheat == RewardsCheat::LockAll {
+                // ADR-024: a locked collection theme cannot stay picked (as after "Zacznij od nowa").
+                clear_reward_theme(&app, &state).await;
+            }
+        }
     }
     Ok(())
 }

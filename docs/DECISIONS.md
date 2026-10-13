@@ -1916,3 +1916,8 @@ nietoperzami i upiornymi dźwiękami); bez bety żadnych dodatkowych skórek; wy
 - ADR-019: strona Deweloper pokazuje każdy motyw i dźwięk kolekcji jako próbkę (bez odblokowania) i próbkę karty sezonowej w wybranym miesiącu.
 - ADR-020: pozycja `rewards` obejmuje kolekcję.
 - CLAUDE.md (po wdrożeniu): zakres „ADR-013 + ADR-014…024”; w Strukturze `unlocks.rs`, `src/lib/themes/<id>/`, `src/lib/ambience/`.
+- ADR-019 (dopisek 2026-10-13, prośba właściciela): grupa „Rewards cheats (dev)” na stronie Deweloper — `DevAction::RewardsCheat { cheat: RewardsCheat }`
+  (+1 / +5 poziomów, +100 iskier, +1 / +7 dni serii, cel dnia teraz, odblokuj wszystko, zablokuj wszystko) do testowania odblokowań. Zmienia **prawdziwy**
+  postęp (`rewards.json`; „Zacznij od nowa” go resetuje), a w trybie prezentacji tylko dane pokazowe w pamięci. Każdy cheat przechodzi zwykłe reguły
+  i ocenę odblokowań (`rewards::cheat`, `unlocks::unlock_all` / `lock_all`), więc momenty i świętowania są te same co zwykle (w focusie czekają na przerwę).
+  Przy wyłączonych nagrodach → `rewardsOff`. `history.jsonl` i config bez zmian (poza powrotem motywu z kolekcji do bazowego po „zablokuj wszystko”).

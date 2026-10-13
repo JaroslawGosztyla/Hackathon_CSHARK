@@ -118,9 +118,10 @@ pub mod commands {
     /// `{ sessionId: string, done: boolean } -> ()` marks the goal of a finished session as done / not done (history).
     pub const MARK_GOAL_DONE: &str = "mark_goal_done";
     /// `{ action: DevAction } -> ()` developer page trigger (ADR-019): a sample popup, a phase toast, a shorter
-    /// running phase, presentation mode on / off or a factory reset (then the app restarts). Rejected with
-    /// `developerModeOff` unless `Config.developer_mode` is on. Nothing leaves the computer; only the factory reset
-    /// changes files (it deletes the app's own data).
+    /// running phase, presentation mode on / off, a factory reset (then the app restarts) or a rewards cheat. Rejected
+    /// with `developerModeOff` unless `Config.developer_mode` is on (a cheat also with `rewardsOff` while the beta
+    /// rewards are off). Nothing leaves the computer; only the factory reset (it deletes the app's own data) and a
+    /// rewards cheat on the real ledger (`rewards.json`) change files.
     pub const DEV_TRIGGER: &str = "dev_trigger";
     /// `() -> PrivacyReport` what FocusMode stores on this computer, item by item (ADR-020). Presence, sizes and
     /// counts only: never the contents of a token, an ICS link or a cookie.
@@ -1528,6 +1529,37 @@ pub enum DevAction {
     /// delete fails it rejects with `privacy.delete` and the app does not restart. Never touches anything outside the
     /// app's folders (the installed app, the extension folder and music folders stay).
     FactoryReset,
+    /// Beta rewards cheat for testing the unlockables (ADR-022, ADR-024). Changes the real ledger (`rewards.json`,
+    /// written like any fact; "Zacznij od nowa" resets it), or the in-memory showcase ledger while presentation mode
+    /// is on. Runs the normal rules (level up, daily goal, streak stickers, the collection evaluation), so the usual
+    /// moment follows (it waits for the break or Stop while focus goes on). Rejected with `rewardsOff` while the beta
+    /// rewards are off. Never touches `history.jsonl`; the config only when `lockAll` on the real ledger puts a
+    /// collection theme back to the base theme (as "Zacznij od nowa" does).
+    #[serde(rename_all = "camelCase")]
+    RewardsCheat { cheat: RewardsCheat },
+}
+
+/// One rewards cheat of the developer page ([`DevAction::RewardsCheat`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RewardsCheat {
+    /// Exactly the sparks to the start of the next level (total only: today's goal does not move).
+    LevelUp,
+    /// The same for five levels.
+    LevelUp5,
+    /// +100 sparks (total only).
+    AddSparks100,
+    /// +1 streak day (the best streak follows; the streak stays alive with yesterday as its last counted day).
+    StreakUp,
+    /// +7 streak days.
+    StreakUp7,
+    /// Today's sparks up to the daily goal, then the goal is met as usual (bonus, streak, a seasonal goal day).
+    DailyGoalNow,
+    /// Every collection theme (the seasonal ones whatever the month), ambience layer and sticker.
+    UnlockAll,
+    /// Forgets the collection unlocks, the seasonal goal days and the stickers; sparks, level and streak stay.
+    LockAll,
 }
 
 // ---------------------------------------------------------------------------
@@ -1904,6 +1936,23 @@ pub enum StickerId {
     ThreeDays,
     GoldenPearl,
     Level5,
+}
+
+impl StickerId {
+    /// Every sticker, in album order.
+    pub const ALL: [Self; 11] = [
+        Self::FirstStep,
+        Self::DailyGoal,
+        Self::Planner,
+        Self::GoodBreak,
+        Self::Comeback,
+        Self::Amazed,
+        Self::RestDay,
+        Self::Together,
+        Self::ThreeDays,
+        Self::GoldenPearl,
+        Self::Level5,
+    ];
 }
 
 /// Something to celebrate (or just to count). Achievements earned during focus wait for the break or for Stop
@@ -2383,11 +2432,11 @@ mod tests {
         AmbienceLayer, AmbienceMix, AmbienceUnlock, AppCategory, CalendarStatus, CategoryTotals,
         CelebrationLevel, Config, DailyGoal, DayStats, DevAction, HistoryChanged, MicroStep,
         MomentKind, Phase, PopupInfo, PopupKind, PopupRewards, PrivacyItemKind, Rarity, RewardKind,
-        RewardLine, RewardMoment, RewardSound, RewardTheme, Season, SeasonWindow, SessionSnapshot,
-        SessionSummary, SmartBreak, SmartBreakKind, StepDraft, StickerId, ThemeUnlock, TimeSpan,
-        TintPause, TintPauseReason, TintSchedule, TintScheduleState, TintStatus, UnlockProgress,
-        UnlockRule, UnlockState, WeekApp, Weekday, WeeklyStats, WorkSource, YoutubeAccount,
-        commands, events,
+        RewardLine, RewardMoment, RewardSound, RewardTheme, RewardsCheat, Season, SeasonWindow,
+        SessionSnapshot, SessionSummary, SmartBreak, SmartBreakKind, StepDraft, StickerId,
+        ThemeUnlock, TimeSpan, TintPause, TintPauseReason, TintSchedule, TintScheduleState,
+        TintStatus, UnlockProgress, UnlockRule, UnlockState, WeekApp, Weekday, WeeklyStats,
+        WorkSource, YoutubeAccount, commands, events,
     };
     use std::fmt::Write as _;
 
@@ -2785,6 +2834,25 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<DevAction>(r#"{"type":"factoryReset"}"#).expect("reset"),
             DevAction::FactoryReset
+        );
+
+        assert_eq!(
+            serde_json::to_value(DevAction::RewardsCheat {
+                cheat: RewardsCheat::LevelUp5
+            })
+            .expect("serialize"),
+            serde_json::json!({ "type": "rewardsCheat", "cheat": "levelUp5" })
+        );
+        assert_eq!(
+            serde_json::from_str::<DevAction>(r#"{"type":"rewardsCheat","cheat":"unlockAll"}"#)
+                .expect("cheat"),
+            DevAction::RewardsCheat {
+                cheat: RewardsCheat::UnlockAll
+            }
+        );
+        assert!(
+            serde_json::from_str::<DevAction>(r#"{"type":"rewardsCheat","cheat":"maxAll"}"#)
+                .is_err()
         );
 
         assert!(serde_json::from_str::<DevAction>(r#"{"type":"wipeDisk"}"#).is_err());

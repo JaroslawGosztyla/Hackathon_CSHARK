@@ -414,6 +414,36 @@ pub fn evaluate(ledger: &mut Ledger, today: RewardDay) -> Vec<Unlockable> {
     unlocked
 }
 
+/// Developer cheat (ADR-019, `RewardsCheat::UnlockAll`): records every collection item that has no record yet with
+/// reward day `today`, whatever its rule (the seasonal themes whatever the month; free items never need a record);
+/// returns the new ones in catalogue order.
+pub fn unlock_all(ledger: &mut Ledger, today: RewardDay) -> Vec<Unlockable> {
+    let mut unlocked = Vec::new();
+    for item in Unlockable::all() {
+        if is_unlocked(ledger, item) {
+            continue;
+        }
+        ledger.unlocks.push(UnlockRecord {
+            id: key(item).to_owned(),
+            day: today,
+        });
+        unlocked.push(item);
+    }
+    unlocked
+}
+
+/// Developer cheat (ADR-019, `RewardsCheat::LockAll`): forgets every known collection unlock and the goal days of the
+/// known seasons (ids and seasons of a newer app stay). The rules still hold, so the next evaluation (the next fact or
+/// cheat) unlocks again what the level and the best streak already earn.
+pub fn lock_all(ledger: &mut Ledger) {
+    ledger
+        .unlocks
+        .retain(|record| parse_key(&record.id).is_none());
+    ledger
+        .seasons
+        .retain(|progress| parse_season(&progress.season).is_none());
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // View
 // ---------------------------------------------------------------------------------------------------------------

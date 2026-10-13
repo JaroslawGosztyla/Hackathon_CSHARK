@@ -6,7 +6,7 @@
 import type { MascotMood, MascotReaction } from "$lib/mascot/frames";
 import type { RewardMomentSample, RewardsStatusSample } from "$lib/state/samples";
 import type { SpookyOneShot } from "$lib/ambience/layers/spookyNight";
-import type { AmbienceLayer, Phase, PopupKind, RewardTheme } from "$lib/types";
+import type { AmbienceLayer, Phase, PopupKind, RewardsCheat, RewardTheme } from "$lib/types";
 import { de } from "./de";
 import { en } from "./en";
 import { es } from "./es";
@@ -501,4 +501,37 @@ export const DEV_PRESENTATION = {
   nextStart: (on: boolean) =>
     `Presentation mode ${on ? "on" : "off"}: the showcase ${on ? "shows" : "is gone"} now; the timings change at the next Start.`,
   name: "presentation mode",
+};
+
+/** "Rewards cheats (dev)" on the Developer page (ADR-019, ADR-024): test the unlockables. English only. */
+export const DEV_REWARDS_CHEATS = {
+  title: "Rewards cheats (dev)",
+  hint: "For testing the unlockables. These change your real rewards progress (rewards.json); “Zacznij od nowa” (Settings → Beta) resets it. In presentation mode they change the showcase data only (memory). Each cheat runs the normal unlock rules, so the usual celebrations follow — during focus they wait for the break or Stop.",
+  showcaseNote: "Presentation mode is on: the cheats change the showcase data only (memory).",
+  cheats: [
+    { cheat: "levelUp", label: "+1 level" },
+    { cheat: "levelUp5", label: "+5 levels" },
+    { cheat: "addSparks100", label: "+100 sparks" },
+    { cheat: "streakUp", label: "+1 streak day" },
+    { cheat: "streakUp7", label: "+7 streak days" },
+    { cheat: "dailyGoalNow", label: "Daily goal now" },
+    { cheat: "unlockAll", label: "Unlock all" },
+  ] as const satisfies readonly { cheat: RewardsCheat; label: string }[],
+  lockAll: "Lock all unlockables",
+  lockAllTitle: "Clears the theme, ambience and sticker unlocks (and seasonal goal days); sparks, level and streak stay. The next cheat or real fact re-earns what your level and streak already cover.",
+  off: "Beta rewards are off: turn on Settings → Beta features and the sparks first.",
+  status: (s: {
+    level: number;
+    streak: number;
+    best: number;
+    themes: number;
+    themesMax: number;
+    ambiences: number;
+    ambiencesMax: number;
+    stickers: number;
+    stickersMax: number;
+  }) =>
+    `Level ${s.level} · streak ${s.streak} (best ${s.best}) · themes ${s.themes}/${s.themesMax} · ambience ${s.ambiences}/${s.ambiencesMax} · stickers ${s.stickers}/${s.stickersMax}`,
+  failed: (label: string, code: string) =>
+    code === "rewardsOff" ? `${label}: the beta rewards are off (rewardsOff).` : `${label} failed (${code}).`,
 };

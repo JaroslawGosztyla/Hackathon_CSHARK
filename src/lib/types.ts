@@ -63,6 +63,7 @@ export type { RewardSound } from "./bindings/RewardSound";
 export type { RewardsConfig } from "./bindings/RewardsConfig";
 export type { RewardsStatus } from "./bindings/RewardsStatus";
 export type { RewardTheme } from "./bindings/RewardTheme";
+export type { RewardsCheat } from "./bindings/RewardsCheat";
 export type { Season } from "./bindings/Season";
 export type { SeasonWindow } from "./bindings/SeasonWindow";
 export type { SessionGoal } from "./bindings/SessionGoal";

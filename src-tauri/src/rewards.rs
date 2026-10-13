@@ -32,7 +32,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use focus_core::api::{AppError, Config, Phase, RewardMoment, RewardTheme, RewardsStatus, events};
+use focus_core::api::{
+    AppError, Config, Phase, RewardMoment, RewardTheme, RewardsCheat, RewardsStatus, events,
+};
 use focus_core::rewards::{
     self, Ledger, LedgerMode, RewardDay, RewardRules, RewardsState, SessionTally,
 };
@@ -50,6 +52,8 @@ pub const PENDING_MAX: usize = 8;
 pub const ERR_LOAD: &str = "rewards.load";
 /// `AppError.code`: `rewards.json` could not be written (reported once per run).
 pub const ERR_SAVE: &str = "rewards.save";
+/// A developer cheat while the beta rewards are off.
+pub const ERR_REWARDS_OFF: &str = "rewardsOff";
 /// The previous `rewards.json` is copied to `rewards.json.bak` at most this often.
 const BACKUP_EVERY: Duration = Duration::from_secs(60);
 /// A `rewards.json` that cannot be read (locked, no access) is read again this many times at load, after this delay.
@@ -572,6 +576,56 @@ impl RewardsHandle {
         );
         let rules = svc.shown_rules(cfg);
         svc.publish(&rules, today);
+    }
+
+    /// Developer page rewards cheat (`DevAction::RewardsCheat`, ADR-019): applied to the showcase ledger while the
+    /// presentation showcase is on (memory only), else to the real ledger and saved like any fact (`rewards.json`; a
+    /// demo preview goes, so the view shows the result, and the next demo fact starts a new one from the real ledger).
+    /// Its moment is kept for the main window like any other. `phase` = now. `Ok(true)` when the real ledger took the
+    /// cheat (`false`: the showcase); `rewardsOff` while the shown rules are inactive.
+    pub fn cheat(&self, cheat: RewardsCheat, cfg: &Config, phase: Phase) -> Result<bool, AppError> {
+        let mut guard = lock(&self.inner);
+        let svc = &mut *guard;
+        let rules = svc.shown_rules(cfg);
+        if !rules.active {
+            return Err(AppError::new(ERR_REWARDS_OFF, "the beta rewards are off"));
+        }
+        let (today, now_ms) = (svc.clock)();
+        let before = svc.real.ledger.clone();
+        let real = !svc.showcase;
+        let moment = if real {
+            svc.preview = None;
+            rewards::cheat(
+                &mut svc.real,
+                today,
+                &rules,
+                LedgerMode::Real,
+                cheat,
+                phase,
+                now_ms,
+            )
+        } else {
+            let preview = svc.preview.get_or_insert_with(|| svc.real.clone());
+            rewards::cheat(
+                preview,
+                today,
+                &rules,
+                LedgerMode::Preview,
+                cheat,
+                phase,
+                now_ms,
+            )
+        };
+        log::info!(
+            "rewards: developer cheat {cheat:?}{}",
+            if real { "" } else { ", showcase" }
+        );
+        if let Some(moment) = moment {
+            svc.push(moment);
+        }
+        svc.save_if_changed(&before);
+        svc.publish(&rules, today);
+        Ok(real)
     }
 
     /// The presentation showcase is on ([`Self::set_showcase`]).
@@ -1671,5 +1725,52 @@ mod tests {
             fixture.handle.showcase_session("real"),
             false
         ));
+    }
+
+    #[test]
+    fn a_cheat_goes_to_the_real_ledger_or_to_the_showcase() {
+        let fixture = Fixture::new("cheat");
+        let off = Config::default();
+        let refused = fixture
+            .handle
+            .cheat(RewardsCheat::UnlockAll, &off, Phase::Idle)
+            .expect_err("rewards off");
+        assert_eq!(refused.code, ERR_REWARDS_OFF);
+
+        let cfg = beta();
+        assert!(
+            fixture
+                .handle
+                .cheat(RewardsCheat::UnlockAll, &cfg, Phase::Idle)
+                .expect("real")
+        );
+        let status = fixture.handle.status(&cfg);
+        assert_eq!(unlocked_themes(&status), RewardTheme::ALL);
+        assert!(
+            status
+                .pending
+                .last()
+                .is_some_and(|moment| moment.unlocked_themes.len() == RewardTheme::ALL.len())
+        );
+        fixture.handle.flush_blocking();
+        assert!(unlock_ids(&fixture).contains(&"theme:halloween".to_owned()));
+
+        // Presentation mode: the showcase ledger takes the cheat, the file stays as it was.
+        let stored = fs::read(fixture.file()).expect("rewards.json");
+        fixture.handle.set_showcase(true, &cfg);
+        assert!(
+            !fixture
+                .handle
+                .cheat(RewardsCheat::LockAll, &cfg, Phase::Idle)
+                .expect("showcase")
+        );
+        assert!(unlocked_themes(&fixture.handle.status(&cfg)).is_empty());
+        fixture.handle.flush_blocking();
+        assert_eq!(fs::read(fixture.file()).expect("rewards.json"), stored);
+        fixture.handle.set_showcase(false, &cfg);
+        assert_eq!(
+            unlocked_themes(&fixture.handle.status(&cfg)),
+            RewardTheme::ALL
+        );
     }
 }

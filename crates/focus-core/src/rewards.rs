@@ -21,8 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{
     AmbienceLayer, Collection, Config, DailyGoal, DayCell, DayMark, LevelView, MomentKind, Phase,
-    PopupRewards, Rarity, RewardKind, RewardLine, RewardMoment, RewardTheme, RewardsStatus,
-    SessionSparks, StickerId, StreakState, StreakView, SurpriseOdds, TodayView, Weekday,
+    PopupRewards, Rarity, RewardKind, RewardLine, RewardMoment, RewardTheme, RewardsCheat,
+    RewardsStatus, SessionSparks, StickerId, StreakState, StreakView, SurpriseOdds, TodayView,
+    Weekday,
 };
 use crate::session::{PhaseEnd, ProgressFact};
 use crate::timing::{BREAK_TAKEN_PERCENT, FULL_BLOCK_PERCENT, REWARD_DAY_START_MINUTE};
@@ -740,11 +741,22 @@ impl<'a> Pass<'a> {
         if sparks == 0 {
             return;
         }
+        add_line(&mut self.lines, kind, sparks, count);
+        self.add_sparks(sparks, true);
+        if !matches!(kind, RewardKind::DailyGoal | RewardKind::Comeback) {
+            self.check_goal();
+        }
+    }
+
+    /// Adds `sparks` to the total (and to today when `to_day`) with the level-up check, without a line and without the
+    /// daily-goal check ([`Self::credit`] adds both).
+    fn add_sparks(&mut self, sparks: u32, to_day: bool) {
         let before = level_for(self.ledger.total_sparks).level;
         self.ledger.total_sparks = self.ledger.total_sparks.saturating_add(sparks);
-        let day = self.day();
-        day.sparks = day.sparks.saturating_add(sparks);
-        add_line(&mut self.lines, kind, sparks, count);
+        if to_day {
+            let day = self.day();
+            day.sparks = day.sparks.saturating_add(sparks);
+        }
         let after = level_for(self.ledger.total_sparks).level;
         if after > before {
             let achievements = &mut self.achievements;
@@ -758,9 +770,6 @@ impl<'a> Pass<'a> {
                 self.ledger
                     .unlock(StickerId::GoldenPearl, &mut self.achievements);
             }
-        }
-        if !matches!(kind, RewardKind::DailyGoal | RewardKind::Comeback) {
-            self.check_goal();
         }
     }
 
@@ -856,6 +865,64 @@ impl<'a> Pass<'a> {
                 .unlock(StickerId::Comeback, &mut self.achievements);
             self.credit(RewardKind::Comeback, COMEBACK_SPARKS, 1);
         }
+    }
+
+    /// Developer cheat: `days` more streak days (the best streak follows), with the stickers and the highest milestone
+    /// passed on the way. The last counted day becomes at least yesterday, so the streak shows alive and today can
+    /// still count for real.
+    fn add_streak_days(&mut self, days: u32) {
+        let yesterday = self.today.saturating_sub(1);
+        let streak = &mut self.ledger.streak;
+        let old = streak.current;
+        streak.current = streak.current.saturating_add(days);
+        streak.best = streak.best.max(streak.current);
+        streak.active_days = streak.active_days.saturating_add(days);
+        streak.last_counted_day = Some(
+            streak
+                .last_counted_day
+                .map_or(yesterday, |last| last.max(yesterday)),
+        );
+        let (current, active_days) = (streak.current, streak.active_days);
+        if let Some(milestone) = STREAK_MILESTONES
+            .iter()
+            .rev()
+            .find(|&&milestone| old < milestone && milestone <= current)
+        {
+            self.achievements.milestone = Some(*milestone);
+        }
+        self.achievements.streak = Some(current);
+        if current >= THREE_DAYS_STICKER_STREAK {
+            self.ledger
+                .unlock(StickerId::ThreeDays, &mut self.achievements);
+        }
+        if active_days >= REST_DAY_STICKER_ACTIVE_DAYS {
+            self.ledger
+                .unlock(StickerId::RestDay, &mut self.achievements);
+        }
+    }
+
+    /// Developer cheat: today's sparks up to the daily goal, then the goal is met as usual (bonus, streak, a seasonal
+    /// goal day). Nothing when today met it already.
+    fn meet_goal_now(&mut self) {
+        let goal = self.rules.daily_goal;
+        let day = self.day();
+        if day.goal_met {
+            return;
+        }
+        let missing = goal.saturating_sub(day.sparks.saturating_sub(day.goal_bonus));
+        if missing > 0 {
+            self.add_sparks(missing, true);
+        }
+        self.check_goal();
+    }
+
+    /// Developer cheat: every sticker and every collection item (ADR-024), whatever its rule.
+    fn unlock_everything(&mut self) {
+        for sticker in StickerId::ALL {
+            self.ledger.unlock(sticker, &mut self.achievements);
+        }
+        let items = unlocks::unlock_all(self.ledger, self.today);
+        self.achievements.add_unlocked(items);
     }
 
     /// Ends the pass: on the real ledger, every collection item whose rule holds now is unlocked (ADR-024; announced
@@ -1454,6 +1521,89 @@ pub fn config_changed(
 pub fn catch_up(state: &mut RewardsState, today: RewardDay) -> usize {
     let today = effective_day(&state.ledger, today);
     unlocks::evaluate(&mut state.ledger, today).len()
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Developer cheats (ADR-019: testing the unlockables of ADR-024)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Sparks of [`RewardsCheat::AddSparks100`].
+pub const CHEAT_SPARKS: u32 = 100;
+/// Levels of [`RewardsCheat::LevelUp5`].
+pub const CHEAT_LEVELS: u32 = 5;
+/// Days of [`RewardsCheat::StreakUp7`].
+pub const CHEAT_STREAK_DAYS: u32 = 7;
+
+/// Sparks that take a total of `total` exactly `levels` levels up (to the very start of that level).
+pub fn sparks_to_level_up(total: u32, levels: u32) -> u32 {
+    (0..levels).fold(0_u32, |added, _| {
+        let view = level_for(total.saturating_add(added));
+        added.saturating_add(view.span.saturating_sub(view.into))
+    })
+}
+
+/// A developer cheat (`DevAction::RewardsCheat`) at reward day `today`; `phase` = now. Runs the normal rules (level up
+/// and its stickers, the daily goal, streak stickers and milestones) and the collection evaluation (ADR-024), so the
+/// usual `Update` moment follows: it waits for the break or Stop while focus goes on, like every achievement. The
+/// cheat unlocks in either ledger: `mode` only marks the moment (`Preview` = the presentation showcase's ledger).
+/// [`RewardsCheat::LockAll`] returns no moment (nothing to celebrate). Nothing while the rules are inactive.
+pub fn cheat(
+    state: &mut RewardsState,
+    today: RewardDay,
+    rules: &RewardRules,
+    mode: LedgerMode,
+    cheat: RewardsCheat,
+    phase: Phase,
+    now_wall_ms: i64,
+) -> Option<RewardMoment> {
+    if !rules.active {
+        return None;
+    }
+    let RewardsState {
+        ledger,
+        session,
+        next_moment_id,
+    } = state;
+    if cheat == RewardsCheat::LockAll {
+        unlocks::lock_all(ledger);
+        ledger.stickers.clear();
+        return None;
+    }
+    let today = settle_day(ledger, today);
+    let before = ledger.clone();
+    let mut pass = Pass::new(ledger, today, rules, mode);
+    pass.unlocks = true;
+    match cheat {
+        RewardsCheat::LevelUp | RewardsCheat::LevelUp5 => {
+            let levels = if cheat == RewardsCheat::LevelUp {
+                1
+            } else {
+                CHEAT_LEVELS
+            };
+            let sparks = sparks_to_level_up(pass.ledger.total_sparks, levels);
+            pass.add_sparks(sparks, false);
+        }
+        RewardsCheat::AddSparks100 => pass.add_sparks(CHEAT_SPARKS, false),
+        RewardsCheat::StreakUp => pass.add_streak_days(1),
+        RewardsCheat::StreakUp7 => pass.add_streak_days(CHEAT_STREAK_DAYS),
+        RewardsCheat::DailyGoalNow => pass.meet_goal_now(),
+        RewardsCheat::UnlockAll => pass.unlock_everything(),
+        RewardsCheat::LockAll => {}
+    }
+    let (lines, achievements) = pass.finish();
+    emit(
+        session,
+        next_moment_id,
+        MomentKind::Update,
+        lines,
+        achievements,
+        phase,
+        Extras::default(),
+        mode,
+        now_wall_ms,
+        before,
+        today,
+    )
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -3966,5 +4116,175 @@ mod tests {
                 .iter()
                 .all(|item| item.state == UnlockState::Locked)
         );
+    }
+}
+
+#[cfg(test)]
+mod cheat_tests {
+    use super::*;
+
+    /// Monday 2026-10-12 (inside the Halloween window).
+    const MON: RewardDay = 20_738;
+    const NOW: i64 = 1_791_885_600_000;
+
+    fn rules() -> RewardRules {
+        RewardRules::from_config(&Config {
+            beta_features: true,
+            ..Config::default()
+        })
+    }
+
+    fn run(state: &mut RewardsState, cheat: RewardsCheat, phase: Phase) -> Option<RewardMoment> {
+        super::cheat(state, MON, &rules(), LedgerMode::Real, cheat, phase, NOW)
+    }
+
+    #[test]
+    fn level_up_reaches_exactly_the_next_level() {
+        let mut state = RewardsState::new(Ledger::new(1));
+        state.ledger.total_sparks = 75;
+        let before = level_for(75);
+        let moment = run(&mut state, RewardsCheat::LevelUp, Phase::Idle).expect("moment");
+        let after = level_for(state.ledger.total_sparks);
+        assert_eq!(after.level, before.level + 1);
+        assert_eq!(after.into, 0);
+        assert_eq!(moment.level_up, Some(after.level));
+        assert_eq!(moment.kind, MomentKind::Update);
+        // The total only: today's goal does not move.
+        assert!(state.ledger.days.iter().all(|day| day.sparks == 0));
+
+        run(&mut state, RewardsCheat::LevelUp5, Phase::Idle).expect("five");
+        let five = level_for(state.ledger.total_sparks);
+        assert_eq!((five.level, five.into), (after.level + 5, 0));
+        // Level 3 and the level ones of the collection unlock with the usual evaluation.
+        assert!(unlocks::is_unlocked(
+            &state.ledger,
+            Unlockable::Theme(RewardTheme::Underwater)
+        ));
+        assert!(state.ledger.stickers.contains(&StickerId::Level5));
+    }
+
+    #[test]
+    fn sparks_to_level_up_also_past_the_span_cap() {
+        let total = 1_000_000;
+        let view = level_for(total);
+        let sparks = sparks_to_level_up(total, 2);
+        let after = level_for(total + sparks);
+        assert_eq!((after.level, after.into), (view.level + 2, 0));
+    }
+
+    #[test]
+    fn streak_up_raises_the_best_and_keeps_the_streak_alive() {
+        let mut state = RewardsState::new(Ledger::new(1));
+        state.ledger.streak.current = 2;
+        state.ledger.streak.best = 2;
+        let moment = run(&mut state, RewardsCheat::StreakUp, Phase::Idle).expect("moment");
+        assert_eq!(state.ledger.streak.current, 3);
+        assert_eq!(state.ledger.streak.best, 3);
+        assert_eq!(state.ledger.streak.last_counted_day, Some(MON - 1));
+        assert_eq!(moment.streak, Some(3));
+        assert_eq!(moment.milestone, Some(3));
+        assert!(moment.stickers.contains(&StickerId::ThreeDays));
+        let view = view(&state, MON, &rules());
+        assert_eq!(view.streak.state, StreakState::Alive);
+        assert_eq!(view.streak.days, 3);
+
+        run(&mut state, RewardsCheat::StreakUp7, Phase::Idle).expect("seven");
+        assert_eq!(
+            (state.ledger.streak.current, state.ledger.streak.best),
+            (10, 10)
+        );
+        // Best streak 5 and 7: the fireplace and the rainy window.
+        assert!(unlocks::is_unlocked(
+            &state.ledger,
+            Unlockable::Theme(RewardTheme::RainyWindow)
+        ));
+        assert!(unlocks::is_unlocked(
+            &state.ledger,
+            Unlockable::Ambience(AmbienceLayer::Fireplace)
+        ));
+    }
+
+    #[test]
+    fn daily_goal_now_meets_the_goal_once() {
+        let mut state = RewardsState::new(Ledger::new(1));
+        let moment = run(&mut state, RewardsCheat::DailyGoalNow, Phase::Idle).expect("moment");
+        assert!(moment.daily_goal);
+        let today = state.ledger.record(MON).expect("today");
+        assert!(today.goal_met);
+        assert_eq!(today.sparks - today.goal_bonus, rules().daily_goal);
+        assert_eq!(state.ledger.streak.current, 1);
+        // A goal day inside the Halloween window.
+        assert_eq!(state.ledger.seasons.len(), 1);
+        assert!(run(&mut state, RewardsCheat::DailyGoalNow, Phase::Idle).is_none());
+    }
+
+    #[test]
+    fn unlock_all_covers_every_item_and_sticker() {
+        let mut state = RewardsState::new(Ledger::new(1));
+        let moment = run(&mut state, RewardsCheat::UnlockAll, Phase::Idle).expect("moment");
+        assert!(Unlockable::all().all(|item| unlocks::is_unlocked(&state.ledger, item)));
+        assert_eq!(moment.unlocked_themes, RewardTheme::ALL);
+        assert_eq!(
+            moment.unlocked_ambiences.len(),
+            AmbienceLayer::ALL.len() - 2
+        );
+        assert_eq!(state.ledger.stickers.len(), StickerId::ALL.len());
+        assert_eq!(state.ledger.total_sparks, 0);
+    }
+
+    #[test]
+    fn unlock_moments_wait_while_focus_goes_on() {
+        let mut state = RewardsState::new(Ledger::new(1));
+        let moment = run(&mut state, RewardsCheat::UnlockAll, Phase::Focus);
+        assert!(moment.is_none_or(|moment| moment.unlocked_themes.is_empty()));
+        let later = run(&mut state, RewardsCheat::AddSparks100, Phase::Break).expect("later");
+        assert_eq!(later.unlocked_themes, RewardTheme::ALL);
+    }
+
+    #[test]
+    fn lock_all_keeps_the_totals() {
+        let mut state = RewardsState::new(Ledger::new(1));
+        run(&mut state, RewardsCheat::LevelUp5, Phase::Idle);
+        run(&mut state, RewardsCheat::StreakUp7, Phase::Idle);
+        run(&mut state, RewardsCheat::UnlockAll, Phase::Idle);
+        state.ledger.unlocks.push(UnlockRecord {
+            id: "theme:fromTheFuture".to_owned(),
+            day: MON,
+        });
+        let (total, streak) = (state.ledger.total_sparks, state.ledger.streak.clone());
+        assert!(run(&mut state, RewardsCheat::LockAll, Phase::Idle).is_none());
+        assert_eq!(state.ledger.total_sparks, total);
+        assert_eq!(state.ledger.streak, streak);
+        assert!(state.ledger.stickers.is_empty());
+        assert!(state.ledger.seasons.is_empty());
+        let ids: Vec<&str> = state.ledger.unlocks.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["theme:fromTheFuture"]);
+        // The next cheat evaluates again: what the level and the streak earn comes back.
+        let moment = run(&mut state, RewardsCheat::AddSparks100, Phase::Idle).expect("again");
+        assert!(moment.unlocked_themes.contains(&RewardTheme::Underwater));
+        assert!(!moment.unlocked_themes.contains(&RewardTheme::Halloween));
+    }
+
+    #[test]
+    fn nothing_while_the_rewards_are_off() {
+        let mut state = RewardsState::new(Ledger::new(1));
+        let off = RewardRules {
+            active: false,
+            ..rules()
+        };
+        let before = state.clone();
+        assert!(
+            super::cheat(
+                &mut state,
+                MON,
+                &off,
+                LedgerMode::Real,
+                RewardsCheat::UnlockAll,
+                Phase::Idle,
+                NOW
+            )
+            .is_none()
+        );
+        assert_eq!(state, before);
     }
 }
