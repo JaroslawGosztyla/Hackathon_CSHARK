@@ -6,8 +6,14 @@
 //! `X-FocusMode-Extension: 1` and kept by `crate::blocklist` (`BlocklistInfo.extension_skipped`). Everything
 //! else is read-only. Nothing is sent anywhere else.
 //! CORS is granted only to extension origins; the `Host` header is checked against DNS rebinding.
+//! HTTP itself is the minimal server in [`http`]: bounded heads and bodies, deadlines, one request per
+//! connection, and the oldest connection gives way to a new one (ADR-018, "Utwardzenie mostu").
 
-use std::io::{Cursor, Read};
+mod http;
+#[cfg(test)]
+mod server_tests;
+
+use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,8 +21,8 @@ use focus_core::api::{AppError, BRIDGE_PORT, BridgeState, Phase};
 use focus_core::blocklist::{Blocklist, MAX_LINE_CHARS, MAX_PATTERNS};
 use serde::Deserialize;
 use tauri::AppHandle;
-use tiny_http::{Header, Method, Request, Response, Server};
 
+use self::http::{BodyError, Handler, Head, Limits, Method, Next, Response};
 use crate::blocklist::BlocklistService;
 use crate::lock;
 use crate::shields::ShieldsHandle;
@@ -30,6 +36,8 @@ const REPORT_MAX_ENTRY_CHARS: usize = MAX_LINE_CHARS;
 /// ...and a body that fits the longest such list as the extension's `JSON.stringify` writes it (at most 6
 /// bytes per character, e.g. `\u0001`; quotes and a comma per source; the object around them), about 1.5 MB.
 const REPORT_MAX_BYTES: usize = REPORT_MAX_ENTRIES * (REPORT_MAX_ENTRY_CHARS * 6 + 3) + 64;
+/// Header the extension adds to every request.
+const MARKER: &str = "X-FocusMode-Extension";
 
 /// State shared between the session actor, the shields worker, the blocklist service, the tracker
 /// and the HTTP thread.
@@ -105,139 +113,186 @@ pub fn spawn(
     std::thread::Builder::new()
         .name("focus-bridge".into())
         .spawn(move || {
-            let server = match Server::http(("127.0.0.1", BRIDGE_PORT)) {
-                Ok(server) => server,
-                Err(err) => {
-                    crate::emit_startup_error(
-                        &app,
-                        AppError::new(
-                            "bridge.port",
-                            format!("cannot listen on 127.0.0.1:{BRIDGE_PORT}: {err}"),
-                        ),
-                    );
-                    return;
-                }
+            let cannot_listen = |err: std::io::Error| {
+                crate::emit_startup_error(
+                    &app,
+                    AppError::new(
+                        "bridge.port",
+                        format!("cannot listen on 127.0.0.1:{BRIDGE_PORT}: {err}"),
+                    ),
+                );
+            };
+            let listener = match TcpListener::bind(("127.0.0.1", BRIDGE_PORT)) {
+                Ok(listener) => listener,
+                Err(err) => return cannot_listen(err),
             };
             log::info!("extension bridge listening on 127.0.0.1:{BRIDGE_PORT}");
-            for request in server.incoming_requests() {
-                handle(&shared, &shields, &blocklist, request);
+            let router = Router {
+                app: Arc::new(AppBridge {
+                    shared,
+                    shields,
+                    blocklist,
+                }),
+            };
+            // Returns only when the server cannot start (no runtime, socket not registered).
+            if let Err(err) = http::serve(listener, Arc::new(router), Limits::DEFAULT) {
+                cannot_listen(err);
             }
         })?;
     Ok(())
 }
 
-fn handle(
-    shared: &SharedBridge,
-    shields: &ShieldsHandle,
-    blocklist: &BlocklistService,
-    mut request: Request,
-) {
-    let origin = header(&request, "Origin");
-    let allowed_origin = origin.filter(|origin| is_extension_origin(origin));
-    let marked = header(&request, "X-FocusMode-Extension").is_some_and(|value| value.trim() == "1");
-    let from_extension = allowed_origin.is_some() || marked;
-
-    if header(&request, "Host").is_some_and(|host| !is_loopback_host(&host)) {
-        respond(request, text_response(403, "forbidden"));
-        return;
-    }
-
-    let path = request.url().split('?').next().unwrap_or("").to_owned();
-    let response = match (request.method(), path.as_str()) {
-        (Method::Options, _) => preflight(text_response(204, ""), allowed_origin.as_deref()),
-        (Method::Post, "/v1/report") => {
-            // Both: a web page cannot send an extension `Origin`, and the custom header needs a preflight
-            // that only extension origins pass.
-            let response = if allowed_origin.is_some() && marked {
-                take_report(&mut request, blocklist)
-            } else {
-                text_response(403, "forbidden")
-            };
-            cors(
-                with_header(response, "Cache-Control", "no-store"),
-                allowed_origin.as_deref(),
-            )
-        }
-        (Method::Get, "/v1/state") => {
-            let state = {
-                let mut bridge = lock(shared);
-                if from_extension {
-                    let was_connected = bridge.extension_connected();
-                    bridge.last_seen = Some(Instant::now());
-                    if !was_connected {
-                        log::info!("browser extension connected");
-                        shields.refresh();
-                    }
-                }
-                bridge.state()
-            };
-            let response = match serde_json::to_string(&state) {
-                Ok(json) => with_header(
-                    text_response(200, &json),
-                    "Content-Type",
-                    "application/json; charset=utf-8",
-                ),
-                Err(err) => text_response(500, &err.to_string()),
-            };
-            cors(
-                with_header(response, "Cache-Control", "no-store"),
-                allowed_origin.as_deref(),
-            )
-        }
-        _ => cors(text_response(404, "not found"), allowed_origin.as_deref()),
-    };
-    respond(request, response);
+/// What the bridge serves: the running app ([`AppBridge`]) or a test double.
+trait BridgeApp: Send + Sync + 'static {
+    /// The state for `GET /v1/state`; `from_extension` marks the extension as connected.
+    fn state(&self, from_extension: bool) -> BridgeState;
+    /// The skipped patterns of an accepted `POST /v1/report`. May block briefly (runs off the server thread).
+    fn report(&self, skipped: &[String]);
 }
 
-/// `POST /v1/report` from the extension: 204 when taken (changed or not), 413 / 400 when refused.
-fn take_report(request: &mut Request, blocklist: &BlocklistService) -> Response<Cursor<Vec<u8>>> {
-    let parsed = read_body(request).and_then(|body| parse_report(&body));
-    match parsed {
-        Ok(skipped) => {
-            blocklist.set_extension_skipped(&skipped);
-            text_response(204, "")
-        }
-        Err(err) => {
-            log::debug!("extension report refused: {err:?}");
-            match err {
-                ReportError::TooLarge => text_response(413, "too large"),
-                ReportError::Unreadable | ReportError::Invalid => text_response(400, "bad request"),
+struct AppBridge {
+    shared: SharedBridge,
+    shields: ShieldsHandle,
+    blocklist: BlocklistService,
+}
+
+impl BridgeApp for AppBridge {
+    fn state(&self, from_extension: bool) -> BridgeState {
+        let mut bridge = lock(&self.shared);
+        if from_extension {
+            let was_connected = bridge.extension_connected();
+            bridge.last_seen = Some(Instant::now());
+            if !was_connected {
+                log::info!("browser extension connected");
+                self.shields.refresh();
             }
         }
+        bridge.state()
+    }
+
+    fn report(&self, skipped: &[String]) {
+        self.blocklist.set_extension_skipped(skipped);
+    }
+}
+
+/// Routes, origin checks and CORS of the bridge; HTTP itself is in [`http`].
+struct Router<A> {
+    app: Arc<A>,
+}
+
+/// Who sent a request, from its headers.
+struct Caller {
+    /// The `Origin` when it is an extension origin; CORS headers are granted only to it.
+    allowed_origin: Option<String>,
+    /// `X-FocusMode-Extension: 1`.
+    marked: bool,
+}
+
+impl Caller {
+    fn of(head: &Head) -> Self {
+        Self {
+            allowed_origin: head
+                .header("Origin")
+                .filter(|origin| is_extension_origin(origin))
+                .map(str::to_owned),
+            marked: head.header(MARKER).is_some_and(|value| value.trim() == "1"),
+        }
+    }
+
+    fn origin(&self) -> Option<&str> {
+        self.allowed_origin.as_deref()
+    }
+}
+
+impl<A: BridgeApp> Handler for Router<A> {
+    fn head(&self, head: &Head) -> Next {
+        // One of each, so there is no question which one counts.
+        if head.count("Origin") > 1 || head.count(MARKER) > 1 {
+            return Next::Respond(Response::text(400, "bad request"));
+        }
+        if head
+            .header("Host")
+            .is_some_and(|host| !is_loopback_host(host))
+        {
+            return Next::Respond(Response::text(403, "forbidden"));
+        }
+        let caller = Caller::of(head);
+        let origin = caller.origin();
+        let response = match (head.method, head.path.as_str()) {
+            (Method::Options, _) => preflight(Response::text(204, ""), origin),
+            // Both: a web page cannot send an extension `Origin`, and the custom header needs a preflight
+            // that only extension origins pass.
+            (Method::Post, "/v1/report") if origin.is_some() && caller.marked => {
+                return Next::ReadBody {
+                    max_bytes: REPORT_MAX_BYTES,
+                };
+            }
+            (Method::Post, "/v1/report") => {
+                cors(no_store(Response::text(403, "forbidden")), origin)
+            }
+            (Method::Get, "/v1/state") => {
+                let state = self.app.state(origin.is_some() || caller.marked);
+                let response = match serde_json::to_string(&state) {
+                    Ok(json) => Response::json(200, json),
+                    Err(err) => Response::text(500, &err.to_string()),
+                };
+                cors(no_store(response), origin)
+            }
+            _ => cors(Response::text(404, "not found"), origin),
+        };
+        Next::Respond(response)
+    }
+
+    /// `POST /v1/report` from the extension: 204 when taken (changed or not), 413 / 400 when refused
+    /// (408 / 503 when the body did not arrive in time).
+    fn body(&self, head: &Head, body: Result<Vec<u8>, BodyError>) -> Response {
+        let parsed = body
+            .map_err(ReportError::from)
+            .and_then(|body| parse_report(&body));
+        let response = match parsed {
+            Ok(skipped) => {
+                self.app.report(&skipped);
+                Response::text(204, "")
+            }
+            Err(err) => {
+                log::debug!("extension report refused: {err:?}");
+                match err {
+                    ReportError::TooLarge => Response::text(413, "too large"),
+                    ReportError::Unreadable | ReportError::Invalid => {
+                        Response::text(400, "bad request")
+                    }
+                    ReportError::TimedOut => Response::text(408, "request timeout"),
+                    ReportError::Busy => Response::text(503, "busy"),
+                }
+            }
+        };
+        cors(no_store(response), Caller::of(head).origin())
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReportError {
-    /// Body over [`REPORT_MAX_BYTES`].
+    /// Body over [`REPORT_MAX_BYTES`] (declared longer, never read) or of unknown length.
     TooLarge,
-    /// The body could not be read.
+    /// The connection ended before the whole body arrived.
     Unreadable,
+    /// The body did not arrive in time.
+    TimedOut,
+    /// Other reports were being read the whole time.
+    Busy,
     /// Not `{"skipped": string[]}`, or over the entry limits.
     Invalid,
 }
 
-/// The request body, at most [`REPORT_MAX_BYTES`]; a larger declared length is refused unread.
-fn read_body(request: &mut Request) -> Result<Vec<u8>, ReportError> {
-    if request
-        .body_length()
-        .is_some_and(|len| len > REPORT_MAX_BYTES)
-    {
-        return Err(ReportError::TooLarge);
+impl From<BodyError> for ReportError {
+    fn from(err: BodyError) -> Self {
+        match err {
+            BodyError::TooLarge => Self::TooLarge,
+            BodyError::Incomplete => Self::Unreadable,
+            BodyError::TimedOut => Self::TimedOut,
+            BodyError::Busy => Self::Busy,
+        }
     }
-    let limit = u64::try_from(REPORT_MAX_BYTES)
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    let mut body = Vec::new();
-    request
-        .as_reader()
-        .take(limit)
-        .read_to_end(&mut body)
-        .map_err(|_| ReportError::Unreadable)?;
-    if body.len() > REPORT_MAX_BYTES {
-        return Err(ReportError::TooLarge);
-    }
-    Ok(body)
 }
 
 #[derive(Deserialize)]
@@ -264,66 +319,31 @@ fn parse_report(body: &[u8]) -> Result<Vec<String>, ReportError> {
     }
 }
 
-fn respond(request: Request, response: Response<Cursor<Vec<u8>>>) {
-    if let Err(err) = request.respond(response) {
-        log::debug!("bridge response failed: {err}");
-    }
+fn no_store(response: Response) -> Response {
+    response.with_header("Cache-Control", "no-store")
 }
 
-fn header(request: &Request, name: &'static str) -> Option<String> {
-    request
-        .headers()
-        .iter()
-        .find(|header| header.field.equiv(name))
-        .map(|header| header.value.as_str().to_owned())
-}
-
-fn text_response(status: u16, body: &str) -> Response<Cursor<Vec<u8>>> {
-    Response::from_string(body).with_status_code(status)
-}
-
-fn with_header(
-    response: Response<Cursor<Vec<u8>>>,
-    name: &str,
-    value: &str,
-) -> Response<Cursor<Vec<u8>>> {
-    match Header::from_bytes(name.as_bytes(), value.as_bytes()) {
-        Ok(header) => response.with_header(header),
-        Err(()) => response,
-    }
-}
-
-fn cors(response: Response<Cursor<Vec<u8>>>, origin: Option<&str>) -> Response<Cursor<Vec<u8>>> {
+fn cors(response: Response, origin: Option<&str>) -> Response {
     match origin {
-        Some(origin) => with_header(
-            with_header(response, "Access-Control-Allow-Origin", origin),
-            "Vary",
-            "Origin",
-        ),
+        Some(origin) => response
+            .with_header("Access-Control-Allow-Origin", origin)
+            .with_header("Vary", "Origin"),
         None => response,
     }
 }
 
-fn preflight(
-    response: Response<Cursor<Vec<u8>>>,
-    origin: Option<&str>,
-) -> Response<Cursor<Vec<u8>>> {
+fn preflight(response: Response, origin: Option<&str>) -> Response {
     if origin.is_none() {
         return response;
     }
-    let response = cors(response, origin);
-    let response = with_header(
-        response,
-        "Access-Control-Allow-Methods",
-        "GET, POST, OPTIONS",
-    );
-    let response = with_header(
-        response,
-        "Access-Control-Allow-Headers",
-        "X-FocusMode-Extension, Content-Type",
-    );
-    let response = with_header(response, "Access-Control-Allow-Private-Network", "true");
-    with_header(response, "Access-Control-Max-Age", "600")
+    cors(response, origin)
+        .with_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        .with_header(
+            "Access-Control-Allow-Headers",
+            "X-FocusMode-Extension, Content-Type",
+        )
+        .with_header("Access-Control-Allow-Private-Network", "true")
+        .with_header("Access-Control-Max-Age", "600")
 }
 
 fn is_extension_origin(origin: &str) -> bool {
