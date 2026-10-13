@@ -15,6 +15,8 @@
 //! * [`clock`]: local time of day (time-of-day screen tint).
 //! * [`night_light`]: Windows Night light on/off and colour temperature (warm screen, Windows 10 – 11 23H2).
 //! * [`gamma`]: per-display gamma ramps (warm screen, every Windows version; Windows may cap the warmth).
+//! * [`work`]: "Co dalej?" work items, read-only, from GitHub, GitLab, Jira, Azure DevOps and Linear (personal
+//!   tokens stored with [`secrets`]); ranking is `focus_core::work`'s job.
 //!
 //! All per-OS code lives in this crate, gated with `#[cfg(target_os = "...")]`. Every integration has a
 //! `Noop` implementation used on other platforms, so the shell never needs `cfg` of its own.
@@ -36,6 +38,7 @@ pub mod processes;
 pub mod secrets;
 mod sha256;
 pub mod teams;
+pub mod work;
 
 /// Error of a platform integration. The shell maps it to `AppError` / `IntegrationState::Error`
 /// (or `IntegrationState::Unavailable` for [`PlatformError::Unsupported`]).

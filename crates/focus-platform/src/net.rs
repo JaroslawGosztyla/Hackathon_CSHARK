@@ -14,6 +14,16 @@ pub(crate) const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) struct LazyClient {
     cell: OnceLock<reqwest::blocking::Client>,
     max_redirects: usize,
+    same_origin: bool,
+}
+
+impl std::fmt::Debug for LazyClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LazyClient")
+            .field("max_redirects", &self.max_redirects)
+            .field("same_origin", &self.same_origin)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LazyClient {
@@ -21,6 +31,18 @@ impl LazyClient {
         Self {
             cell: OnceLock::new(),
             max_redirects,
+            same_origin: false,
+        }
+    }
+
+    /// Like [`LazyClient::new`], but a redirect is followed only to the origin (scheme, host, port) of the first
+    /// request; any other redirect is returned as the 3xx response. reqwest drops `Authorization` on a cross-host
+    /// redirect but not custom credential headers (GitLab's `PRIVATE-TOKEN`), so token-carrying clients use this.
+    pub(crate) const fn same_origin(max_redirects: usize) -> Self {
+        Self {
+            cell: OnceLock::new(),
+            max_redirects,
+            same_origin: true,
         }
     }
 
@@ -29,12 +51,28 @@ impl LazyClient {
         if let Some(client) = self.cell.get() {
             return Ok(client);
         }
+        let policy = if self.same_origin {
+            let max_redirects = self.max_redirects;
+            reqwest::redirect::Policy::custom(move |attempt| {
+                let same = attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|first| first.origin() == attempt.url().origin());
+                if same && attempt.previous().len() <= max_redirects {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            })
+        } else {
+            reqwest::redirect::Policy::limited(self.max_redirects)
+        };
         let client = reqwest::blocking::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .connect_timeout(HTTP_TIMEOUT)
             .user_agent(concat!("FocusMode/", env!("CARGO_PKG_VERSION")))
             .https_only(true)
-            .redirect(reqwest::redirect::Policy::limited(self.max_redirects))
+            .redirect(policy)
             .build()
             .map_err(network_error)?;
         // Another initializer cannot race us (`&self` on one thread), but stay correct either way.
