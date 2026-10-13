@@ -1,17 +1,21 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getAutostart, getSystemLanguage, setAutostart, testChime, toAppError, ERR_NO_SHELL } from "$lib/api";
+  import { getAutostart, getSystemLanguage, setAutostart, toAppError, ERR_NO_SHELL } from "$lib/api";
   import BlocklistFile from "$lib/components/BlocklistFile.svelte";
+  import BreakReminders from "$lib/components/BreakReminders.svelte";
+  import ChimeSettings from "$lib/components/ChimeSettings.svelte";
   import ExtensionGuide from "$lib/components/ExtensionGuide.svelte";
+  import HistorySettings from "$lib/components/HistorySettings.svelte";
   import LauncherSettings from "$lib/components/LauncherSettings.svelte";
   import Switch from "$lib/components/Switch.svelte";
   import TeamsSettings from "$lib/components/TeamsSettings.svelte";
+  import ThemeSettings from "$lib/components/ThemeSettings.svelte";
   import TintSettings from "$lib/components/TintSettings.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
   import { LANGUAGES, strings } from "$lib/strings";
-  import type { ChimeKind, Config, Language } from "$lib/types";
+  import type { Config, Language } from "$lib/types";
 
   /** `closeToTray` as a select value: null = ask at the first X. */
   type CloseChoice = "ask" | "tray" | "quit";
@@ -23,11 +27,9 @@
   };
 
   const cfg = $derived(config.value);
-  const chimeError = $derived(config.fieldErrors.chimeVolume ?? null);
 
   let autostart = $state<boolean | null>(null);
   let autostartBusy = $state(false);
-  let chimeBusy = $state(false);
   /** OS UI language as resolved by the shell, for the "Systemowy (…)" option. */
   let systemLanguage = $state<Language | null>(null);
 
@@ -76,20 +78,6 @@
     config.update((c) => apply(c, Math.min(1, Math.max(0, pct / 100))));
   }
 
-  async function playChime(kind: ChimeKind) {
-    if (chimeBusy) return;
-    chimeBusy = true;
-    try {
-      // The shell plays at the stored chime volume: save the slider first.
-      await config.flush();
-      await testChime(kind);
-    } catch (e) {
-      toasts.error(e);
-    } finally {
-      chimeBusy = false;
-    }
-  }
-
   async function setLaunchOnLogin(enabled: boolean) {
     if (autostartBusy) return;
     autostartBusy = true;
@@ -130,6 +118,13 @@
   {#if !cfg}
     <p class="hint">{strings.player.loading}</p>
   {:else}
+    <section class="card" aria-labelledby="appearance-settings">
+      <div class="card-title">
+        <h2 id="appearance-settings">{strings.settings.appearanceTitle}</h2>
+      </div>
+      <ThemeSettings />
+    </section>
+
     <section class="card" aria-labelledby="shields-settings">
       <div class="card-title">
         <div>
@@ -192,6 +187,53 @@
       </div>
     </section>
 
+    <section class="card" aria-labelledby="reminders-settings">
+      <div class="card-title">
+        <h2 id="reminders-settings">{strings.settings.remindersTitle}</h2>
+      </div>
+      <BreakReminders />
+    </section>
+
+    <section class="card" aria-labelledby="sound-settings">
+      <div class="card-title">
+        <h2 id="sound-settings">{strings.settings.soundTitle}</h2>
+      </div>
+      <div class="items">
+        <div class="item">
+          <ChimeSettings />
+        </div>
+
+        <div class="item">
+          <div class="field">
+            <label for="music-volume">{strings.settings.musicVolume}</label>
+            <div class="range-row">
+              <input
+                id="music-volume"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={Math.round(cfg.music.volume * 100)}
+                aria-valuetext={`${Math.round(cfg.music.volume * 100)}%`}
+                oninput={(e) => onRange(e, (c, v) => (c.music.volume = v))}
+              />
+              <span class="tabular value">{Math.round(cfg.music.volume * 100)}%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <Switch
+            id="pause-during-break"
+            label={strings.music.pauseDuringBreak}
+            hint={strings.music.pauseDuringBreakHint}
+            checked={cfg.music.pauseDuringBreak}
+            onchange={(on) => set((c) => (c.music.pauseDuringBreak = on))}
+          />
+        </div>
+      </div>
+    </section>
+
     <section class="card" aria-labelledby="launchers-settings">
       <div class="card-title">
         <h2 id="launchers-settings">{strings.settings.launchersTitle}</h2>
@@ -241,82 +283,11 @@
       <TintSettings />
     </section>
 
-    <section class="card" aria-labelledby="tracking-settings">
+    <section class="card" aria-labelledby="history-settings">
       <div class="card-title">
-        <h2 id="tracking-settings">{strings.settings.trackingTitle}</h2>
+        <h2 id="history-settings">{strings.settings.historyTitle}</h2>
       </div>
-      <Switch
-        id="track-apps"
-        label={strings.settings.trackApps}
-        hint={strings.settings.trackAppsHint}
-        checked={cfg.trackApps}
-        onchange={(on) => set((c) => (c.trackApps = on))}
-      />
-    </section>
-
-    <section class="card" aria-labelledby="sound-settings">
-      <div class="card-title">
-        <h2 id="sound-settings">{strings.settings.soundTitle}</h2>
-      </div>
-      <div class="items">
-        <div class="item">
-          <div class="field">
-            <label for="chime-volume">{strings.settings.chimeVolume}</label>
-            <div class="range-row">
-              <input
-                id="chime-volume"
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={Math.round(cfg.chimeVolume * 100)}
-                aria-valuetext={`${Math.round(cfg.chimeVolume * 100)}%`}
-                oninput={(e) => onRange(e, (c, v) => (c.chimeVolume = v))}
-              />
-              <span class="tabular value">{Math.round(cfg.chimeVolume * 100)}%</span>
-            </div>
-            {#if chimeError}<p class="field-error">{chimeError}</p>{/if}
-          </div>
-          <div class="row test-row">
-            <span class="secondary small">{strings.settings.testChime}</span>
-            <button type="button" class="btn btn-sm" disabled={chimeBusy} onclick={() => playChime("breakStart")}>
-              {strings.settings.testBreak}
-            </button>
-            <button type="button" class="btn btn-sm" disabled={chimeBusy} onclick={() => playChime("focusStart")}>
-              {strings.settings.testFocus}
-            </button>
-          </div>
-        </div>
-
-        <div class="item">
-          <div class="field">
-            <label for="music-volume">{strings.settings.musicVolume}</label>
-            <div class="range-row">
-              <input
-                id="music-volume"
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={Math.round(cfg.music.volume * 100)}
-                aria-valuetext={`${Math.round(cfg.music.volume * 100)}%`}
-                oninput={(e) => onRange(e, (c, v) => (c.music.volume = v))}
-              />
-              <span class="tabular value">{Math.round(cfg.music.volume * 100)}%</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="item">
-          <Switch
-            id="pause-during-break"
-            label={strings.music.pauseDuringBreak}
-            hint={strings.music.pauseDuringBreakHint}
-            checked={cfg.music.pauseDuringBreak}
-            onchange={(on) => set((c) => (c.music.pauseDuringBreak = on))}
-          />
-        </div>
-      </div>
+      <HistorySettings />
     </section>
 
     <section class="card" aria-labelledby="language-settings">
@@ -406,10 +377,6 @@
   .value {
     min-width: 3.5em;
     color: var(--text-2);
-  }
-
-  .test-row {
-    margin-top: 10px;
   }
 
   .narrow {

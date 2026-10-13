@@ -1,4 +1,5 @@
-// Warm screen tint (overlay, ADR-014): status pushed by the shell plus the settings preview.
+// Warm screen colours (Windows Night light or display gamma, applied by the shell): status pushed by the shell
+// plus the settings preview.
 import * as api from "$lib/api";
 import type { TintStatus } from "$lib/types";
 

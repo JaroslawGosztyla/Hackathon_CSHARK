@@ -39,8 +39,18 @@
   const tracking = $derived(config.value?.trackApps ?? true);
   const rows = $derived.by(() => {
     if (!usage) return [];
-    const top = usage.apps.slice(0, TOP).map((a) => ({ name: processLabel(a.process), full: a.process, secs: a.secs, muted: false }));
-    if (usage.idleSecs > 0) top.push({ name: strings.focusView.idle, full: strings.focusView.idle, secs: usage.idleSecs, muted: true });
+    const top = usage.apps.slice(0, TOP).map((a) => ({
+      name: processLabel(a.process),
+      full: a.process,
+      // Native tooltip: the process, then its most-used windows (when window titles are recorded).
+      hover: [a.process, ...(a.titles ?? []).map((t) => `• ${t.title} — ${formatDuration(t.secs)}`)].join("\n"),
+      secs: a.secs,
+      muted: false,
+    }));
+    if (usage.idleSecs > 0) {
+      const idle = strings.focusView.idle;
+      top.push({ name: idle, full: idle, hover: idle, secs: usage.idleSecs, muted: true });
+    }
     return top;
   });
   const maxSecs = $derived(Math.max(1, ...rows.map((r) => r.secs)));
@@ -58,7 +68,7 @@
     <ul class="usage">
       {#each rows as row (row.full)}
         <li class:muted-row={row.muted}>
-          <span class="name" title={row.full}>{row.name}</span>
+          <span class="name" title={row.hover}>{row.name}</span>
           <span class="bar-track" aria-hidden="true">
             <span class="bar" style:width="{(row.secs / maxSecs) * 100}%"></span>
           </span>
@@ -96,7 +106,7 @@
   .bar-track {
     height: 10px;
     border-radius: 5px;
-    background: rgba(255, 236, 214, 0.06);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
     overflow: hidden;
   }
 

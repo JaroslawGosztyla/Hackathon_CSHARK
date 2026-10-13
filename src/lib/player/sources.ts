@@ -8,6 +8,9 @@ import { isYouTubeChannelPage, parseHttpUrl, parseYouTube, youTubeWindowUrl, typ
 /** Lofi Girl's current live stream (the channel /live page always points at it; stream ids change over time). */
 export const LOFI_GIRL_URL = "https://www.youtube.com/@LofiGirl/live";
 
+/** Home of the bundled music (Open Lo-Fi by btahir, CC0; see CREDITS.md). */
+export const LIBRARY_URL = "https://github.com/btahir/open-lofi";
+
 export interface StreamPreset {
   url: string;
   label: string;
@@ -161,7 +164,9 @@ export function buildPlaylist(music: MusicConfig, tracks: Track[]): PlayItem[] {
       const items = music.links.map((l) => linkToItem(l, false)).filter((i): i is PlayItem => i !== null);
       return music.shuffle ? shuffled(items) : items;
     }
-    case "folder": {
+    // `tracks` are the folder's tracks or the bundled library, depending on the source; both play through <audio>.
+    case "folder":
+    case "library": {
       const items: PlayItem[] = tracks.map((t) => ({ kind: "audio", url: fileSrc(t.path), label: t.title, live: false }));
       return music.shuffle ? shuffled(items) : items;
     }
@@ -183,5 +188,9 @@ export function describeSource(music: MusicConfig, trackCount: number | null): s
       return trackCount === null
         ? `${strings.music.source.folder}: ${music.folder ?? "—"}`
         : `${strings.music.source.folder}: ${strings.music.trackCount(trackCount)}`;
+    case "library":
+      return trackCount === null
+        ? strings.music.libraryName
+        : `${strings.music.libraryName}: ${strings.music.trackCount(trackCount)}`;
   }
 }

@@ -118,7 +118,7 @@
   }
 
   .check.on {
-    border-color: rgba(242, 166, 90, 0.45);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
     color: var(--text);
   }
 

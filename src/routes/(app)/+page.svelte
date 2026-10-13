@@ -1,5 +1,6 @@
 <script lang="ts">
   import BreakCard from "$lib/components/BreakCard.svelte";
+  import GoodPractice from "$lib/components/GoodPractice.svelte";
   import LiveUsage from "$lib/components/LiveUsage.svelte";
   import MusicSourcePicker from "$lib/components/MusicSourcePicker.svelte";
   import ShieldChips from "$lib/components/ShieldChips.svelte";
@@ -110,6 +111,9 @@
     <TimingEditor />
     <MusicSourcePicker />
   </div>
+  <div class="below">
+    <GoodPractice />
+  </div>
 {:else if snap.phase === "focus"}
   <div class="grid">
     <LiveUsage />
@@ -145,6 +149,10 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
     gap: 16px;
     align-items: start;
+  }
+
+  .below {
+    margin-top: 16px;
   }
 
   @media (max-width: 560px) {

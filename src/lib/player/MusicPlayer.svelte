@@ -21,9 +21,20 @@
   const pauseForBreak = $derived(session.phase === "break" && (musicCfg?.pauseDuringBreak ?? false));
   const shouldPlay = $derived(session.phase !== "idle" && !session.paused && !pauseForBreak);
 
-  const folderTracks = $derived(
-    musicCfg?.source === "folder" && musicCfg.folder !== null && music.folder === musicCfg.folder ? music.tracks : [],
-  );
+  /** Local tracks of the current source: the folder's (once listed for that folder) or the bundled library. */
+  const sourceTracks = $derived.by(() => {
+    if (musicCfg?.source === "folder") {
+      return musicCfg.folder !== null && music.folder === musicCfg.folder ? music.tracks : [];
+    }
+    if (musicCfg?.source === "library") return music.library ?? [];
+    return [];
+  });
+  /** Track count for the idle description; null while it is not known yet. */
+  const knownTrackCount = $derived.by((): number | null => {
+    if (musicCfg?.source === "folder") return music.folder === musicCfg.folder ? music.tracks.length : null;
+    if (musicCfg?.source === "library") return music.library?.length ?? null;
+    return null;
+  });
 
   // Rebuild the playlist when the source definition changes or a new session starts (fresh shuffle).
   const playlistKey = $derived(
@@ -36,8 +47,8 @@
           musicCfg.folder,
           musicCfg.noise,
           musicCfg.shuffle,
-          folderTracks.length,
-          folderTracks[0]?.path ?? "",
+          sourceTracks.length,
+          sourceTracks[0]?.path ?? "",
         ])
       : "",
   );
@@ -52,11 +63,7 @@
   const canNext = $derived(view.count > 1 && !session.isIdle);
   const volumePct = $derived(Math.round((musicCfg?.volume ?? 0) * 100));
 
-  const sourceText = $derived(
-    musicCfg
-      ? describeSource(musicCfg, musicCfg.source === "folder" && music.folder === musicCfg.folder ? music.tracks.length : null)
-      : "",
-  );
+  const sourceText = $derived(musicCfg ? describeSource(musicCfg, knownTrackCount) : "");
 
   const title = $derived.by(() => {
     if (!musicCfg) return strings.player.loading;
@@ -116,6 +123,11 @@
     if (folder) untrack(() => void music.ensureTracks(folder));
   });
 
+  // Bundled music → track list (listed once; the shell allows its folder in the asset protocol scope).
+  $effect(() => {
+    if (musicCfg?.source === "library") untrack(() => void music.ensureLibrary());
+  });
+
   $effect(() => {
     const key = playlistKey;
     const eng = engine;
@@ -124,7 +136,7 @@
       const m = config.value?.music;
       if (!m) return;
       // One call: on Stop the new (idle) playlist must not load the first item before pausing it.
-      eng.setItems(buildPlaylist(m, folderTracks), shouldPlay);
+      eng.setItems(buildPlaylist(m, sourceTracks), shouldPlay);
     });
   });
 
@@ -306,7 +318,7 @@
     gap: 12px;
     padding: 8px 12px;
     border-radius: 20px;
-    background: rgba(30, 21, 40, 0.94);
+    background: color-mix(in srgb, var(--surface-solid) 94%, transparent);
     border: 1px solid var(--border-strong);
     box-shadow: var(--shadow);
     backdrop-filter: blur(14px);

@@ -1,12 +1,15 @@
 <script lang="ts">
-  // Warm screen tint (overlay, ADR-014): schedule, strength with a live preview, fade length, status.
+  // Warm screen colours by time of day: mechanism (Windows Night light or display gamma), schedule, strength with a
+  // live preview, fade length and the status the shell reports (fallback mechanism, capped strength, errors).
   import { onDestroy } from "svelte";
   import Switch from "$lib/components/Switch.svelte";
   import { minutesToTime, timeToMinutes } from "$lib/format";
   import { config, LIMITS, TINT_TRANSITION_PRESETS } from "$lib/state/config.svelte";
   import { tint } from "$lib/state/tint.svelte";
   import { strings } from "$lib/strings";
-  import type { Config } from "$lib/types";
+  import type { Config, TintMode } from "$lib/types";
+
+  const MODES: readonly TintMode[] = ["nightLight", "gamma"];
 
   /** The preview follows the slider at most this often. */
   const PREVIEW_DEBOUNCE_MS = 150;
@@ -27,11 +30,31 @@
   const status = $derived.by((): { text: string; error: boolean; detail: string | null } | null => {
     const st = tint.status;
     if (!st) return null;
-    if (st.error) return { text: s.tintStatusError, error: true, detail: st.error };
-    if (st.preview) return { text: s.tintStatusPreview(st.level), error: false, detail: null };
-    if (!st.enabled || st.level === 0) return { text: s.tintStatusOff, error: false, detail: null };
-    return { text: s.tintStatusLevel(st.level), error: false, detail: null };
+    // `error` with `active` is only a note (e.g. Night light cannot be controlled on this Windows, so the gamma
+    // fallback warms the screen): the warmth works, the note below says which mechanism is used.
+    if (st.error && !st.active) {
+      return { text: st.level === 0 ? s.tintStatusRestoreError : s.tintStatusError, error: true, detail: st.error };
+    }
+    if (st.preview) return { text: s.tintStatusPreview(st.level), error: false, detail: st.error };
+    if (!st.enabled || st.level === 0) return { text: s.tintStatusOff, error: false, detail: st.error };
+    return { text: s.tintStatusLevel(st.level), error: false, detail: st.error };
   });
+
+  /** Extra lines under the status: the shell fell back to the other mechanism, or Windows capped the strength. */
+  const notes = $derived.by((): string[] => {
+    const st = tint.status;
+    const configured = cfg?.tint.mode;
+    if (!st || !configured) return [];
+    const out: string[] = [];
+    if (st.mode !== configured) out.push(s.tintStatusFallback(s.tintModeShort[st.mode]));
+    if (st.capped) out.push(s.tintStatusCapped);
+    return out;
+  });
+
+  function setMode(value: string): void {
+    const mode = MODES.find((m) => m === value);
+    if (mode) set((c) => (c.tint.mode = mode));
+  }
 
   function set(mutate: (c: Config) => void): void {
     config.update(mutate, true);
@@ -118,6 +141,26 @@
   >
     {#if cfg.tint.enabled}
       <div class="tint-fields">
+        <fieldset class="modes">
+          <legend class="field-label">{s.tintMode}</legend>
+          {#each MODES as mode (mode)}
+            <label class="mode" class:selected={cfg.tint.mode === mode}>
+              <input
+                type="radio"
+                name="tint-mode"
+                value={mode}
+                checked={cfg.tint.mode === mode}
+                aria-describedby="tint-mode-{mode}-hint"
+                onchange={() => setMode(mode)}
+              />
+              <span class="mode-text">
+                <span class="mode-name">{s.tintModes[mode]}</span>
+                <span class="hint" id="tint-mode-{mode}-hint">{s.tintModeHints[mode]}</span>
+              </span>
+            </label>
+          {/each}
+        </fieldset>
+
         <div class="schedule">
           <div class="field">
             <label for="tint-start">{s.tintFrom}</label>
@@ -195,10 +238,15 @@
     {/if}
 
     {#if status && (cfg.tint.enabled || status.error || tint.status?.preview)}
-      <p class="status" class:error={status.error} title={status.detail ?? undefined} aria-live="polite">
-        <span class="swatch" aria-hidden="true"></span>
-        {status.text}
-      </p>
+      <div class="status-block" aria-live="polite">
+        <p class="status" class:error={status.error} title={status.detail ?? undefined}>
+          <span class="swatch" aria-hidden="true"></span>
+          {status.text}
+        </p>
+        {#each notes as note (note)}
+          <p class="hint note">{note}</p>
+        {/each}
+      </div>
     {/if}
   </Switch>
 {/if}
@@ -244,14 +292,77 @@
     max-width: 220px;
   }
 
+  .modes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+
+  .modes legend {
+    margin-bottom: 6px;
+    padding: 0;
+  }
+
+  .mode {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-inset);
+    cursor: pointer;
+  }
+
+  .mode:hover {
+    border-color: var(--border-strong);
+  }
+
+  .mode.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .mode input {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    margin: 2px 0 0;
+  }
+
+  .mode-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .mode-name {
+    font-weight: 600;
+  }
+
+  .status-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 14px;
+  }
+
   .status {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin-top: 14px;
     color: var(--text-2);
     font-size: 0.88rem;
     font-weight: 600;
+  }
+
+  .note {
+    padding-left: 20px;
   }
 
   .status.error {

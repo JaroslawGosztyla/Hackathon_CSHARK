@@ -3,14 +3,28 @@
   <head>
     <meta charset="utf-8" />
     <script>
-      // The phase popup (/popup) and the screen tint (/tint) are transparent overlay windows: mark them before
-      // the first paint so they never flash the opaque app background (the tint window covers whole monitors).
-      if (/^\/(popup|tint)\/?$/.test(location.pathname)) document.documentElement.setAttribute("data-overlay", "");
+      // The phase popup (/popup) is a transparent overlay window: mark it before the first paint so it never
+      // flashes the opaque app background.
+      if (/^\/popup\/?$/.test(location.pathname)) document.documentElement.setAttribute("data-overlay", "");
+      // The theme of the last run (cached by $lib/themes), set before the first paint so a light theme does not
+      // flash dark at startup. The config stays the source of truth: the layouts apply it once it arrives.
+      try {
+        var cachedTheme = localStorage.getItem("focusmode.theme");
+        if (/^(midnight|vaporwave|lunar|autumn|dark|light|pixel)$/.test(cachedTheme || "")) {
+          document.documentElement.setAttribute("data-theme", cachedTheme);
+        }
+      } catch (e) {
+        // Storage unavailable: the default (dark) colours until the config arrives.
+      }
     </script>
     <style>
       html {
         background: #110b19;
         color-scheme: dark;
+      }
+      html[data-theme="light"] {
+        background: #eceef2;
+        color-scheme: light;
       }
       html[data-overlay],
       html[data-overlay] body {

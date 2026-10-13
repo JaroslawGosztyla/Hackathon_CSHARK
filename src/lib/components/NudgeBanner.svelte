@@ -41,8 +41,8 @@
     margin: 0 auto 16px;
     padding: 12px 14px 12px 16px;
     border-radius: var(--radius);
-    background: linear-gradient(90deg, rgba(242, 166, 90, 0.22), rgba(242, 166, 90, 0.08));
-    border: 1px solid rgba(242, 166, 90, 0.45);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
     animation: pop 0.25s ease-out;
   }
 

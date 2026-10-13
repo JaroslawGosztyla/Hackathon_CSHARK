@@ -1,8 +1,10 @@
 // All Polish UI texts live here (CLAUDE.md: code in English, UI in Polish).
 // No health promises: the app suggests, it never claims effects.
+import type { TipCategory } from "./tips";
 import type {
   AppError,
   BlocklistIssueCode,
+  ChimeSound,
   GameLauncher,
   IntegrationState,
   Language,
@@ -10,6 +12,7 @@ import type {
   NoiseColor,
   Phase,
   PopupKind,
+  TintMode,
 } from "./types";
 
 /** Polish plural form: 1 minuta, 2–4 minuty, 5+ minut (with the 12–14 exception). */
@@ -23,6 +26,8 @@ export function plural(n: number, one: string, few: string, many: string): strin
 }
 
 export const strings = {
+  /** Language of these texts; content meant for one country only (the Polish labour-law note) checks it. */
+  locale: "pl",
   appName: "FocusMode",
   tagline: "lofi sesje skupienia",
 
@@ -80,12 +85,19 @@ export const strings = {
     title: "Muzyka",
     sourceLabel: "Źródło muzyki",
     source: {
+      library: "Open Lo-Fi (wbudowana)",
       stream: "Stream",
       links: "Linki",
       folder: "Folder",
       noise: "Szum",
       none: "Cisza",
     } satisfies Record<MusicSourceKind, string>,
+    libraryName: "Open Lo-Fi",
+    libraryHint: "Spokojne utwory lo-fi dołączone do FocusMode — grają bez internetu.",
+    libraryCredit: "Muzyka: Open Lo-Fi, autor btahir, licencja CC0 (domena publiczna).",
+    libraryCreditLink: "github.com/btahir/open-lofi",
+    libraryCreditAria: "Strona Open Lo-Fi w serwisie GitHub (otwiera przeglądarkę)",
+    libraryEmpty: "Nie znaleziono wbudowanej muzyki — wybierz inne źródło.",
     streamUrl: "Adres strumienia (YouTube na żywo albo radio internetowe)",
     streamPlaceholder: "https://www.youtube.com/watch?v=…",
     lofiPreset: "Lofi Girl — radio na żywo",
@@ -181,18 +193,30 @@ export const strings = {
   breakView: {
     title: "Czas na przerwę",
     lead: "Odejdź na chwilę od biurka. Muzyka może grać dalej.",
+    reminderLabel: (n: number) => `Twoje przypomnienie · ${n}. przerwa`,
     suggestionLabel: "Propozycja na tę przerwę",
     another: "Inna propozycja",
-    suggestions: [
-      "Wstań i przejdź się kilka minut — choćby do kuchni i z powrotem.",
-      "Spleć dłonie nad głową i powoli sięgnij w górę, potem kolejno na boki.",
-      "Zrób kilka spokojnych krążeń barkami do przodu i do tyłu.",
-      "Podejdź do okna i popatrz chwilę na coś odległego.",
-      "Napełnij kubek wodą albo zaparz herbatę.",
-      "Otwórz okno i weź kilka spokojnych, głębokich oddechów.",
-      "Zaciśnij dłonie w pięści, a potem szeroko rozłóż palce. Powtórz kilka razy.",
-      "Przejdź się po schodach albo zrób kilka przysiadów, jeśli masz ochotę.",
-    ],
+    source: "Źródło",
+    sourceAria: (host: string) => `Źródło propozycji: ${host} (otwiera przeglądarkę)`,
+    categories: {
+      eyes: "Oczy",
+      stretch: "Rozciąganie",
+      move: "Ruch",
+      hydrate: "Woda",
+      breathe: "Oddech",
+      posture: "Stanowisko",
+      outside: "Na zewnątrz",
+      social: "Ludzie",
+      mind: "Chwila dla głowy",
+      tidy: "Otoczenie",
+    } satisfies Record<TipCategory, string>,
+  },
+
+  idleTips: {
+    practiceTitle: "Dobra praktyka",
+    lawTitle: "Warto wiedzieć",
+    source: "Źródło",
+    sourceAria: (host: string) => `Źródło: ${host} (otwiera przeglądarkę)`,
   },
 
   summary: {
@@ -213,6 +237,9 @@ export const strings = {
     idle: "Bezczynność",
     unknown: "Nieznane",
     barAria: (name: string, time: string, pct: string) => `${name}: ${time}, ${pct}`,
+    titlesHeading: "Najczęstsze okna",
+    titlesHint: "Najedź na aplikację albo przejdź do niej klawiszem Tab, aby zobaczyć jej najczęstsze okna.",
+    notSaved: "Ta sesja nie trafiła do historii — zapisywanie historii jest wyłączone w Ustawieniach.",
     history: "Historia",
     historyEmpty: "Historia jest pusta.",
     historyLegend: "Kolory aplikacji w historii",
@@ -274,16 +301,81 @@ export const strings = {
     keepAwake: "Nie usypiaj ekranu",
     keepAwakeHint: "Komputer i ekran nie przejdą w stan uśpienia w trakcie skupienia.",
 
-    trackingTitle: "Śledzenie aplikacji",
+    historyTitle: "Historia",
     trackApps: "Zapisuj, z których aplikacji korzystasz w trakcie skupienia",
-    trackAppsHint: "Co sekundę sprawdzana jest tylko nazwa procesu aktywnego okna. Dane zostają na tym komputerze.",
+    trackAppsHint:
+      "Co sekundę sprawdzana jest nazwa procesu aktywnego okna. Pasek zadań, menu Start i inne elementy pulpitu Windows są pomijane. Dane zostają na tym komputerze.",
+    trackTitles: "Zapisuj tytuły okien",
+    trackTitlesHint:
+      "Przy każdej aplikacji zapamiętuje kilka najczęstszych tytułów okien (np. kartę przeglądarki albo folder), żeby pokazać je po najechaniu na wykres w Podsumowaniu. Zostają tylko na tym komputerze i nie trafiają do logów.",
+    trackTitlesNeedsApps: "Działa, gdy zapisywanie aplikacji jest włączone.",
+    keepHistory: "Zapisuj historię sesji",
+    keepHistoryHint:
+      "Po wyłączeniu podsumowanie dalej pokaże się po Stop, ale sesja nie zostanie zapisana. Wcześniej zapisane sesje zostają, dopóki ich nie usuniesz.",
+    clearHistory: "Usuń całą historię",
+    clearHistoryHint: "Usuwa z tego komputera wszystkie zapisane sesje i ostatnie podsumowanie.",
+    clearHistoryTitle: "Usunąć całą historię?",
+    clearHistoryBody:
+      "Wszystkie zapisane sesje, wykresy aplikacji i tytuły okien zostaną trwale usunięte z tego komputera. Tego nie da się cofnąć.",
+    clearHistoryConfirm: "Tak, usuń historię",
+    historyCleared: "Historia została usunięta.",
+
+    appearanceTitle: "Wygląd",
 
     soundTitle: "Dźwięk",
+    chimeSound: "Dźwięk dzwonka",
+    chimeSounds: {
+      midnight: "Midnight — miękki dzwonek",
+      vaporwave: "Vaporwave — syntezatorowy akord",
+      lunar: "Lunar — szklane tony",
+      autumn: "Autumn — drewniana marimba",
+      classic: "Klasyczny — ding-dong",
+      soft: "Delikatny — łagodny ton",
+      chiptune: "8-bit — arpeggio",
+      custom: "Własny…",
+    } satisfies Record<ChimeSound, string>,
+    chimeSoundHint: "Nazwy pasują do motywów wyglądu, ale dźwięk możesz wybrać niezależnie od motywu.",
+    customChimes: "Własne dźwięki",
+    customBreak: "Początek przerwy",
+    customFocus: "Początek skupienia (opcjonalnie)",
+    customNone: "Nie wybrano pliku",
+    customDefaultFallback: "Bez własnego pliku zagra dźwięk Midnight.",
+    customBreakUsesFocus: "Bez osobnego pliku zagra ten sam dźwięk co na początku skupienia.",
+    customFocusUsesBreak: "Bez osobnego pliku zagra ten sam dźwięk co na początku przerwy.",
+    customPick: "Wybierz plik…",
+    customChange: "Zmień plik…",
+    customPickTitle: (label: string) => `Wybierz dźwięk: ${label}`,
+    customFilter: "Dźwięk (mp3, wav, ogg, flac, m4a)",
+    customRemove: "Usuń",
+    customRemoveAria: (label: string) => `Usuń własny dźwięk: ${label}`,
+    customHint: "Pliki mp3, wav, ogg, flac lub m4a do 10 MB. FocusMode kopiuje je do swojego folderu danych.",
+    customImported: "Dodano własny dźwięk.",
     chimeVolume: "Głośność dzwonka",
     testChime: "Testuj dzwonek:",
     testBreak: "przerwa",
     testFocus: "skupienie",
     musicVolume: "Głośność muzyki",
+
+    remindersTitle: "Przypomnienia w przerwach",
+    remindersLead:
+      "Własna lista na kolejne przerwy w sesji, np. 1. przerwa: rozciąganie, 2.: woda i spacer z psem, 3.: obiad. Przypomnienie pokaże się na ekranie przerwy i w okienku FocusMode.",
+    reminderLabel: (n: number) => `${n}. przerwa`,
+    reminderPlaceholders: ["np. rozciąganie", "np. woda i spacer z psem", "np. obiad"],
+    reminderPlaceholderOther: "Bez przypomnienia",
+    reminderAdd: "Dodaj przerwę",
+    reminderRemove: (n: number) => `Usuń przypomnienie dla ${n}. przerwy`,
+    reminderUp: (n: number) => `Przesuń przypomnienie ${n}. przerwy wyżej`,
+    reminderDown: (n: number) => `Przesuń przypomnienie ${n}. przerwy niżej`,
+    reminderChars: (used: number, max: number) => `${used}/${max}`,
+    reminderCharsAria: (used: number, max: number) => `Wpisano ${used} z ${max} znaków`,
+    reminderMoved: (n: number) => `Przeniesiono na ${n}. pozycję.`,
+    reminderRemoved: "Usunięto przypomnienie.",
+    remindersEmpty: "Brak przypomnień — w przerwach zobaczysz tylko propozycje.",
+    remindersFull: (max: number) => `Lista ma już ${max} ${plural(max, "pozycję", "pozycje", "pozycji")} — to maksimum.`,
+    remindersRepeat: "Powtarzaj listę od początku",
+    remindersRepeatHint: "Po ostatniej pozycji lista zaczyna się od nowa. Bez tego kolejne przerwy nie mają przypomnienia.",
+    remindersInvalid: (max: number, chars: number) =>
+      `Najwięcej ${max} przypomnień, każde do ${chars} ${plural(chars, "znaku", "znaków", "znaków")}.`,
 
     systemTitle: "System",
     launchOnLogin: "Uruchamiaj FocusMode przy logowaniu",
@@ -313,7 +405,22 @@ export const strings = {
     tintTitle: "Ciepłe kolory ekranu",
     tint: "Ocieplaj kolory ekranu według pory dnia",
     tintHint:
-      "Wieczorem nakłada na ekran półprzezroczystą, ciepłą warstwę, a rano ją zdejmuje. Nie zmienia ustawień monitora ani karty graficznej.",
+      "Wieczorem stopniowo ociepla barwy ekranu, a rano przywraca zwykłe. Ocieplenie działa już po złożeniu obrazu, więc nie trafia na zrzuty ekranu ani nagrania.",
+    tintMode: "Sposób ocieplania",
+    tintModes: {
+      nightLight: "Oświetlenie nocne Windows (zalecane)",
+      gamma: "Bezpośrednio na karcie graficznej (gamma)",
+    } satisfies Record<TintMode, string>,
+    tintModeShort: {
+      nightLight: "Oświetlenie nocne Windows",
+      gamma: "gamma karty graficznej",
+    } satisfies Record<TintMode, string>,
+    tintModeHints: {
+      nightLight:
+        "Wbudowane w Windows „Oświetlenie nocne”. FocusMode włącza je według harmonogramu i ustawia jego siłę — bez uprawnień administratora. W Windows 11 24H2 i nowszych nie da się nim sterować z zewnątrz, więc FocusMode ociepla wtedy ekran przez gammę.",
+      gamma:
+        "Zmienia krzywą kolorów każdego monitora, więc działa na cały ekran, także pasek zadań i gry pełnoekranowe. Nie działa na ekranach w trybie HDR, a Windows może nie pozwolić na bardzo ciepłe ustawienia.",
+    } satisfies Record<TintMode, string>,
     tintFrom: "Od",
     tintTo: "Do",
     tintScheduleHint: "Godziny mogą obejmować północ, np. od 18:00 do 9:00.",
@@ -325,7 +432,10 @@ export const strings = {
     tintStatusOff: "Teraz: wyłączone",
     tintStatusLevel: (pct: number) => `Teraz: ${pct}%`,
     tintStatusPreview: (pct: number) => `Podgląd: ${pct}%`,
-    tintStatusError: "Nie udało się nałożyć ciepłej warstwy — spróbuję ponownie za chwilę.",
+    tintStatusFallback: (mode: string) => `Wybrany sposób jest niedostępny — używam: ${mode}.`,
+    tintStatusCapped: "Windows nie pozwolił na pełną siłę — działa słabsze ocieplenie.",
+    tintStatusError: "Nie udało się ocieplić kolorów ekranu — spróbuję ponownie za chwilę.",
+    tintStatusRestoreError: "Nie udało się przywrócić zwykłych kolorów ekranu — spróbuję ponownie za chwilę.",
     tintTimeInvalid: "Podaj godzinę, np. 18:00.",
     tintSameTimes: "Godzina „Do” musi być inna niż „Od”.",
     tintStrengthRange: "Podaj siłę od 0 do 100.",
@@ -353,9 +463,13 @@ export const strings = {
       interrupted: "Sesja wstrzymana",
       launchersClosed: "Zamknięto launchery gier",
     } satisfies Record<PopupKind, string>,
-    breakMessage: (time: string) => `Przerwa: ${time} — wstań, rozciągnij się, muzyka gra dalej.`,
-    breakMessageMusicPaused: (time: string) => `Przerwa: ${time} — wstań, rozciągnij się, muzyka poczeka.`,
-    breakMessageNoMusic: (time: string) => `Przerwa: ${time} — wstań i rozciągnij się.`,
+    /** Break popup with a tip: the length goes to the title, the reminder (or one of these lines) under it. */
+    breakTitle: (time: string) => `Czas na przerwę · ${time}`,
+    breakMusicOn: "Muzyka gra dalej — odejdź na chwilę od biurka.",
+    breakMusicPaused: "Muzyka poczeka — odejdź na chwilę od biurka.",
+    breakNoMusic: "Odejdź na chwilę od biurka.",
+    reminderPrefix: "Twoje przypomnienie:",
+    tipPrefix: (category: string) => `Propozycja (${category}):`,
     focusMessage: (cycle: number, time: string) => `Cykl ${cycle}: ${time} skupienia. Osłony włączone.`,
     focusMessageNoShields: (cycle: number, time: string) => `Cykl ${cycle}: ${time} skupienia.`,
     interrupted: "Komputer był uśpiony — wznów, kiedy wrócisz.",
@@ -459,7 +573,14 @@ export const strings = {
       "blocklist.read": "Nie udało się odczytać pliku websiteblacklist.txt — działa poprzednia lista stron.",
       "blocklist.open": "Nie udało się otworzyć websiteblacklist.txt w edytorze tekstu — otwórz plik ręcznie (ścieżka jest w Ustawieniach).",
       "shields.launchers": "Nie udało się zamknąć któregoś z launcherów gier — sesja trwa dalej.",
-      "tint.overlay": "Nie udało się nałożyć ciepłej warstwy na ekran.",
+      "tint.apply": "Nie udało się ocieplić kolorów ekranu — spróbuję ponownie za chwilę.",
+      "tint.restore": "Nie udało się przywrócić zwykłych kolorów ekranu po poprzednim uruchomieniu.",
+      "chime.format": "Ten format nie jest obsługiwany — wybierz plik mp3, wav, ogg, flac albo m4a.",
+      "chime.read": "Nie udało się odczytać wybranego pliku.",
+      "chime.tooLarge": "Plik jest za duży — dzwonek może mieć najwyżej 10 MB.",
+      "chime.save": "Nie udało się zapisać dźwięku w folderze danych FocusMode.",
+      "chime.decode": "Tego pliku nie da się odtworzyć jako dźwięku — wybierz inny.",
+      "music.library": "Nie udało się wczytać wbudowanej muzyki.",
       "popup.window": "Nie udało się pokazać okienka FocusMode.",
       autostart: "Nie udało się zmienić uruchamiania przy logowaniu.",
       "session.unavailable": "Sesja nie odpowiada — uruchom aplikację ponownie.",
@@ -479,6 +600,7 @@ export const strings = {
       session: "Problem z sesją.",
       tracker: "Problem ze śledzeniem aplikacji.",
       tint: "Problem z ciepłymi kolorami ekranu.",
+      chime: "Problem z własnym dźwiękiem dzwonka.",
       popup: "Problem z okienkiem FocusMode.",
       launchers: "Problem z zamykaniem launcherów gier.",
       window: "Problem z oknem aplikacji.",
@@ -500,8 +622,18 @@ export const strings = {
     "tint.endMinutes": "koniec ciepłych kolorów",
     "tint.strength": "siła ciepłych kolorów",
     "tint.transitionMinutes": "płynne przejście",
+    "tint.mode": "sposób ocieplania",
     language: "język",
+    theme: "motyw",
+    chimeSound: "dźwięk dzwonka",
+    "customChimes.breakFile": "dźwięk początku przerwy",
+    "customChimes.focusFile": "dźwięk początku skupienia",
+    breakReminders: "przypomnienia w przerwach",
   } as Record<string, string>,
+
+  dialog: {
+    cancel: "Anuluj",
+  },
 
   /** Product names; the order is the order of the checkboxes in Settings (focus-core `launchers::ALL`). */
   launchers: {

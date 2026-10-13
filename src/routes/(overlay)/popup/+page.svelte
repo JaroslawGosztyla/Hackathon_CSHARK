@@ -8,6 +8,7 @@
   import AppLogo from "$lib/components/AppLogo.svelte";
   import { formatDuration } from "$lib/format";
   import { launcherList, strings } from "$lib/strings";
+  import { CATEGORY_ICON, pickBreakTip } from "$lib/tips";
   import type { Config, PopupInfo, PopupKind } from "$lib/types";
 
   /** How long the popup stays; the countdown pauses while the pointer or the keyboard focus is on it. */
@@ -38,6 +39,11 @@
   let acted = $state(false);
   /** Countdown bar, 1 → 0. */
   let progress = $state(1);
+  /**
+   * Session id for the break tip, fetched per popup (PopupInfo has none). The tip waits for it, so this popup and
+   * the main window's break card pick the same tip.
+   */
+  let tipSession = $state<{ revision: number; sessionId: string | null } | null>(null);
 
   let held = false;
   let remainingMs = VISIBLE_MS;
@@ -50,15 +56,30 @@
   const visible = $derived(kind !== null && !hidden);
   const canSkip = $derived(kind === "breakStarted" || kind === "focusStarted");
 
+  const title = $derived.by((): string => {
+    if (!info?.kind) return "";
+    return info.kind === "breakStarted" ? p.breakTitle(formatDuration(info.phaseSecs)) : p.title[info.kind];
+  });
+
+  /** The user's own reminder for this break: the main line of a break popup. */
+  const reminder = $derived(info?.kind === "breakStarted" ? (info.reminder?.trim() ?? "") || null : null);
+
+  const tip = $derived.by(() => {
+    const current = info;
+    if (current?.kind !== "breakStarted" || tipSession?.revision !== current.revision) return null;
+    return pickBreakTip(tipSession.sessionId, current.cycle, current.phaseSecs);
+  });
+
   const message = $derived.by((): string => {
     const current = info;
     if (!current?.kind) return "";
     const time = formatDuration(current.phaseSecs);
     switch (current.kind) {
       case "breakStarted":
-        if (cfg?.music.source === "none") return p.breakMessageNoMusic(time);
-        if (cfg?.music.pauseDuringBreak) return p.breakMessageMusicPaused(time);
-        return p.breakMessage(time);
+        if (reminder) return reminder;
+        if (cfg?.music.source === "none") return p.breakNoMusic;
+        if (cfg?.music.pauseDuringBreak) return p.breakMusicPaused;
+        return p.breakMusicOn;
       case "focusStarted":
         return cfg && !anyShield(cfg) ? p.focusMessageNoShields(current.cycle, time) : p.focusMessage(current.cycle, time);
       case "interrupted":
@@ -86,6 +107,17 @@
     }
   }
 
+  async function refreshTipSession(revision: number): Promise<void> {
+    let sessionId: string | null = null;
+    try {
+      sessionId = (await api.getSnapshot()).sessionId;
+    } catch (e) {
+      // Without it the tip is still picked (from the break number alone); it may differ from the main window's.
+      warn(e);
+    }
+    if (info?.revision === revision) tipSession = { revision, sessionId };
+  }
+
   function apply(next: PopupInfo): void {
     stopCountdown();
     info = next;
@@ -101,6 +133,7 @@
     progress = 1;
     if (!held) runCountdown();
     if (next.kind === "breakStarted" || next.kind === "focusStarted") void refreshConfig();
+    if (next.kind === "breakStarted") void refreshTipSession(next.revision);
   }
 
   // ---------------------------------------------------------------------------
@@ -271,8 +304,18 @@
       </div>
 
       <div class="content">
-        <p class="title"><span class="sr-only">{strings.appName}: </span>{p.title[kind]}</p>
-        <p class="message" title={message}>{message}</p>
+        <p class="title"><span class="sr-only">{strings.appName}: </span>{title}</p>
+        <p class="message" class:reminder class:single={kind === "breakStarted"} title={message}>
+          {#if reminder}<span class="sr-only">{p.reminderPrefix} </span>{/if}{message}
+        </p>
+        {#if kind === "breakStarted"}
+          <p class="tip" title={tip?.pl}>
+            {#if tip}
+              <span class="tip-icon" aria-hidden="true">{CATEGORY_ICON[tip.category]}</span>
+              <span class="sr-only">{p.tipPrefix(strings.breakView.categories[tip.category])} </span>{tip.pl}
+            {/if}
+          </p>
+        {/if}
         <div class="actions">
           <button type="button" class="btn btn-sm btn-primary" disabled={busy || acted} onclick={() => act("showMain")}>
             {p.showMain}
@@ -321,15 +364,14 @@
     padding: 12px 14px 14px 12px;
     overflow: hidden;
     border-radius: var(--radius);
-    border: 1px solid var(--border-strong);
+    border: var(--border-w) solid var(--border-strong);
     background:
-      radial-gradient(260px 150px at 100% 0%, rgba(61, 34, 64, 0.95) 0%, transparent 72%),
-      radial-gradient(220px 140px at 0% 100%, rgba(36, 26, 61, 0.9) 0%, transparent 70%),
+      radial-gradient(260px 150px at 100% 0%, color-mix(in srgb, var(--glow-warm) 95%, transparent) 0%, transparent 72%),
+      radial-gradient(220px 140px at 0% 100%, color-mix(in srgb, var(--glow-cool) 90%, transparent) 0%, transparent 70%),
       linear-gradient(180deg, var(--surface-raised), var(--surface-solid));
     color: var(--text);
-    box-shadow:
-      0 6px 16px rgba(5, 2, 10, 0.5),
-      0 1px 3px rgba(5, 2, 10, 0.4);
+    /* Small enough to fit in the 8 px around the card (the window itself is transparent). */
+    box-shadow: var(--shadow-sm);
     animation: slide-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
@@ -344,7 +386,7 @@
     width: 46px;
     height: 46px;
     margin-top: 2px;
-    border-radius: 14px;
+    border-radius: calc(var(--radius-sm) * 7 / 6);
     background: var(--accent-soft);
     font-size: 1.5rem;
     line-height: 1;
@@ -398,6 +440,31 @@
     overflow: hidden;
   }
 
+  /* A break popup has a tip line too: one line each keeps the card inside its fixed-size window. */
+  .message.single {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+  }
+
+  .message.reminder {
+    color: var(--text);
+    font-weight: 650;
+  }
+
+  .tip {
+    min-height: 1.35em;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tip-icon {
+    margin-right: 4px;
+  }
+
   .actions {
     display: flex;
     flex-wrap: wrap;
@@ -438,7 +505,7 @@
     right: 0;
     bottom: 0;
     height: 3px;
-    background: rgba(255, 236, 214, 0.06);
+    background: var(--track);
   }
 
   .countdown span {

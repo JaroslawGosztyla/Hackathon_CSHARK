@@ -2,11 +2,18 @@
   import HistoryList from "$lib/components/HistoryList.svelte";
   import UsageChart from "$lib/components/UsageChart.svelte";
   import { formatDuration, formatSpan } from "$lib/format";
+  import { config } from "$lib/state/config.svelte";
   import { summary } from "$lib/state/summary.svelte";
   import { strings } from "$lib/strings";
 
   const selected = $derived(summary.selected);
   const isLast = $derived(selected !== null && selected.sessionId === summary.last?.sessionId);
+  /** History saving is off and the last session is not in the stored history. */
+  const notSaved = $derived(
+    isLast &&
+      config.value?.keepHistory === false &&
+      !summary.history.some((s) => s.sessionId === selected?.sessionId),
+  );
 </script>
 
 <svelte:head>
@@ -33,6 +40,7 @@
         <div>
           <h2 id="session-title">{isLast ? strings.summary.lastSession : strings.summary.selectedSession}</h2>
           <p class="muted small tabular">{formatSpan(selected.startedAtMs, selected.endedAtMs)}</p>
+          {#if notSaved}<p class="hint not-saved">{strings.summary.notSaved}</p>{/if}
         </div>
         <div class="row">
           {#if selected.demo}<span class="badge">{strings.summary.demo}</span>{/if}
@@ -129,5 +137,9 @@
 
   .privacy {
     margin-top: 16px;
+  }
+
+  .not-saved {
+    margin-top: 4px;
   }
 </style>

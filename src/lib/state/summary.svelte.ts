@@ -1,6 +1,7 @@
 // Last session summary + history (newest first).
 import * as api from "$lib/api";
 import type { SessionSummary } from "$lib/types";
+import { config } from "./config.svelte";
 import { toasts } from "./toasts.svelte";
 
 export const HISTORY_LIMIT = 20;
@@ -17,9 +18,14 @@ class SummaryStore {
     return this.history.find((s) => s.sessionId === this.selectedId) ?? this.last;
   });
 
+  /** Bumped by `clear()`, so a load that started before it cannot bring the deleted sessions back. */
+  private generation = 0;
+
   async load(): Promise<void> {
+    const generation = this.generation;
     try {
       const [last, history] = await Promise.all([api.getLastSummary(), api.listHistory(HISTORY_LIMIT)]);
+      if (generation !== this.generation) return;
       // A session that ended while the list was loading is already in `history` via `add()`; keep it,
       // and never show one session id twice (keyed each blocks would throw on duplicates).
       const seen = new Set<string>();
@@ -39,16 +45,28 @@ class SummaryStore {
     }
   }
 
-  /** A session just ended (`session://summary`). */
+  /** A session just ended (`session://summary`). With `keepHistory` off the shell did not store it: no history row. */
   add(summary: SessionSummary): void {
     this.last = summary;
     this.selectedId = null;
-    this.history = [summary, ...this.history.filter((s) => s.sessionId !== summary.sessionId)].slice(0, HISTORY_LIMIT);
+    if (config.value?.keepHistory !== false) {
+      this.history = [summary, ...this.history.filter((s) => s.sessionId !== summary.sessionId)].slice(0, HISTORY_LIMIT);
+    }
     this.loaded = true;
   }
 
   select(sessionId: string | null): void {
     this.selectedId = sessionId === this.last?.sessionId ? null : sessionId;
+  }
+
+  /** Deletes the whole history in the shell (the UI confirmed first), then empties the views. Throws on failure. */
+  async clear(): Promise<void> {
+    await api.clearHistory();
+    this.generation++;
+    this.last = null;
+    this.history = [];
+    this.selectedId = null;
+    this.loaded = true;
   }
 }
 

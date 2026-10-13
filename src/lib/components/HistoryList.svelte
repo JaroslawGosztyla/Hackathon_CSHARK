@@ -14,10 +14,10 @@
 
   let { history, selectedId, onselect }: Props = $props();
 
-  /** Validated dark-surface categorical steps (dataviz reference palette), in fixed order. */
-  const SLOTS = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#9085e9", "#e66767"];
-  const OTHER_COLOR = "#8a7f93";
-  const IDLE_COLOR = "#4f4658";
+  /** Categorical steps of the current theme (`--chart-1..7` in app.css), in fixed order. */
+  const SLOTS = [1, 2, 3, 4, 5, 6, 7].map((n) => `var(--chart-${n})`);
+  const OTHER_COLOR = "var(--chart-other)";
+  const IDLE_COLOR = "var(--chart-idle)";
 
   const normalize = (process: string) => process.toLowerCase();
 
@@ -210,7 +210,7 @@
 
   .seg.empty {
     flex-grow: 1;
-    background: rgba(255, 236, 214, 0.06);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
   }
 
   @media (max-width: 640px) {

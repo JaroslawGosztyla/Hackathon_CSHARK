@@ -58,7 +58,7 @@
   }
 
   .toast.error {
-    border-color: rgba(242, 148, 134, 0.45);
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
   }
 
   .toast.error .dot {

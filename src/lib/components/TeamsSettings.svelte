@@ -186,7 +186,7 @@
     padding: 14px 16px;
     border-radius: var(--radius-sm);
     background: var(--accent-soft);
-    border: 1px solid rgba(242, 166, 90, 0.4);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   .code-row {

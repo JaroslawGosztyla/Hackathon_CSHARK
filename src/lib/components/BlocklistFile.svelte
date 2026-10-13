@@ -156,7 +156,7 @@
     padding: 10px 12px;
     border-radius: var(--radius-sm);
     background: var(--danger-soft);
-    border: 1px solid rgba(242, 148, 134, 0.4);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
   }
 
   .issues-title {

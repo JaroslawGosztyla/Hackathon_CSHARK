@@ -68,7 +68,7 @@
     height: 26px;
     margin: 2px 0 0;
     border-radius: 13px;
-    background: rgba(255, 236, 214, 0.14);
+    background: color-mix(in srgb, var(--text) 14%, transparent);
     border: 1px solid var(--border-strong);
     cursor: pointer;
     transition: background-color 0.18s ease;

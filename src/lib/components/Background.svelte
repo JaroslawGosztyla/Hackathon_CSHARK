@@ -1,134 +1,60 @@
 <script lang="ts">
-  // Decorative night scene: soft moon glow, a few stars and gentle rain. Purely visual (aria-hidden),
-  // static when the user prefers reduced motion.
-  const DROPS = 46;
-  const STARS = 28;
+  // Window background: the theme's sky (`--app-bg`) plus its decorations. Purely visual (aria-hidden). The layer is
+  // a little wider than the window and pans left as the user moves right through the tabs (`pan` = tab index),
+  // so switching tabs feels like moving along one scene. Static when the user prefers reduced motion.
+  import type { Component } from "svelte";
+  import type { Theme } from "$lib/themes";
+  import Autumn from "./backgrounds/Autumn.svelte";
+  import Lunar from "./backgrounds/Lunar.svelte";
+  import Midnight from "./backgrounds/Midnight.svelte";
+  import Pixel from "./backgrounds/Pixel.svelte";
+  import Vaporwave from "./backgrounds/Vaporwave.svelte";
 
-  // Small deterministic PRNG so the scene does not reshuffle between reloads.
-  function mulberry32(seed: number) {
-    let a = seed;
-    return () => {
-      a = (a + 0x6d2b79f5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
+  let { theme, pan = 0 }: { theme: Theme; pan?: number } = $props();
 
-  const rand = mulberry32(20261012);
-  const drops = Array.from({ length: DROPS }, () => ({
-    left: rand() * 100,
-    delay: -rand() * 6,
-    duration: 2.6 + rand() * 2.4,
-    length: 40 + rand() * 60,
-    opacity: 0.08 + rand() * 0.16,
-  }));
-  const stars = Array.from({ length: STARS }, () => ({
-    left: rand() * 100,
-    top: rand() * 45,
-    size: rand() < 0.2 ? 2 : 1,
-    delay: -rand() * 8,
-  }));
+  /** Basic dark and basic light are plain on purpose: no decorations. */
+  const SCENES: Record<Theme, Component | null> = {
+    midnight: Midnight,
+    vaporwave: Vaporwave,
+    lunar: Lunar,
+    autumn: Autumn,
+    dark: null,
+    light: null,
+    pixel: Pixel,
+  };
+
+  const Scene = $derived(SCENES[theme]);
 </script>
 
-<div class="scene" aria-hidden="true">
-  <div class="moon"></div>
-  {#each stars as s, i (i)}
-    <span
-      class="star"
-      style:left="{s.left}%"
-      style:top="{s.top}%"
-      style:width="{s.size}px"
-      style:height="{s.size}px"
-      style:animation-delay="{s.delay}s"
-    ></span>
-  {/each}
-  {#each drops as d, i (i)}
-    <span
-      class="drop"
-      style:left="{d.left}%"
-      style:height="{d.length}px"
-      style:opacity={d.opacity}
-      style:animation-delay="{d.delay}s"
-      style:animation-duration="{d.duration}s"
-    ></span>
-  {/each}
-  <div class="haze"></div>
+<div class="backdrop" aria-hidden="true" style:--pan={pan}>
+  {#if Scene}
+    <Scene />
+  {/if}
 </div>
 
 <style>
-  .scene {
+  .backdrop {
+    /* One tab step of the pan; the layer is two steps wider than the window so its edge never shows. */
+    --pan-step: 2.5vw;
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: calc(100% + 2 * var(--pan-step) + 2px);
     z-index: 0;
     pointer-events: none;
     overflow: hidden;
-  }
-
-  .moon {
-    position: absolute;
-    top: 7%;
-    right: 9%;
-    width: 110px;
-    height: 110px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 38% 38%, #ffe8c4 0%, #f6c98d 45%, rgba(246, 201, 141, 0) 72%);
-    opacity: 0.22;
-    filter: blur(1px);
-    box-shadow: 0 0 120px 40px rgba(255, 196, 120, 0.08);
-  }
-
-  .star {
-    position: absolute;
-    border-radius: 50%;
-    background: #fff3e0;
-    opacity: 0.35;
-    animation: twinkle 7s ease-in-out infinite;
-  }
-
-  .drop {
-    position: absolute;
-    top: -120px;
-    width: 1px;
-    background: linear-gradient(180deg, rgba(220, 210, 255, 0) 0%, rgba(220, 210, 255, 0.9) 100%);
-    animation-name: fall;
-    animation-timing-function: linear;
-    animation-iteration-count: infinite;
+    background: var(--app-bg);
+    background-color: var(--bg-0);
+    transform: translate3d(calc(var(--pan, 0) * var(--pan-step) * -1), 0, 0);
+    transition: transform var(--pan-ms) var(--ease-slide);
     will-change: transform;
   }
 
-  .haze {
-    position: absolute;
-    inset: auto 0 0 0;
-    height: 40%;
-    background: linear-gradient(180deg, rgba(17, 11, 25, 0) 0%, rgba(17, 11, 25, 0.55) 100%);
-  }
-
-  @keyframes fall {
-    from {
-      transform: translate3d(0, 0, 0);
-    }
-    to {
-      transform: translate3d(-40px, 115vh, 0);
-    }
-  }
-
-  @keyframes twinkle {
-    0%,
-    100% {
-      opacity: 0.15;
-    }
-    50% {
-      opacity: 0.55;
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .drop {
-      display: none;
-    }
-    .star {
-      animation: none;
+    .backdrop {
+      transform: none;
+      transition: none;
     }
   }
 </style>

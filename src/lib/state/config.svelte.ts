@@ -12,6 +12,26 @@ const BREAK_MINUTES = { min: 1, max: 120 } as const;
 const TINT = { minutesPerDay: 1440, maxStrength: 100, maxTransitionMinutes: 180 } as const;
 /** Choices offered for the tint fade (minutes); a different stored value is shown as an extra option. */
 export const TINT_TRANSITION_PRESETS = [0, 15, 30, 60, 90] as const;
+/** Mirrors focus-core `config.rs` (MAX_BREAK_REMINDERS, MAX_REMINDER_CHARS; length counted in characters). */
+const REMINDERS = { maxCount: 24, maxChars: 160 } as const;
+
+/**
+ * The user's reminder for break number `breakNumber` (1-based; the session's `cycle` during that break).
+ * Mirrors focus-core `reminder_for_break`: empty entries mean "no reminder"; past the end of the list it repeats
+ * from the start only when `repeat` is on.
+ */
+export function reminderForBreak(reminders: readonly string[], repeat: boolean, breakNumber: number): string | null {
+  const n = Math.trunc(breakNumber);
+  if (!Number.isFinite(n) || n < 1 || reminders.length === 0) return null;
+  const index = n - 1 < reminders.length ? n - 1 : repeat ? (n - 1) % reminders.length : -1;
+  const text = index >= 0 ? (reminders[index] ?? "").trim() : "";
+  return text.length > 0 ? text : null;
+}
+
+/** Length in characters (code points), like Rust's `chars().count()`. */
+export function charCount(text: string): number {
+  return Array.from(text).length;
+}
 
 function inRange(n: number, min: number, max: number): boolean {
   return Number.isInteger(n) && n >= min && n <= max;
@@ -37,10 +57,19 @@ export function validateConfig(c: Config): Record<string, string> {
   if (!inRange(t.transitionMinutes, 0, TINT.maxTransitionMinutes)) {
     errors["tint.transitionMinutes"] = strings.settings.tintTransitionRange;
   }
+  const reminders = c.breakReminders;
+  if (reminders.length > REMINDERS.maxCount || reminders.some((r) => charCount(r.trim()) > REMINDERS.maxChars)) {
+    errors.breakReminders = strings.settings.remindersInvalid(REMINDERS.maxCount, REMINDERS.maxChars);
+  }
   return errors;
 }
 
-export const LIMITS = { focusMinutes: FOCUS_MINUTES, breakMinutes: BREAK_MINUTES, tint: TINT } as const;
+export const LIMITS = {
+  focusMinutes: FOCUS_MINUTES,
+  breakMinutes: BREAK_MINUTES,
+  tint: TINT,
+  reminders: REMINDERS,
+} as const;
 
 function copyField<K extends keyof Config>(target: Config, source: Config, key: K): void {
   target[key] = source[key];

@@ -1,19 +1,36 @@
+<script lang="ts" module>
+  import { SvelteMap } from "svelte/reactivity";
+
+  /** "Inna propozycja" steps per break (session + cycle), so leaving the page and coming back keeps the tip. */
+  const offsets = new SvelteMap<string, number>();
+</script>
+
 <script lang="ts">
+  // Break screen: the user's own reminder for this break (if any), then one research-based tip picked
+  // deterministically per (session, break) — the phase popup shows the same one.
+  import SourceLink from "$lib/components/SourceLink.svelte";
+  import { config, reminderForBreak } from "$lib/state/config.svelte";
+  import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
+  import { CATEGORY_ICON, pickBreakTip, STRETCH_FOOTNOTE } from "$lib/tips";
 
-  const ROTATE_MS = 45_000;
-  const suggestions = strings.breakView.suggestions;
+  const b = strings.breakView;
 
-  let index = $state(Math.floor(Math.random() * suggestions.length));
+  const snap = $derived(session.snapshot);
+  const breakKey = $derived(`${snap.sessionId ?? ""}:${snap.cycle}`);
+  const offset = $derived(offsets.get(breakKey) ?? 0);
 
-  function another() {
-    index = (index + 1) % suggestions.length;
-  }
-
-  $effect(() => {
-    const id = setInterval(another, ROTATE_MS);
-    return () => clearInterval(id);
+  const reminder = $derived.by(() => {
+    const cfg = config.value;
+    return cfg ? reminderForBreak(cfg.breakReminders, cfg.repeatReminders, snap.cycle) : null;
   });
+  const tip = $derived(pickBreakTip(snap.sessionId, snap.cycle, snap.phaseTotalSecs, offset));
+
+  function another(): void {
+    // Only the current break's entry matters; older ones are dropped so the map stays tiny.
+    for (const key of offsets.keys()) if (key !== breakKey) offsets.delete(key);
+    offsets.set(breakKey, offset + 1);
+  }
 </script>
 
 <section class="card break-card" aria-labelledby="break-title">
@@ -32,13 +49,36 @@
     </svg>
   </div>
   <div class="content">
-    <h2 id="break-title">{strings.breakView.title}</h2>
-    <p class="secondary">{strings.breakView.lead}</p>
-    <div class="suggestion">
-      <p class="label">{strings.breakView.suggestionLabel}</p>
-      <p class="text">{suggestions[index]}</p>
-    </div>
-    <button type="button" class="btn btn-sm" onclick={another}>{strings.breakView.another}</button>
+    <h2 id="break-title">{b.title}</h2>
+    <p class="secondary">{b.lead}</p>
+
+    {#if reminder}
+      <div class="reminder">
+        <p class="label">{b.reminderLabel(snap.cycle)}</p>
+        <p class="reminder-text">{reminder}</p>
+      </div>
+    {/if}
+
+    {#if tip}
+      <div class="suggestion" aria-live="polite" aria-atomic="true">
+        <p class="label">
+          <span class="icon" aria-hidden="true">{CATEGORY_ICON[tip.category]}</span>
+          <span>{b.categories[tip.category]}</span>
+          <span class="sep" aria-hidden="true">·</span>
+          <span class="muted-label">{b.suggestionLabel}</span>
+        </p>
+        <p class="text">{tip.pl}</p>
+        {#if tip.category === "stretch"}
+          <p class="footnote">{STRETCH_FOOTNOTE.pl}</p>
+        {/if}
+      </div>
+      <div class="row actions">
+        <button type="button" class="btn btn-sm" onclick={another}>{b.another}</button>
+        {#if tip.source}
+          <SourceLink url={tip.source} label={b.source} aria={b.sourceAria} />
+        {/if}
+      </div>
+    {/if}
   </div>
 </section>
 
@@ -47,8 +87,8 @@
     display: flex;
     gap: 20px;
     align-items: flex-start;
-    border-color: rgba(143, 207, 176, 0.3);
-    background: linear-gradient(135deg, rgba(143, 207, 176, 0.1), var(--surface) 60%);
+    border-color: color-mix(in srgb, var(--break) 30%, transparent);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--break) 10%, transparent), var(--surface) 60%);
   }
 
   .illustration {
@@ -81,8 +121,24 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    align-items: flex-start;
+    align-items: stretch;
+    flex: 1;
     min-width: 0;
+  }
+
+  .reminder {
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    background: var(--break-soft);
+    border: 1px solid color-mix(in srgb, var(--break) 40%, transparent);
+  }
+
+  .reminder-text {
+    font-size: 1.25rem;
+    font-weight: 650;
+    line-height: 1.35;
+    color: var(--text);
+    overflow-wrap: anywhere;
   }
 
   .suggestion {
@@ -93,6 +149,10 @@
   }
 
   .label {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
     font-size: 0.8rem;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -101,8 +161,28 @@
     margin-bottom: 4px;
   }
 
+  .icon {
+    font-size: 1rem;
+    letter-spacing: 0;
+  }
+
+  .sep,
+  .muted-label {
+    color: var(--text-muted);
+  }
+
   .text {
     font-size: 1.05rem;
+  }
+
+  .footnote {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+
+  .actions {
+    gap: 14px;
   }
 
   @media (max-width: 560px) {

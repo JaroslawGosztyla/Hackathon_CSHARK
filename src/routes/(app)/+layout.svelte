@@ -1,8 +1,10 @@
 <script lang="ts">
-  // Shell of the main window. The overlay windows (/popup, /tint) use the (overlay) group instead, so the
+  // Shell of the main window. The overlay window (/popup) uses the (overlay) group instead, so the
   // music player, the subscriptions and the toasts run in exactly one window.
   import "../../app.css";
   import { onMount, type Snippet } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
+  import { onNavigate } from "$app/navigation";
   import { page } from "$app/state";
   import AppLogo from "$lib/components/AppLogo.svelte";
   import Background from "$lib/components/Background.svelte";
@@ -12,14 +14,17 @@
   import { formatClock } from "$lib/format";
   import MusicPlayer from "$lib/player/MusicPlayer.svelte";
   import { initAppState } from "$lib/state/app";
+  import { config } from "$lib/state/config.svelte";
   import { music } from "$lib/state/music.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
+  import { applyTheme, DEFAULT_THEME, isTheme, readCachedTheme, type Theme } from "$lib/themes";
 
   let { children }: { children: Snippet } = $props();
 
   onMount(() => initAppState());
 
+  /** In tab order: the highlight, the background pan and the page slide all follow this order. */
   const links = [
     { href: "/", label: strings.nav.focus },
     { href: "/summary", label: strings.nav.summary },
@@ -27,11 +32,135 @@
   ];
 
   const path = $derived(page.url.pathname);
-  const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
   const reserveVideo = $derived(music.videoVisible && music.videoExpanded);
+  const reducedMotion = new MediaQuery("(prefers-reduced-motion: reduce)");
+
+  // ---------------------------------------------------------------------------
+  // Theme: config.theme on <html data-theme>; until the config arrives, the theme of the last run.
+  // ---------------------------------------------------------------------------
+
+  const startTheme: Theme = readCachedTheme() ?? DEFAULT_THEME;
+  applyTheme(startTheme);
+
+  const theme = $derived.by((): Theme => {
+    const configured = config.value?.theme;
+    return isTheme(configured) ? configured : startTheme;
+  });
+
+  $effect.pre(() => applyTheme(theme));
+
+  // ---------------------------------------------------------------------------
+  // Navigation: one sliding highlight, a background pan by tab index, page slides (View Transitions).
+  // ---------------------------------------------------------------------------
+
+  function tabIndexOf(pathname: string | undefined): number {
+    if (pathname === undefined) return -1;
+    return links.findIndex((l) => (l.href === "/" ? pathname === "/" : pathname.startsWith(l.href)));
+  }
+
+  const activeIndex = $derived(tabIndexOf(path));
+  const panIndex = $derived(Math.max(0, activeIndex));
+
+  interface HighlightBox {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    /** Animate into place (the active tab changed); window resizes and font changes jump instead. */
+    slide: boolean;
+  }
+
+  let highlight = $state<HighlightBox | null>(null);
+  let navEl: HTMLElement | null = null;
+  let placedIndex = -1;
+
+  /** Moves the highlight under the active link (measured, so it follows any label width or wrapping). */
+  function placeHighlight(index: number): void {
+    const link = navEl?.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!navEl || !link || index < 0) {
+      highlight = null;
+      placedIndex = -1;
+      return;
+    }
+    const navBox = navEl.getBoundingClientRect();
+    const box = link.getBoundingClientRect();
+    // The highlight is positioned inside the nav's border; computed widths keep sub-pixel borders exact.
+    const navStyle = getComputedStyle(navEl);
+    const slide = placedIndex !== -1 && placedIndex !== index;
+    placedIndex = index;
+    highlight = {
+      x: box.left - navBox.left - (parseFloat(navStyle.borderLeftWidth) || 0),
+      y: box.top - navBox.top - (parseFloat(navStyle.borderTopWidth) || 0),
+      w: box.width,
+      h: box.height,
+      slide,
+    };
+  }
+
+  // After the DOM shows the new aria-current.
+  $effect(() => placeHighlight(activeIndex));
+
+  /** Re-measures when the nav or a link changes size (window width, theme font, wrapping on small screens). */
+  function observeNav(nav: HTMLElement): () => void {
+    navEl = nav;
+    const observer = new ResizeObserver(() => placeHighlight(tabIndexOf(page.url.pathname)));
+    observer.observe(nav);
+    for (const link of nav.querySelectorAll("a")) observer.observe(link);
+    return () => {
+      observer.disconnect();
+      navEl = null;
+    };
+  }
+
+  /** Longest SvelteKit waits for the transition to take its "before" snapshot. */
+  const VIEW_TRANSITION_START_TIMEOUT_MS = 1000;
+  let activeTransition: ViewTransition | null = null;
+
+  // The page content slides in the direction of the tab order; the header and the music bar stay in place
+  // (app.css names them only while `data-nav-transition` is set).
+  onNavigate((navigation) => {
+    if (reducedMotion.current || typeof document.startViewTransition !== "function") return;
+    // E.g. `goto("/summary")` while the window sits in the tray: nothing to animate, do not wait for a frame.
+    if (document.visibilityState !== "visible") return;
+    const from = tabIndexOf(navigation.from?.url.pathname);
+    const to = tabIndexOf(navigation.to?.url.pathname);
+    if (from < 0 || to < 0 || from === to) return;
+
+    const root = document.documentElement;
+    root.dataset.navTransition = to > from ? "forward" : "back";
+
+    return new Promise<void>((resolve) => {
+      // Never block the navigation, whatever happens to the transition.
+      const fallback = setTimeout(resolve, VIEW_TRANSITION_START_TIMEOUT_MS);
+      let transition: ViewTransition;
+      try {
+        transition = document.startViewTransition(async () => {
+          clearTimeout(fallback);
+          resolve();
+          await navigation.complete;
+        });
+      } catch {
+        clearTimeout(fallback);
+        delete root.dataset.navTransition;
+        resolve();
+        return;
+      }
+      activeTransition = transition;
+      const finish = () => {
+        // A newer navigation replaced this transition and owns the attribute now.
+        if (activeTransition !== transition) return;
+        activeTransition = null;
+        delete root.dataset.navTransition;
+      };
+      // A skipped transition (aborted navigation, hidden window) rejects these; nothing to report.
+      transition.ready.catch(() => {});
+      transition.updateCallbackDone.catch(() => {});
+      transition.finished.then(finish, finish);
+    });
+  });
 </script>
 
-<Background />
+<Background {theme} pan={panIndex} />
 
 <div class="app" class:with-video={reserveVideo}>
   <header class="top">
@@ -43,9 +172,19 @@
       </span>
     </a>
 
-    <nav aria-label={strings.nav.label}>
-      {#each links as link (link.href)}
-        <a href={link.href} aria-current={isActive(link.href) ? "page" : undefined}>{link.label}</a>
+    <nav aria-label={strings.nav.label} class:measured={highlight !== null} {@attach observeNav}>
+      {#if highlight}
+        <span
+          class="highlight"
+          class:slide={highlight.slide}
+          style:width="{highlight.w}px"
+          style:height="{highlight.h}px"
+          style:transform="translate({highlight.x}px, {highlight.y}px)"
+          aria-hidden="true"
+        ></span>
+      {/if}
+      {#each links as link, i (link.href)}
+        <a href={link.href} aria-current={i === activeIndex ? "page" : undefined}>{link.label}</a>
       {/each}
     </nav>
 
@@ -108,10 +247,24 @@
     position: absolute;
     inset: 0 calc(50% - 50vw);
     z-index: -1;
-    background: color-mix(in srgb, var(--bg-1) 86%, transparent);
+    background: var(--header-bg);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
-    border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+    border-bottom: 1px solid var(--header-line);
+  }
+
+  /* View Transitions (app.css): only while a tab change animates, so the header keeps its live backdrop blur. */
+  :global(html[data-nav-transition]) .top {
+    view-transition-name: app-header;
+  }
+
+  :global(html[data-nav-transition]) main {
+    view-transition-name: page;
+  }
+
+  /* The music bar (MusicPlayer's root <section class="dock">) stays above the sliding page. */
+  :global(html[data-nav-transition] section.dock) {
+    view-transition-name: music-dock;
   }
 
   .brand {
@@ -145,12 +298,36 @@
   }
 
   nav {
+    position: relative;
+    isolation: isolate;
     display: flex;
     gap: 4px;
     padding: 4px;
     border-radius: var(--radius-pill);
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: var(--border-w) solid var(--border);
+  }
+
+  /* One highlight for the whole nav: it slides to the active tab instead of each link lighting up. */
+  .highlight {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: -1;
+    border-radius: var(--radius-pill);
+    background: var(--nav-highlight);
+    pointer-events: none;
+  }
+
+  .highlight.slide {
+    transition:
+      transform var(--nav-slide-ms) var(--ease-slide),
+      width var(--nav-slide-ms) var(--ease-slide),
+      height var(--nav-slide-ms) var(--ease-slide);
+  }
+
+  :global([data-theme="pixel"]) .highlight {
+    box-shadow: 2px 2px 0 0 var(--shadow-color);
   }
 
   nav a {
@@ -162,7 +339,7 @@
     font-size: 0.92rem;
     transition:
       background-color 0.15s ease,
-      color 0.15s ease;
+      color var(--nav-slide-ms) var(--ease-slide);
   }
 
   nav a:hover {
@@ -171,8 +348,17 @@
   }
 
   nav a[aria-current="page"] {
-    color: var(--accent-ink);
-    background: var(--accent);
+    color: var(--nav-highlight-ink);
+  }
+
+  /* The highlight sits behind the active link; until it is measured, the link lights up by itself. */
+  nav.measured a[aria-current="page"],
+  nav.measured a[aria-current="page"]:hover {
+    background: transparent;
+  }
+
+  nav:not(.measured) a[aria-current="page"] {
+    background: var(--nav-highlight);
   }
 
   .phase-pill {
@@ -218,6 +404,13 @@
       flex: 1;
       text-align: center;
       padding: 7px 8px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .highlight.slide,
+    nav a {
+      transition: none;
     }
   }
 </style>

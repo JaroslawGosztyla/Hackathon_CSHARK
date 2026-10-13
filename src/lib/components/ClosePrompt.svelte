@@ -128,7 +128,7 @@
     border-radius: var(--radius);
     border: 1px solid var(--border-strong);
     background:
-      radial-gradient(420px 220px at 100% 0%, rgba(242, 166, 90, 0.12) 0%, transparent 70%),
+      radial-gradient(420px 220px at 100% 0%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 70%),
       var(--surface-raised);
     color: var(--text);
     box-shadow: var(--shadow);
@@ -139,7 +139,7 @@
   }
 
   .close-prompt::backdrop {
-    background: rgba(8, 4, 14, 0.62);
+    background: var(--scrim, rgba(8, 4, 14, 0.62));
     backdrop-filter: blur(3px);
   }
 

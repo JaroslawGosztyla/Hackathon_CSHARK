@@ -1,5 +1,84 @@
-/* FocusMode — cozy dark lofi theme. Tokens first; components use only tokens. */
-:root {
+/*
+ * FocusMode styles. Tokens first; components use only tokens.
+ *
+ * Themes (`Config.theme`) are sets of custom properties on `[data-theme="…"]`. The (app) and (overlay) layouts put
+ * the attribute on <html>; the theme picker also puts it on its preview swatches, so a swatch renders with the
+ * tokens of the theme it shows. Every theme block declares the same base tokens; the shared block below derives
+ * the rest (on every element with a theme, so a swatch derives them from its own colours).
+ */
+
+/* ---------- shared and derived tokens ---------- */
+
+:root,
+[data-theme] {
+  --radius: 18px;
+  --radius-sm: 12px;
+  --radius-pill: 999px;
+  /* Width of control and card borders in the shared classes (.btn, .input, .card, …). */
+  --border-w: 1px;
+  --font:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Ubuntu, Cantarell,
+    sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --dock-h: 76px;
+  --gutter: clamp(12px, 3vw, 28px);
+
+  /* Motion: the nav highlight slide and the background pan. */
+  --ease-slide: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --nav-slide-ms: 350ms;
+  --pan-ms: 700ms;
+
+  /* Whole-window background (the decorations of a theme are drawn above it by Background.svelte). */
+  --app-bg:
+    radial-gradient(1100px 620px at 85% -15%, var(--glow-warm) 0%, transparent 62%),
+    radial-gradient(900px 520px at -15% 115%, var(--glow-cool) 0%, transparent 60%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  --header-bg: color-mix(in srgb, var(--bg-1) 86%, transparent);
+  --header-line: color-mix(in srgb, var(--text) 8%, transparent);
+
+  --surface-hover: color-mix(in srgb, var(--text) 10%, transparent);
+  --border-hover: color-mix(in srgb, var(--text) 34%, transparent);
+  /* Empty part of progress bars, rings and switches. */
+  --track: color-mix(in srgb, var(--text) 7%, transparent);
+  --track-strong: color-mix(in srgb, var(--text) 13%, transparent);
+  /* Coloured outlines of tinted boxes (banners, chips, warnings). */
+  --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
+  --break-line: color-mix(in srgb, var(--break) 45%, transparent);
+  --danger-line: color-mix(in srgb, var(--danger) 45%, transparent);
+  /* The music bar at the bottom. */
+  --dock-bg: color-mix(in srgb, var(--surface-solid) 94%, transparent);
+  /* The dot that rides on the timer ring. */
+  --knob-fill: var(--text);
+
+  --shadow: 0 12px 32px var(--shadow-color);
+  --shadow-sm:
+    0 6px 16px var(--shadow-color),
+    0 1px 3px var(--shadow-color);
+
+  --nav-highlight: var(--accent);
+  --nav-highlight-ink: var(--accent-ink);
+
+  /* App mark (AppLogo). */
+  --logo-bg: var(--accent-soft);
+  --logo-moon: var(--accent);
+  --logo-star: var(--accent-strong);
+
+  /* Categorical chart colours (app usage), then "other apps" and idle time. */
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #9085e9;
+  --chart-7: #e66767;
+  --chart-other: #8a7f93;
+  --chart-idle: #4f4658;
+}
+
+/* ---------- Midnight (default): cozy dark lofi ---------- */
+
+:root:not([data-theme]),
+[data-theme="midnight"] {
   color-scheme: dark;
 
   --bg-0: #110b19;
@@ -11,8 +90,10 @@
   --surface-solid: #241a30;
   --surface-raised: #2c2139;
   --surface-inset: rgba(255, 236, 214, 0.05);
+  --surface-hover: rgba(255, 236, 214, 0.1);
   --border: rgba(255, 220, 180, 0.1);
   --border-strong: rgba(255, 220, 180, 0.24);
+  --border-hover: rgba(255, 220, 180, 0.36);
 
   --text: #f5eadc;
   --text-2: #d2c2b0;
@@ -22,28 +103,373 @@
   --accent-strong: #ffbf7a;
   --accent-soft: rgba(242, 166, 90, 0.16);
   --accent-ink: #2a1708;
+  --accent-line: rgba(242, 166, 90, 0.45);
 
   --break: #8fcfb0;
+  --break-strong: #a8dcc2;
+  --break-soft: rgba(143, 207, 176, 0.16);
+  --break-ink: #0f2a1e;
+  --break-line: rgba(143, 207, 176, 0.45);
+
+  --danger: #f29486;
+  --danger-soft: rgba(242, 148, 134, 0.14);
+  --danger-line: rgba(242, 148, 134, 0.45);
+  --ok: #8fcfb0;
+  --muted-mark: #6f6378;
+
+  --focus-ring: #ffd59e;
+
+  --track: rgba(255, 236, 214, 0.06);
+  --track-strong: rgba(255, 236, 214, 0.12);
+  --knob-fill: #fff6ea;
+  --scrim: rgba(8, 4, 14, 0.62);
+  --dock-bg: rgba(30, 21, 40, 0.94);
+  --shadow-color: rgba(5, 2, 10, 0.45);
+  --shadow-sm:
+    0 6px 16px rgba(5, 2, 10, 0.5),
+    0 1px 3px rgba(5, 2, 10, 0.4);
+  --logo-star: #ffe2bd;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d2c2b0' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* ---------- Vaporwave: pink / cyan / purple sunset ---------- */
+
+[data-theme="vaporwave"] {
+  color-scheme: dark;
+
+  --bg-0: #12062a;
+  --bg-1: #240a44;
+  --glow-warm: #6a1a6e;
+  --glow-cool: #0d3466;
+
+  --surface: rgba(38, 12, 74, 0.8);
+  --surface-solid: #26104a;
+  --surface-raised: #32165f;
+  --surface-inset: rgba(255, 120, 220, 0.07);
+  --border: rgba(120, 230, 255, 0.16);
+  --border-strong: rgba(120, 230, 255, 0.34);
+
+  --text: #fff0fb;
+  --text-2: #e7c9f2;
+  --text-muted: #bb9cd2;
+
+  --accent: #ff71ce;
+  --accent-strong: #ff9fe0;
+  --accent-soft: rgba(255, 113, 206, 0.18);
+  --accent-ink: #2e0423;
+
+  --break: #01cdfe;
+  --break-strong: #6fe3ff;
+  --break-soft: rgba(1, 205, 254, 0.16);
+  --break-ink: #00222c;
+
+  --danger: #ff8fa3;
+  --danger-soft: rgba(255, 143, 163, 0.15);
+  --ok: #05ffa1;
+  --muted-mark: #7d5c9c;
+
+  --focus-ring: #fffb96;
+
+  --knob-fill: #fff6fd;
+  --scrim: rgba(12, 2, 28, 0.66);
+  --shadow-color: rgba(10, 0, 25, 0.55);
+  --logo-star: #fffb96;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23e7c9f2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Sky above the horizon (62 %), dark floor below it; the sun and the grid are drawn by the background. */
+  --app-bg:
+    radial-gradient(900px 420px at 80% 62%, rgba(255, 113, 206, 0.32) 0%, transparent 70%),
+    linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 40%, #4c1266 61.8%, #1a0636 62%, var(--bg-0) 100%);
+}
+
+/* ---------- Lunar phases: silver and indigo night ---------- */
+
+[data-theme="lunar"] {
+  color-scheme: dark;
+
+  --bg-0: #070b1f;
+  --bg-1: #0f1633;
+  --glow-warm: #1f2c5e;
+  --glow-cool: #151a44;
+
+  --surface: rgba(20, 28, 62, 0.8);
+  --surface-solid: #161f45;
+  --surface-raised: #1e2955;
+  --surface-inset: rgba(205, 215, 255, 0.06);
+  --border: rgba(200, 210, 245, 0.12);
+  --border-strong: rgba(200, 210, 245, 0.26);
+
+  --text: #eef1ff;
+  --text-2: #c5cce9;
+  --text-muted: #959dc3;
+
+  --accent: #b8c4ff;
+  --accent-strong: #dbe1ff;
+  --accent-soft: rgba(184, 196, 255, 0.16);
+  --accent-ink: #0d1435;
+
+  --break: #93dcc8;
+  --break-strong: #b4ead9;
+  --break-soft: rgba(147, 220, 200, 0.15);
+  --break-ink: #0a2620;
+
+  --danger: #ff9aa8;
+  --danger-soft: rgba(255, 154, 168, 0.14);
+  --ok: #93dcc8;
+  --muted-mark: #5d668f;
+
+  --focus-ring: #fff1c1;
+
+  --knob-fill: #f6f7ff;
+  --scrim: rgba(3, 6, 20, 0.66);
+  --shadow-color: rgba(2, 4, 16, 0.5);
+  --logo-bg: rgba(184, 196, 255, 0.14);
+  --logo-moon: #e3e8ff;
+  --logo-star: #fff1c1;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23c5cce9' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* ---------- Cozy autumn: warm browns and amber ---------- */
+
+[data-theme="autumn"] {
+  color-scheme: dark;
+
+  --bg-0: #160d07;
+  --bg-1: #22140b;
+  --glow-warm: #5a2c0f;
+  --glow-cool: #352012;
+
+  --surface: rgba(48, 30, 17, 0.82);
+  --surface-solid: #2f1e11;
+  --surface-raised: #3b2716;
+  --surface-inset: rgba(255, 215, 165, 0.06);
+  --border: rgba(255, 200, 140, 0.12);
+  --border-strong: rgba(255, 200, 140, 0.26);
+
+  --text: #fcefdc;
+  --text-2: #e3cbaa;
+  --text-muted: #b89d7b;
+
+  --accent: #e98a3c;
+  --accent-strong: #f6a95f;
+  --accent-soft: rgba(233, 138, 60, 0.18);
+  --accent-ink: #2b1303;
+
+  --break: #b5c97a;
+  --break-strong: #cad992;
+  --break-soft: rgba(181, 201, 122, 0.16);
+  --break-ink: #1e260a;
+
+  --danger: #f0877a;
+  --danger-soft: rgba(240, 135, 122, 0.14);
+  --ok: #b5c97a;
+  --muted-mark: #7a6450;
+
+  --focus-ring: #ffd27a;
+
+  --knob-fill: #fff7ea;
+  --scrim: rgba(14, 8, 3, 0.64);
+  --shadow-color: rgba(10, 5, 2, 0.5);
+  --logo-star: #ffd27a;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23e3cbaa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* ---------- Basic dark: neutral greys, no decorations ---------- */
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-0: #121316;
+  --bg-1: #17181c;
+  --glow-warm: #17181c;
+  --glow-cool: #17181c;
+
+  --surface: #1f2024;
+  --surface-solid: #1f2024;
+  --surface-raised: #27292e;
+  --surface-inset: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.22);
+
+  --text: #ececee;
+  --text-2: #c4c6cc;
+  --text-muted: #9c9ea5;
+
+  --accent: #f2a65a;
+  --accent-strong: #ffbf7a;
+  --accent-soft: rgba(242, 166, 90, 0.16);
+  --accent-ink: #2a1708;
+
+  --break: #8fcfb0;
+  --break-strong: #a8dcc2;
   --break-soft: rgba(143, 207, 176, 0.16);
   --break-ink: #0f2a1e;
 
   --danger: #f29486;
   --danger-soft: rgba(242, 148, 134, 0.14);
   --ok: #8fcfb0;
-  --muted-mark: #6f6378;
+  --muted-mark: #5f6168;
 
   --focus-ring: #ffd59e;
 
-  --radius: 18px;
-  --radius-sm: 12px;
-  --radius-pill: 999px;
-  --shadow: 0 12px 32px rgba(5, 2, 10, 0.45);
-  --font:
-    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Ubuntu, Cantarell,
-    sans-serif;
-  --dock-h: 76px;
-  --gutter: clamp(12px, 3vw, 28px);
+  --knob-fill: #ffffff;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --chart-other: #8b8d94;
+  --chart-idle: #4a4c52;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23c4c6cc' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  --app-bg: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  --header-bg: color-mix(in srgb, var(--bg-1) 92%, transparent);
 }
+
+/* ---------- Basic light: WCAG AA contrast for text (4.5:1) and control outlines (3:1) ---------- */
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-0: #eceef2;
+  --bg-1: #f6f7f9;
+  --glow-warm: #f6f7f9;
+  --glow-cool: #f6f7f9;
+
+  --surface: rgba(255, 255, 255, 0.95);
+  --surface-solid: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-inset: rgba(20, 24, 32, 0.04);
+  --surface-hover: rgba(20, 24, 32, 0.08);
+  --border: rgba(20, 24, 32, 0.13);
+  --border-strong: #80868f;
+  --border-hover: #5f656f;
+
+  --text: #16181d;
+  --text-2: #383d47;
+  --text-muted: #565c67;
+
+  --accent: #c2410c;
+  --accent-strong: #9a3412;
+  --accent-soft: rgba(194, 65, 12, 0.1);
+  --accent-ink: #ffffff;
+  --accent-line: rgba(194, 65, 12, 0.5);
+
+  --break: #047857;
+  --break-strong: #065f46;
+  --break-soft: rgba(4, 120, 87, 0.1);
+  --break-ink: #ffffff;
+  --break-line: rgba(4, 120, 87, 0.5);
+
+  --danger: #b91c1c;
+  --danger-soft: rgba(185, 28, 28, 0.08);
+  --danger-line: rgba(185, 28, 28, 0.5);
+  --ok: #047857;
+  --muted-mark: #868c96;
+
+  --focus-ring: #1d4ed8;
+
+  --track: rgba(20, 24, 32, 0.08);
+  --track-strong: rgba(20, 24, 32, 0.18);
+  --knob-fill: #ffffff;
+  --scrim: rgba(20, 24, 32, 0.38);
+  --dock-bg: rgba(255, 255, 255, 0.96);
+  --shadow-color: rgba(20, 24, 32, 0.1);
+  --shadow-sm:
+    0 4px 12px rgba(20, 24, 32, 0.14),
+    0 1px 3px rgba(20, 24, 32, 0.12);
+  --logo-bg: rgba(194, 65, 12, 0.1);
+  --logo-moon: #c2410c;
+  --logo-star: #e07a2e;
+  --chart-4: #a86f00;
+  --chart-other: #7d838e;
+  --chart-idle: #c3c7cf;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23383d47' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  --app-bg: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  --header-bg: color-mix(in srgb, var(--bg-1) 92%, transparent);
+  --header-line: rgba(20, 24, 32, 0.1);
+}
+
+/* ---------- 8-bit: chunky pixel borders, hard shadows, stepped motion ---------- */
+
+[data-theme="pixel"] {
+  color-scheme: dark;
+
+  --bg-0: #0b0a1f;
+  --bg-1: #16123a;
+  --glow-warm: #16123a;
+  --glow-cool: #16123a;
+
+  --surface: rgba(29, 24, 80, 0.96);
+  --surface-solid: #1d1850;
+  --surface-raised: #272070;
+  --surface-inset: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.12);
+  --border: #3b3494;
+  --border-strong: #6c63e0;
+  --border-hover: #9a93ff;
+
+  --text: #f4f4f4;
+  --text-2: #cdcaf2;
+  --text-muted: #a19cd8;
+
+  --accent: #fca044;
+  --accent-strong: #ffc27a;
+  --accent-soft: rgba(252, 160, 68, 0.2);
+  --accent-ink: #1b0d00;
+
+  --break: #5ce65c;
+  --break-strong: #9af59a;
+  --break-soft: rgba(92, 230, 92, 0.16);
+  --break-ink: #062406;
+
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.16);
+  --ok: #5ce65c;
+  --muted-mark: #5a55a0;
+
+  --focus-ring: #fcfc54;
+
+  --track: rgba(255, 255, 255, 0.1);
+  --track-strong: rgba(255, 255, 255, 0.2);
+  --knob-fill: #ffffff;
+  --scrim: rgba(5, 4, 16, 0.72);
+  --dock-bg: #1d1850;
+  --shadow-color: rgba(0, 0, 0, 0.6);
+  --shadow: 6px 6px 0 0 var(--shadow-color);
+  --shadow-sm: 4px 4px 0 0 var(--shadow-color);
+  --logo-star: #fcfc54;
+  --chart-1: #3c8cff;
+  --chart-2: #fc7460;
+  --chart-3: #38c070;
+  --chart-4: #f8b800;
+  --chart-5: #f878f8;
+  --chart-6: #9878f8;
+  --chart-7: #f83800;
+  --chart-other: #8c8ab0;
+  --chart-idle: #3b3870;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h12v2h-2v2h-2v2h-4v-2h-2v-2h-2z' fill='%23cdcaf2'/%3E%3C/svg%3E");
+
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-pill: 0px;
+  --border-w: 2px;
+  --font: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "Lucida Console", "Courier New", monospace;
+  --font-mono: var(--font);
+  --ease-slide: steps(6, end);
+
+  /* Banded night sky, like a 16-colour palette. */
+  --app-bg: linear-gradient(
+    180deg,
+    #0b0a1f 0 22%,
+    #100d2c 22% 44%,
+    #141139 44% 64%,
+    #191548 64% 82%,
+    #1e1956 82% 100%
+  );
+  --header-bg: var(--bg-1);
+  --header-line: var(--border);
+}
+
+/* ---------- base ---------- */
 
 *,
 *::before,
@@ -58,6 +484,8 @@ body {
 }
 
 html {
+  /* Below a short page (the overlay windows override this with a transparent canvas in app.html). */
+  background-color: var(--bg-0);
   /* Keeps focused / scrolled-to elements clear of the pinned header and the music dock. */
   scroll-padding-top: 96px;
   scroll-padding-bottom: calc(var(--dock-h, 76px) + 24px);
@@ -68,10 +496,7 @@ body {
   font-size: 15px;
   line-height: 1.5;
   color: var(--text);
-  background:
-    radial-gradient(1100px 620px at 85% -15%, var(--glow-warm) 0%, transparent 62%),
-    radial-gradient(900px 520px at -15% 115%, var(--glow-cool) 0%, transparent 60%),
-    linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  background: var(--app-bg);
   background-color: var(--bg-0);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
@@ -164,7 +589,7 @@ a {
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: var(--border-w) solid var(--border);
   border-radius: var(--radius);
   padding: clamp(16px, 2.4vw, 24px);
   box-shadow: var(--shadow);
@@ -189,7 +614,7 @@ a {
   min-height: 40px;
   padding: 8px 18px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border-strong);
+  border: var(--border-w) solid var(--border-strong);
   background: var(--surface-inset);
   color: var(--text);
   font: inherit;
@@ -204,8 +629,8 @@ a {
 }
 
 .btn:hover:not(:disabled) {
-  background: rgba(255, 236, 214, 0.1);
-  border-color: rgba(255, 220, 180, 0.36);
+  background: var(--surface-hover);
+  border-color: var(--border-hover);
 }
 
 .btn:active:not(:disabled) {
@@ -235,12 +660,12 @@ a {
 }
 
 .btn-break:hover:not(:disabled) {
-  background: #a8dcc2;
-  border-color: #a8dcc2;
+  background: var(--break-strong);
+  border-color: var(--break-strong);
 }
 
 .btn-danger {
-  border-color: rgba(242, 148, 134, 0.45);
+  border-color: var(--danger-line);
   color: var(--danger);
 }
 
@@ -272,7 +697,7 @@ a {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid var(--border-strong);
+  border: var(--border-w) solid var(--border-strong);
   background: var(--surface-inset);
   color: var(--text);
   cursor: pointer;
@@ -280,7 +705,7 @@ a {
 }
 
 .icon-btn:hover:not(:disabled) {
-  background: rgba(255, 236, 214, 0.1);
+  background: var(--surface-hover);
 }
 
 .icon-btn:disabled {
@@ -309,7 +734,7 @@ a {
   font: inherit;
   color: var(--text);
   background: var(--surface-inset);
-  border: 1px solid var(--border-strong);
+  border: var(--border-w) solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 9px 12px;
   transition: border-color 0.15s ease;
@@ -323,7 +748,7 @@ a {
 
 .input:hover,
 .textarea:hover {
-  border-color: rgba(255, 220, 180, 0.36);
+  border-color: var(--border-hover);
 }
 
 .input:focus-visible,
@@ -341,7 +766,7 @@ a {
 .textarea {
   min-height: 110px;
   resize: vertical;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.86rem;
   line-height: 1.55;
 }
@@ -360,7 +785,7 @@ a {
 .select {
   appearance: none;
   padding-right: 36px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d2c2b0' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: var(--select-arrow);
   background-repeat: no-repeat;
   background-position: right 13px center;
   background-size: 12px 8px;
@@ -398,7 +823,7 @@ input[type="radio"] {
   gap: 6px;
   padding: 4px 12px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border-strong);
+  border: var(--border-w) solid var(--border-strong);
   background: var(--surface-inset);
   color: var(--text-2);
   font-size: 0.84rem;
@@ -427,7 +852,7 @@ input[type="radio"] {
   padding: 4px;
   border-radius: var(--radius-pill);
   background: var(--surface-inset);
-  border: 1px solid var(--border);
+  border: var(--border-w) solid var(--border);
   margin: 0;
   min-width: 0;
 }
@@ -482,6 +907,118 @@ input[type="radio"] {
   outline-offset: 2px;
 }
 
+/* ---------- theme details ---------- */
+
+/* Light: placeholders at full strength keep their 4.5:1 contrast. */
+[data-theme="light"] .input::placeholder,
+[data-theme="light"] .textarea::placeholder {
+  opacity: 1;
+}
+
+/* 8-bit: square everything, thick outlines, hard offset shadows that "press" like a game pad button. */
+[data-theme="pixel"] h1,
+[data-theme="pixel"] h2 {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+[data-theme="pixel"] .card {
+  border-color: var(--border-strong);
+  backdrop-filter: none;
+}
+
+[data-theme="pixel"] .btn,
+[data-theme="pixel"] .icon-btn {
+  border-radius: 0;
+  box-shadow: 3px 3px 0 0 var(--shadow-color);
+  transition: none;
+}
+
+[data-theme="pixel"] .btn:active:not(:disabled),
+[data-theme="pixel"] .icon-btn:active:not(:disabled) {
+  transform: translate(3px, 3px);
+  box-shadow: none;
+}
+
+[data-theme="pixel"] .segmented span {
+  transition: none;
+}
+
+[data-theme="pixel"] :focus-visible {
+  outline-style: dashed;
+  outline-width: 3px;
+}
+
+/* ---------- page transitions (View Transitions; names and direction set by the (app) layout) ---------- */
+
+/* The window itself does not crossfade: only the page content slides, the header and the music bar stay put. */
+html[data-nav-transition]::view-transition-group(root),
+html[data-nav-transition]::view-transition-new(root),
+html[data-nav-transition]::view-transition-group(app-header),
+html[data-nav-transition]::view-transition-new(app-header),
+html[data-nav-transition]::view-transition-group(music-dock),
+html[data-nav-transition]::view-transition-new(music-dock),
+html[data-nav-transition]::view-transition-group(page) {
+  animation: none;
+}
+
+html[data-nav-transition]::view-transition-old(root),
+html[data-nav-transition]::view-transition-old(app-header),
+html[data-nav-transition]::view-transition-old(music-dock) {
+  animation: none;
+  opacity: 0;
+}
+
+html[data-nav-transition]::view-transition-old(page),
+html[data-nav-transition]::view-transition-new(page) {
+  mix-blend-mode: normal;
+}
+
+html[data-nav-transition="forward"]::view-transition-old(page) {
+  animation: page-out-to-left 160ms ease-in both;
+}
+
+html[data-nav-transition="forward"]::view-transition-new(page) {
+  animation: page-in-from-right 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+html[data-nav-transition="back"]::view-transition-old(page) {
+  animation: page-out-to-right 160ms ease-in both;
+}
+
+html[data-nav-transition="back"]::view-transition-new(page) {
+  animation: page-in-from-left 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes page-out-to-left {
+  to {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+}
+
+@keyframes page-out-to-right {
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes page-in-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes page-in-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+}
+
 /* ---------- motion preferences ---------- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -492,5 +1029,11 @@ input[type="radio"] {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

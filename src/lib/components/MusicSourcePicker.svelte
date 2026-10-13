@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { pickFolder, toAppError } from "$lib/api";
+  import { openExternal, pickFolder, toAppError } from "$lib/api";
   import {
     classifyLink,
     isPlayableKind,
+    LIBRARY_URL,
     playsInWindow,
     presetFor,
     splitLines,
@@ -15,7 +16,7 @@
   import { strings } from "$lib/strings";
   import type { MusicSourceKind, NoiseColor } from "$lib/types";
 
-  const SOURCES: MusicSourceKind[] = ["stream", "links", "folder", "noise", "none"];
+  const SOURCES: MusicSourceKind[] = ["library", "stream", "links", "folder", "noise", "none"];
   const NOISES: NoiseColor[] = ["brown", "pink", "white"];
   const MAX_BAD_LINKS_SHOWN = 3;
 
@@ -49,6 +50,19 @@
     return playsInWindow(streamText) ? strings.music.detected.youtubeWindow : detectedText(streamKind);
   });
   const folderReady = $derived(m?.folder !== null && m?.folder !== undefined && music.folder === m.folder);
+
+  // The bundled library is listed here too, so the picker can show its track count before the first session.
+  $effect(() => {
+    if (m?.source === "library") void music.ensureLibrary();
+  });
+
+  async function openLibraryPage() {
+    try {
+      await openExternal(LIBRARY_URL);
+    } catch (e) {
+      toasts.error(toAppError(e));
+    }
+  }
 
   function detectedText(kind: LinkKind): string {
     return strings.music.detected[kind];
@@ -143,7 +157,30 @@
     </fieldset>
 
     <div class="panel">
-      {#if m.source === "stream"}
+      {#if m.source === "library"}
+        <div class="library" aria-live="polite">
+          <p class="secondary">{strings.music.libraryHint}</p>
+          <p class="hint">
+            {#if music.library === null}
+              {music.libraryLoading ? strings.music.loadingTracks : ""}
+            {:else if music.library.length === 0}
+              <span class="warn">{strings.music.libraryEmpty}</span>
+            {:else}
+              {strings.music.trackCount(music.library.length)}
+            {/if}
+          </p>
+        </div>
+        <label class="check">
+          <input type="checkbox" checked={m.shuffle} onchange={setShuffle} />
+          {strings.music.shuffle}
+        </label>
+        <p class="hint credit">
+          {strings.music.libraryCredit}
+          <button type="button" class="link-btn" aria-label={strings.music.libraryCreditAria} onclick={openLibraryPage}>
+            {strings.music.libraryCreditLink}
+          </button>
+        </p>
+      {:else if m.source === "stream"}
         <div class="field">
           <label for="stream-url">{strings.music.streamUrl}</label>
           <input
@@ -367,5 +404,30 @@
 
   .small-seg {
     max-width: 360px;
+  }
+
+  .library {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .credit {
+    font-size: 0.8rem;
+  }
+
+  .link-btn {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-strong);
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
+  .link-btn:hover {
+    color: var(--text);
   }
 </style>

@@ -1,5 +1,5 @@
-// Music library state: the tracks of the configured folder (listed by the shell, which also allows
-// the folder in the asset protocol scope so `convertFileSrc` URLs load).
+// Music track lists: the tracks of the configured folder (listed by the shell, which also allows the folder in the
+// asset protocol scope so `convertFileSrc` URLs load) and the music bundled with the app (Open Lo-Fi, CC0).
 import * as api from "$lib/api";
 import type { Track } from "$lib/types";
 import { toasts } from "./toasts.svelte";
@@ -23,7 +23,28 @@ class MusicStore {
   videoVisible = $state(false);
   /** Large video vs. a small bubble; remembered per viewer. */
   videoExpanded = $state(readExpanded());
+  /** Bundled tracks; listed once (null until the shell answered). */
+  library = $state.raw<Track[] | null>(null);
+  libraryLoading = $state(false);
   private request = 0;
+  private libraryRequest: Promise<void> | null = null;
+
+  /** Lists the bundled tracks once; a failed attempt can be retried by the next call. */
+  ensureLibrary(): Promise<void> {
+    this.libraryRequest ??= (async () => {
+      this.libraryLoading = true;
+      try {
+        this.library = await api.listLibraryTracks();
+      } catch (e) {
+        this.libraryRequest = null;
+        const err = api.toAppError(e);
+        if (err.code !== api.ERR_NO_SHELL) toasts.error(err);
+      } finally {
+        this.libraryLoading = false;
+      }
+    })();
+    return this.libraryRequest;
+  }
 
   toggleVideo(): void {
     this.videoExpanded = !this.videoExpanded;

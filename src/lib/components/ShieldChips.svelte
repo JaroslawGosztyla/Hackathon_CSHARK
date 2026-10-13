@@ -111,7 +111,7 @@
   }
 
   .state-on {
-    border-color: rgba(143, 207, 176, 0.45);
+    border-color: color-mix(in srgb, var(--break) 45%, transparent);
     color: var(--text);
   }
 
@@ -120,7 +120,7 @@
   }
 
   .state-error {
-    border-color: rgba(242, 148, 134, 0.5);
+    border-color: color-mix(in srgb, var(--danger) 50%, transparent);
     background: var(--danger-soft);
   }
 

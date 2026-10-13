@@ -125,7 +125,7 @@
   }
 
   .track {
-    stroke: rgba(255, 236, 214, 0.08);
+    stroke: color-mix(in srgb, var(--text) 8%, transparent);
   }
 
   .progress {
@@ -144,7 +144,7 @@
   }
 
   .knob circle {
-    fill: #fff6ea;
+    fill: var(--knob-fill);
     stroke: var(--ring-color);
     stroke-width: 3;
   }
@@ -195,7 +195,7 @@
   }
 
   .pause-badge {
-    background: rgba(255, 236, 214, 0.12);
+    background: color-mix(in srgb, var(--text) 12%, transparent);
     color: var(--text);
     animation: blink 1.6s ease-in-out infinite;
   }

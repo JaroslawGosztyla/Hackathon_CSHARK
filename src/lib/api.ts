@@ -129,6 +129,18 @@ export const getTintStatus = () => call<TintStatus>(COMMANDS.getTintStatus);
  */
 export const previewTint = (strength: number | null) => call<void>(COMMANDS.previewTint, { strength });
 
+/**
+ * Copies an audio file (mp3/wav/ogg/flac/m4a, at most 10 MB, must decode) into the app data folder as the custom
+ * sound for `chime` and selects `chimeSound: custom`. Resolves with the stored config.
+ */
+export const importChime = (path: string, chime: ChimeKind) => call<Config>(COMMANDS.importChime, { path, chime });
+/** Deletes the custom sound for `chime` (the other custom file, or the default sound, takes over). */
+export const removeCustomChime = (chime: ChimeKind) => call<Config>(COMMANDS.removeCustomChime, { chime });
+/** The music bundled with the app (Open Lo-Fi, CC0), playable via `fileSrc(path)`. */
+export const listLibraryTracks = () => call<Track[]>(COMMANDS.listLibraryTracks);
+/** Deletes the whole session history (history file and the last summary). Confirm with the user first. */
+export const clearHistory = () => call<void>(COMMANDS.clearHistory);
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -208,6 +220,25 @@ export async function pickFolder(title: string, defaultPath?: string | null): Pr
   if (!inShell()) return null;
   try {
     const picked = await dialogOpen({ directory: true, multiple: false, title, defaultPath: defaultPath ?? undefined });
+    return typeof picked === "string" ? picked : null;
+  } catch (e) {
+    throw toAppError(e);
+  }
+}
+
+/** Extensions accepted by `importChime` (focus-core `CUSTOM_CHIME_EXTENSIONS`). */
+export const CHIME_FILE_EXTENSIONS = ["mp3", "wav", "ogg", "flac", "m4a"] as const;
+
+/** Native single-file picker limited to `extensions`. Resolves `null` when cancelled. */
+export async function pickFile(title: string, filterName: string, extensions: readonly string[]): Promise<string | null> {
+  if (!inShell()) return null;
+  try {
+    const picked = await dialogOpen({
+      directory: false,
+      multiple: false,
+      title,
+      filters: [{ name: filterName, extensions: [...extensions] }],
+    });
     return typeof picked === "string" ? picked : null;
   } catch (e) {
     throw toAppError(e);
