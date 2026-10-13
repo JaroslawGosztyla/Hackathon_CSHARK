@@ -32,6 +32,10 @@ export const COMMANDS = {
   popupAction: "popup_action",
   getTintStatus: "get_tint_status",
   previewTint: "preview_tint",
+  importChime: "import_chime",
+  removeCustomChime: "remove_custom_chime",
+  listLibraryTracks: "list_library_tracks",
+  clearHistory: "clear_history",
 } as const;
 
 export const EVENTS = {

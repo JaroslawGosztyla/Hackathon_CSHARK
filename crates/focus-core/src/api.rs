@@ -77,6 +77,16 @@ pub mod commands {
     /// `{ strength: number | null } -> ()` shows the warm tint at `strength` (0..=100) for a few seconds,
     /// ignoring the schedule (settings preview); `null` ends the preview at once.
     pub const PREVIEW_TINT: &str = "preview_tint";
+    /// `{ path: string, chime: ChimeKind } -> Config` copies an audio file (mp3/wav/ogg/flac/m4a, at most 10 MB,
+    /// must decode) into the app data folder as the custom sound for that chime and selects `chimeSound: custom`.
+    pub const IMPORT_CHIME: &str = "import_chime";
+    /// `{ chime: ChimeKind } -> Config` deletes the custom sound for that chime (falls back to the other custom file,
+    /// or to the default sound when none is left).
+    pub const REMOVE_CUSTOM_CHIME: &str = "remove_custom_chime";
+    /// `() -> Track[]` the music bundled with the app (Open Lo-Fi, CC0), playable via `convertFileSrc(path)`.
+    pub const LIST_LIBRARY_TRACKS: &str = "list_library_tracks";
+    /// `() -> ()` deletes the whole session history (history file and the last summary). The UI confirms first.
+    pub const CLEAR_HISTORY: &str = "clear_history";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -222,6 +232,66 @@ pub struct Config {
     pub phase_popups: bool,
     /// Warm screen tint by time of day. Off by default.
     pub tint: TintConfig,
+    /// App look. Default `Midnight`.
+    pub theme: Theme,
+    /// Sound of the break / focus chimes. Default `Midnight`.
+    pub chime_sound: ChimeSound,
+    /// Custom chime files (names inside the app data `sounds` folder) used when `chime_sound` is `Custom`.
+    pub custom_chimes: CustomChimes,
+    /// Optional reminder per break: index 0 = first break of a session, 1 = second, …; "" = no reminder for
+    /// that break. At most 24 entries of at most 160 characters each.
+    pub break_reminders: Vec<String>,
+    /// After the last reminder, start the list again from the first one. Default false.
+    pub repeat_reminders: bool,
+    /// Also keep the most-used window titles per app for the productivity chart (local only). Default true.
+    pub track_titles: bool,
+    /// Save finished sessions to the history file. Default true; when off, the summary is shown but not stored.
+    pub keep_history: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Theme {
+    Midnight,
+    Vaporwave,
+    Lunar,
+    Autumn,
+    Dark,
+    Light,
+    Pixel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ChimeSound {
+    /// Soft bell (the original chime).
+    Midnight,
+    /// Detuned synth chord.
+    Vaporwave,
+    /// Glassy crystal tones.
+    Lunar,
+    /// Warm wooden marimba.
+    Autumn,
+    /// Two-tone ding-dong.
+    Classic,
+    /// Gentle sine tone.
+    Soft,
+    /// 8-bit square-wave arpeggio.
+    Chiptune,
+    /// The user's own files (`custom_chimes`).
+    Custom,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct CustomChimes {
+    /// File name in the app data `sounds` folder used when a break starts.
+    pub break_file: Option<String>,
+    /// File name used when focus starts; `None` = use `break_file` for both.
+    pub focus_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -257,6 +327,19 @@ pub struct TintConfig {
     pub strength: u32,
     /// Fade length in minutes after `start_minutes` and before `end_minutes`, 0..=180. Default 30.
     pub transition_minutes: u32,
+    /// How the warmth is applied. Default `NightLight`.
+    pub mode: TintMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TintMode {
+    /// Windows Night light, switched and set by FocusMode on its schedule (per-user setting, no admin).
+    NightLight,
+    /// Colour temperature through each display's gamma ramp (whole screen incl. taskbar and fullscreen
+    /// games; not on HDR displays; Windows may cap very warm values).
+    Gamma,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -288,6 +371,8 @@ pub enum MusicSourceKind {
     Links,
     /// One live stream: YouTube live (e.g. Lofi Girl) or an internet radio URL.
     Stream,
+    /// Music bundled with the app (Open Lo-Fi, CC0), works offline. Default source.
+    Library,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -407,6 +492,19 @@ pub struct ShieldStatus {
 pub struct AppUsage {
     /// Process executable name, e.g. `Code.exe`, `chrome.exe`.
     pub process: String,
+    pub secs: u32,
+    /// Most-used window titles of this app (at most 5, longest first), only when `track_titles` is on.
+    /// Shown as a tooltip in the chart; stays on this computer, never logged.
+    #[serde(default)]
+    pub titles: Vec<TitleUsage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TitleUsage {
+    /// Window title, trimmed and shortened to 120 characters.
+    pub title: String,
     pub secs: u32,
 }
 
@@ -594,6 +692,8 @@ pub struct PopupInfo {
     /// Length of the phase that just started, in seconds.
     pub phase_secs: u32,
     pub launchers: Vec<GameLauncher>,
+    /// The user's own reminder for the break that just started (`break_reminders`), if any.
+    pub reminder: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -615,12 +715,16 @@ pub struct TintStatus {
     /// Set by the shell; grows with every emitted status.
     pub revision: u32,
     pub enabled: bool,
-    /// Current overlay strength 0..=100 (schedule or preview); 0 = no overlay.
+    /// Current strength 0..=100 (schedule or preview); 0 = screen colours untouched.
     pub level: u32,
     pub preview: bool,
-    /// Overlay windows are shown (one per monitor).
+    /// The warmth is applied right now.
     pub active: bool,
-    /// Overlay windows could not be created (English detail); the schedule keeps trying.
+    /// Mechanism in use (the configured one, or the fallback when it is unavailable).
+    pub mode: TintMode,
+    /// Windows refused the full strength (gamma limits) and a weaker value is applied.
+    pub capped: bool,
+    /// The mechanism failed or is unavailable (English detail); the schedule keeps trying.
     pub error: Option<String>,
 }
 
@@ -695,6 +799,10 @@ mod tests {
             ("popupAction", commands::POPUP_ACTION),
             ("getTintStatus", commands::GET_TINT_STATUS),
             ("previewTint", commands::PREVIEW_TINT),
+            ("importChime", commands::IMPORT_CHIME),
+            ("removeCustomChime", commands::REMOVE_CUSTOM_CHIME),
+            ("listLibraryTracks", commands::LIST_LIBRARY_TRACKS),
+            ("clearHistory", commands::CLEAR_HISTORY),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),

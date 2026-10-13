@@ -14,4 +14,8 @@ kind: PopupKind | null, cycle: number,
 /**
  * Length of the phase that just started, in seconds.
  */
-phaseSecs: number, launchers: Array<GameLauncher>, };
+phaseSecs: number, launchers: Array<GameLauncher>, 
+/**
+ * The user's own reminder for the break that just started (`break_reminders`), if any.
+ */
+reminder: string | null, };
