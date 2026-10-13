@@ -14,6 +14,7 @@ import type {
   CalendarStatus,
   ChimeKind,
   Config,
+  DevAction,
   DeviceCodePrompt,
   Language,
   MediaAction,
@@ -189,6 +190,13 @@ export const setSessionGoal = (goal: SessionGoal | null) => call<void>(COMMANDS.
 /** Marks the goal of a finished session as done / not done (history). */
 export const markGoalDone = (sessionId: string, done: boolean) =>
   call<void>(COMMANDS.markGoalDone, { sessionId, done });
+
+/**
+ * A button on the developer page (ADR-019): a sample popup, a phase toast or a shorter running phase. The shell rejects
+ * it with `developerModeOff` unless `config.developerMode` is on (and `setRemaining` with `notRunning` when idle).
+ * Nothing is persisted and nothing leaves the computer.
+ */
+export const devTrigger = (action: DevAction) => call<void>(COMMANDS.devTrigger, { action });
 
 // ---------------------------------------------------------------------------
 // Events

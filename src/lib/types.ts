@@ -14,6 +14,7 @@ export type { ChimeKind } from "./bindings/ChimeKind";
 export type { ChimeSound } from "./bindings/ChimeSound";
 export type { Config } from "./bindings/Config";
 export type { CustomChimes } from "./bindings/CustomChimes";
+export type { DevAction } from "./bindings/DevAction";
 export type { DeviceCodePrompt } from "./bindings/DeviceCodePrompt";
 export type { GameLauncher } from "./bindings/GameLauncher";
 export type { IntegrationState } from "./bindings/IntegrationState";

@@ -27,4 +27,9 @@ meeting: MeetingConflict | null,
 /**
  * Number of new work items for `WorkDigest`.
  */
-workCount: number, };
+workCount: number, 
+/**
+ * Developer-mode sample that stays until closed (ADR-019): no auto-hide countdown in the popup page and no
+ * timeout in the shell. Always `false` for real popups.
+ */
+sticky: boolean, };

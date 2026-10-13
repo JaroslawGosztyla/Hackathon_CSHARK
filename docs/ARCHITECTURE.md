@@ -260,7 +260,7 @@ config spoza zakresów → błąd walidacji.
 
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
-> Stan na 2026-10-13 (z ADR-018, maskotka i poprawki), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> Stan na 2026-10-13 (z ADR-019, tryb dewelopera), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
 `#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu w ms od epoki Unix
@@ -328,6 +328,7 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `set_work_token` | `source: WorkSource, token: string \| null` | `WorkStatus` | zapisuje token narzędzia w pliku szyfrowanym DPAPI (`work-<źródło>-token.bin`), nigdy w `config.json` ani w logach; `null` usuwa token. Token: 1–4096 widocznych znaków ASCII (inaczej `work.token`, pole `token`); błąd zapisu → `work.tokenSave`. Tokenu nie da się odczytać z powrotem |
 | `set_session_goal` | `goal: SessionGoal \| null` | `()` | cel sesji (pozycja z „Co dalej?”), w każdej fazie, bez efektów (`Input::SetGoal`); widoczny w `SessionSnapshot.goal`, na Stop trafia do `SessionSummary.goal`; `null` czyści |
 | `mark_goal_done` | `sessionId: string, done: boolean` | `()` | odpowiedź na „Zrobione?” w podsumowaniu: `goalDone` w ostatnim podsumowaniu i przy tej sesji w `history.jsonl` (powłoka przepisuje plik atomowo). Sesji nie ma ani w pamięci, ani w pliku → `history.unknownSession`; błąd zapisu → `persistence.history`; przy wyłączonym `keepHistory` zmienia tylko ostatnie podsumowanie |
+| `dev_trigger` | `action: DevAction` | `()` | przycisk strony Deweloper (ADR-019, §6.11): przykładowe okienko, toast fazy albo skrócenie bieżącej fazy; przy wyłączonym `developerMode` → `developerModeOff`. Nic nie zapisuje na dysku i nic nie wysyła |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -408,7 +409,7 @@ Odtwarzacz (osadzony i okno YouTube) milknie, gdy `musicMuted`, i wraca do zwyk�
 
 | Okno | Zawartość | Uprawnienia IPC |
 |---|---|---|
-| `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
+| `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia, przy `developerMode` także Deweloper, ADR-019) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
 | `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
 | `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014); także przypomnienie o spotkaniu `meetingReminder`, wstrzymana przerwa `breakHeld` (ADR-016) i paczka nowych pozycji „Co dalej?” `workDigest` (ADR-017). Gdy użytkownik prezentuje albo gra na pełnym ekranie, okienko czeka (ADR-018, §6.10); przy `showMascot` z maskotką „zza krawędzi” | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu, `showMascot`) i `popup://show`, a przy `meetingReminder` także `set_meeting_choice` |
 
@@ -980,6 +981,39 @@ Manifest (`static/mascot/*-manifest.json`): `frameWidth`, `frameHeight`, `column
 i `frames: { "<nazwa>": { x, y, scale } }` (lewy górny róg klatki w atlasie; `scale` to współczynnik wyrównania użyty przy cięciu, informacyjnie).
 Nazwy klatek: ADR-018 pkt 1. Atlasy i manifesty powstają tylko narzędziem z `tools/mascot/`; grafiki się nie przerysowuje (CLAUDE.md, zasada 10).
 CSP bez zmian: atlas i manifest są z własnego originu (`img-src 'self'`, `connect-src 'self'`).
+
+### 6.11 Tryb dewelopera (ADR-019)
+
+Nowe pole `Config` (stary `config.json` bez niego wczytuje się z `false`):
+
+| Pole | Typ | Domyślnie | Znaczenie |
+|---|---|---|---|
+| `developerMode` | `boolean` | `false` | czwarta zakładka „Deweloper” (trasa `/dev`) z przyciskami do testów i zrzutów ekranu; Ustawienia → Deweloper. Bez walidacji w core |
+
+Nowe pole DTO:
+
+| Typ | Pole | Uwagi |
+|---|---|---|
+| `PopupInfo` | `sticky: boolean` | `#[serde(default)]`; `true` tylko dla przykładowego okienka z `dev_trigger` z `sticky`: strona okienka nie odlicza, a powłoka go nie chowa (zostaje do X). Prawdziwe okienka zawsze `false` |
+
+Nowa komenda `dev_trigger { action: DevAction } -> ()` (§6.1), bez nowych eventów: okienko przychodzi zwykłą parą `get_popup` + `popup://show`,
+skrócona faza w `session://snapshot`. `DevAction` to enum z tagiem `type` (`#[serde(tag = "type")]`, pola w camelCase):
+
+| `type` | Pola | Skutek |
+|---|---|---|
+| `popup` | `kind: PopupKind`, `leadMinutes: number \| null`, `sticky: boolean` | okienko faz z przykładowym `PopupInfo` od powłoki: cykl i długość fazy z bieżącego `TimingProfile`, przykładowe przypomnienie, przykładowe spotkanie (id z prefiksem `dev-sample-`) dla `meetingReminder` / `breakHeld`, `leadMinutes` 30 / 20 / 10 (`null` = 30; przy 10 bez „przypomnij później”), Steam + Epic dla `launchersClosed`, `workCount` 3 dla `workDigest`. Pokazuje się od razu, także w czasie prezentacji (bez czekania z §6.10) |
+| `toast` | `phase: Phase` | ten sam toast Windows co przy prawdziwej zmianie fazy (`focus` / `break`; `idle` to błąd) |
+| `setRemaining` | `secs: number` | tylko w trwającej sesji (w Idle → `notRunning`): bieżąca faza kończy się za `secs` s, przycięte do 1..=długość fazy, przez nowy `Input` w core (`Input::DevSetRemaining`); zegar monotoniczny i profil czasów bez zmian |
+
+Kody błędów: `developerModeOff` (tryb wyłączony, każda akcja), `notRunning` i `dev.invalidPhase` (`toast` z `idle`, `field: "phase"`). `set_meeting_choice` dla spotkania `dev-sample-…`
+jest przyjmowane jako no-op: okienko próbki się zamyka, a wynik to bieżący `CalendarStatus` (nic nie trafia do `meeting-choices.json` ani do sesji); „Pomiń fazę” (`popup_action`)
+na przykładowym okienku tylko je zamyka (decyduje wątek okienek: przycisk w ciągu 500 ms od pojawienia się nowego okienka należy do poprzedniego). Przykładowe okienka nigdy nie czekają w kolejce: zastępują inną próbkę, odkładają prawdziwe pytanie o spotkanie albo paczkę „Co dalej?”
+jak każde okienko, a prawdziwe okienko zastępuje próbkę. Próbka `sticky` nie ma limitu czasu: powłoka co 5 s sprawdza tylko, czy jej okno istnieje (zamknięte Alt+F4 → odłożone okienka wracają), a wyłączenie `developerMode` ją zamyka. Powłoka: `src-tauri/src/dev.rs` (próbki), `popup.rs` (`PopupRequest.sample` / `sticky`), `ActorCmd::DevSetRemaining`. Przykłady argumentów: `{ "action": { "type": "popup", "kind": "meetingReminder", "leadMinutes": 10, "sticky": true } }`,
+`{ "action": { "type": "toast", "phase": "break" } }`, `{ "action": { "type": "setRemaining", "secs": 5 } }`.
+
+Frontend: trasa `src/routes/(app)/dev/+page.svelte`, stan `src/lib/state/dev.svelte.ts` (próbki i „Clean screenshots” tylko w pamięci; Ctrl+Shift+D przywraca
+ukrytą zakładkę), próbki danych w `src/lib/state/samples.ts` (budowane w chwili kliknięcia, id `dev-sample-…`, linki `https://dev-sample.invalid/`, których
+aplikacja nie otwiera; magazyny podsumowania, kalendarza, „Co dalej?” i sesji mają warstwę `sample` nad prawdziwą, a prawdziwe podsumowanie nowej sesji ją usuwa), teksty strony Deweloper tylko po angielsku w `src/lib/i18n/dev.ts` (poza typem `Strings`; przełącznik w Ustawieniach i nazwa zakładki są w 10 językach).
 
 ## 7. Model wątków i współbieżności
 

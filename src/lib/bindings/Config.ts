@@ -88,4 +88,9 @@ work: WorkConfig,
 /**
  * Show the axolotl mascot (main window, break card, popups). Default true.
  */
-showMascot: boolean, };
+showMascot: boolean, 
+/**
+ * Developer page with test triggers (sample popups, toasts, mascot, a shorter phase) for screenshots (ADR-019).
+ * Default false; an older `config.json` without it loads with it off.
+ */
+developerMode: boolean, };

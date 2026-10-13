@@ -21,6 +21,7 @@ vite.config.ts.timestamp-*
 !.env.example
 CLAUDE.local.md
 .claude/settings.local.json
+.claude/launch.json
 
 # OS / editors
 .DS_Store

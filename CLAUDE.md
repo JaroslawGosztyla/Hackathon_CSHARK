@@ -7,7 +7,7 @@ Teams „Nie przeszkadzać” (Graph; nie rusza „offline” ani własnego DND 
 nieusypianie ekranu, zamknięcie launcherów gier. W przerwie osłony schodzą, a muzyka gra dalej; przerwa pokazuje poradę i przypomnienie użytkownika.
 Opcjonalnie ciepłe kolory ekranu według pory dnia (Oświetlenie nocne Windows albo gamma). Motywy i pakiety dzwonków (także własny plik).
 Maskotka: aksolotl w słuchawkach z arkuszy klatek właściciela (mruga, reaguje na sesję, „mówi” porady ruchem ust, wygląda zza krawędzi okienek; ADR-018).
-Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014…018**;
+Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014…019**;
 wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
 Architektura multiplatformowa, **odbiór i gwarancje UX tylko na Windows** (ADR-008).
 Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), prowadzony z pomocą AI.
@@ -56,7 +56,7 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `blocklist.rs` (`websiteblacklist.txt` w katalogu konfiguracji: utworzenie z domyślnej listy, odczyt, auto-przeładowanie po zapisie, `blocklist://changed`;
   wzorce, których przeglądarka nie przyjęła jako reguł, ze zgłoszenia rozszerzenia jako `extensionSkipped`),
   `music.rs` (skan folderu i muzyka w zestawie; asset scope tylko dla znalezionych plików audio), `media_window.rs` (ukryte okno YouTube, ADR-013 pkt 2),
-  `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`; czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie), `tint.rs` (ciepło ekranu przez Oświetlenie nocne albo gammę, harmonogram, podgląd,
+  `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`; czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie, poza próbkami trybu dewelopera, ADR-019), `tint.rs` (ciepło ekranu przez Oświetlenie nocne albo gammę, harmonogram, podgląd,
   `tint-restore.json`, `tint://changed`; ADR-015), `safety_net.rs` (jeden wpis RunOnce `FocusModeRestore` dla osłon i kolorów ekranu),
   `close.rs` (X na oknie głównym: zasobnik, wyjście albo pytanie `app://close-requested`), `window_util.rs` (opcje WebView2 okna głównego dla
   pozostałych okien, pozycja w rogu ekranu), `teams.rs`, `tray.rs`, `texts.rs` (wszystkie teksty powłoki: toasty, tray, okienka),
@@ -71,7 +71,8 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
   `src/lib/mascot/` = maskotka (ADR-018): manifesty klatek, komponent rysujący jedną klatkę z atlasu, sterownik stanów (mruganie, reakcje na sesję,
   ruch ust według samogłosek, pikselizacja w motywie 8-bit); wyłącza ją `Config.showMascot`.
   Kalendarze: `MeetingConflicts.svelte` (Skupienie), `MeetingHoldBanner.svelte`, `CalendarSettings.svelte`; „Co dalej?”: `NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`.
-  Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w layoucie odtwarzacz i animowana nawigacja),
+  Tryb dewelopera (ADR-019, `Config.developerMode`): trasa `src/routes/(app)/dev/` (tylko po angielsku: `src/lib/i18n/dev.ts`), stan `src/lib/state/dev.svelte.ts`, próbki danych tylko w pamięci `src/lib/state/samples.ts` (id `dev-sample-…`, linki `https://dev-sample.invalid/`), komenda `dev_trigger` w `commands.rs` (próbki okienek i toastów w `src-tauri/src/dev.rs`, skrócenie fazy `Input::DevSetRemaining`).
+  Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w trybie dewelopera też Deweloper; w layoucie odtwarzacz i animowana nawigacja),
   `src/routes/(overlay)/` = lekka strona okna `popup`, **bez odtwarzacza** (inaczej muzyka grałaby w kilku oknach).
 - `src/lib/bindings/` — **generowane** przez ts-rs, nie edytuj ręcznie.
 - `static/mascot/` — atlasy WebP i manifesty klatek maskotki (generowane z `art/mascot/` narzędziem `tools/mascot/`, nie edytuj ręcznie).
@@ -153,7 +154,8 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
 ## Konwencje
 
 - Kod, identyfikatory, komentarze i commity **po angielsku**; dokumentacja w `docs/` **po polsku**.
-- Teksty dla użytkownika są na razie po polsku, docelowo w 10 językach (ADR-014). Każdy tekst UI trafia do `src/lib/strings.ts`,
+- Teksty dla użytkownika są na razie po polsku, docelowo w 10 językach (ADR-014). Każdy tekst UI trafia do `src/lib/strings.ts`
+  (wyjątek: strona Deweloper tylko po angielsku w `src/lib/i18n/dev.ts`, ADR-019),
   każdy tekst powłoki (toasty, tray, okienka) do `src-tauri/src/texts.rs`. `focus-core` nie zwraca tekstów: tylko kody
   (`AppError.code`, `BlocklistIssue.code`) i ewentualny szczegół po angielsku.
 - Commity: Conventional Commits z obszarem: `feat(core): …`, `fix(audio): …`, `feat(ui): …`,

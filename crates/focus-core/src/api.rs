@@ -115,6 +115,10 @@ pub mod commands {
     pub const SET_SESSION_GOAL: &str = "set_session_goal";
     /// `{ sessionId: string, done: boolean } -> ()` marks the goal of a finished session as done / not done (history).
     pub const MARK_GOAL_DONE: &str = "mark_goal_done";
+    /// `{ action: DevAction } -> ()` developer page trigger (ADR-019): a sample popup, a phase toast or a shorter
+    /// running phase. Rejected with `developerModeOff` unless `Config.developer_mode` is on. Nothing is persisted
+    /// and nothing leaves the computer.
+    pub const DEV_TRIGGER: &str = "dev_trigger";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -294,6 +298,9 @@ pub struct Config {
     pub work: WorkConfig,
     /// Show the axolotl mascot (main window, break card, popups). Default true.
     pub show_mascot: bool,
+    /// Developer page with test triggers (sample popups, toasts, mascot, a shorter phase) for screenshots (ADR-019).
+    /// Default false; an older `config.json` without it loads with it off.
+    pub developer_mode: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -804,6 +811,10 @@ pub struct PopupInfo {
     /// Number of new work items for `WorkDigest`.
     #[serde(default)]
     pub work_count: u32,
+    /// Developer-mode sample that stays until closed (ADR-019): no auto-hide countdown in the popup page and no
+    /// timeout in the shell. Always `false` for real popups.
+    #[serde(default)]
+    pub sticky: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1063,6 +1074,37 @@ pub struct SessionGoal {
 }
 
 // ---------------------------------------------------------------------------
+// Developer mode (ADR-019)
+// ---------------------------------------------------------------------------
+
+/// A button on the developer page (`dev_trigger`). Sample data lives only in memory: nothing is written to
+/// `history.jsonl` or `meeting-choices.json` and nothing is sent over the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export)]
+pub enum DevAction {
+    /// Shows the phase popup window with a sample `PopupInfo` filled by the shell: cycle, phase length from the
+    /// current `TimingProfile`, a sample reminder, a sample meeting (id prefixed `dev-sample-`) for
+    /// `MeetingReminder` / `BreakHeld`, Steam + Epic for `LaunchersClosed`, `work_count` 3 for `WorkDigest`.
+    /// Shown at once, also while the user is presenting.
+    #[serde(rename_all = "camelCase")]
+    Popup {
+        kind: PopupKind,
+        /// Minutes before the sample meeting (30 / 20 / 10); decides which buttons a `MeetingReminder` offers
+        /// (10 = the last reminder, without "later"). `None` = 30.
+        lead_minutes: Option<u32>,
+        /// Keep the popup open until it is closed (`PopupInfo.sticky`).
+        sticky: bool,
+    },
+    /// The same Windows toast a real change to `phase` shows (`focus` or `break`; `idle` is rejected).
+    #[serde(rename_all = "camelCase")]
+    Toast { phase: Phase },
+    /// Running session only (else `notRunning`): the current phase ends in `secs`, clamped to 1..=phase length.
+    #[serde(rename_all = "camelCase")]
+    SetRemaining { secs: u32 },
+}
+
+// ---------------------------------------------------------------------------
 // Browser extension bridge
 // ---------------------------------------------------------------------------
 
@@ -1095,8 +1137,61 @@ pub struct BridgeState {
 
 #[cfg(test)]
 mod tests {
-    use super::{commands, events};
+    use super::{DevAction, Phase, PopupInfo, PopupKind, commands, events};
     use std::fmt::Write as _;
+
+    #[test]
+    fn dev_action_wire_format_is_tagged_camel_case() {
+        let popup = DevAction::Popup {
+            kind: PopupKind::MeetingReminder,
+            lead_minutes: Some(10),
+            sticky: true,
+        };
+        let json = serde_json::to_value(popup).expect("serialize");
+        assert_eq!(
+            json,
+            serde_json::json!({ "type": "popup", "kind": "meetingReminder", "leadMinutes": 10, "sticky": true })
+        );
+        assert_eq!(
+            serde_json::from_value::<DevAction>(json).expect("deserialize"),
+            popup
+        );
+
+        let no_lead: DevAction =
+            serde_json::from_str(r#"{"type":"popup","kind":"breakStarted","sticky":false}"#)
+                .expect("lead minutes may be left out");
+        assert_eq!(
+            no_lead,
+            DevAction::Popup {
+                kind: PopupKind::BreakStarted,
+                lead_minutes: None,
+                sticky: false,
+            }
+        );
+
+        let toast: DevAction =
+            serde_json::from_str(r#"{"type":"toast","phase":"break"}"#).expect("toast");
+        assert_eq!(
+            toast,
+            DevAction::Toast {
+                phase: Phase::Break
+            }
+        );
+        let remaining: DevAction =
+            serde_json::from_str(r#"{"type":"setRemaining","secs":5}"#).expect("set remaining");
+        assert_eq!(remaining, DevAction::SetRemaining { secs: 5 });
+
+        assert!(serde_json::from_str::<DevAction>(r#"{"type":"wipeDisk"}"#).is_err());
+    }
+
+    #[test]
+    fn popup_info_written_before_sticky_is_not_sticky() {
+        let info: PopupInfo = serde_json::from_str(
+            r#"{"revision":5,"kind":"breakStarted","cycle":2,"phaseSecs":900,"launchers":[],"reminder":null}"#,
+        )
+        .expect("old popup info");
+        assert!(!info.sticky);
+    }
 
     /// Writes `names.ts` with command and event names next to the ts-rs bindings.
     #[test]
@@ -1149,6 +1244,7 @@ mod tests {
             ("setWorkToken", commands::SET_WORK_TOKEN),
             ("setSessionGoal", commands::SET_SESSION_GOAL),
             ("markGoalDone", commands::MARK_GOAL_DONE),
+            ("devTrigger", commands::DEV_TRIGGER),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),

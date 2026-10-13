@@ -97,6 +97,7 @@ impl Default for Config {
             calendar: CalendarConfig::default(),
             work: WorkConfig::default(),
             show_mascot: true,
+            developer_mode: false,
         }
     }
 }
@@ -201,6 +202,7 @@ impl Config {
             calendar,
             work,
             show_mascot,
+            developer_mode,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -229,6 +231,7 @@ impl Config {
             calendar: calendar.normalized()?,
             work: work.normalized()?,
             show_mascot,
+            developer_mode,
         })
     }
 }
@@ -1014,6 +1017,26 @@ mod tests {
             }
         );
         assert!(cfg.show_mascot);
+        assert!(!cfg.developer_mode);
+    }
+
+    #[test]
+    fn config_written_before_developer_mode_loads_with_it_off() {
+        let old: Config = serde_json::from_str(r#"{"focusMinutes": 30, "showMascot": false}"#)
+            .expect("old config");
+        assert!(!old.developer_mode);
+        assert_eq!(old.clone().normalized(), Ok(old));
+
+        let on: Config =
+            serde_json::from_str(r#"{"developerMode": true}"#).expect("developer mode");
+        assert_eq!(
+            on,
+            Config {
+                developer_mode: true,
+                ..Config::default()
+            }
+        );
+        assert_eq!(on.clone().normalized(), Ok(on));
     }
 
     #[test]
@@ -1852,6 +1875,7 @@ mod tests {
                     hold_during_focus: false,
                 },
                 show_mascot: false,
+                developer_mode: true,
                 ..Config::default()
             };
             let json = serde_json::to_string(&cfg).expect("serialize");

@@ -48,6 +48,7 @@ export const COMMANDS = {
   setWorkToken: "set_work_token",
   setSessionGoal: "set_session_goal",
   markGoalDone: "mark_goal_done",
+  devTrigger: "dev_trigger",
 } as const;
 
 export const EVENTS = {

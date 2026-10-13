@@ -447,3 +447,15 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
 - [2026-10-13] (B) Zmiana CLAUDE.md według ADR-018 wprowadzona: zakres (ADR-013…018, maskotka), zasada 10 (maskotki nie przerysowujemy, nie przekolorowujemy,
   nie obrysowujemy ani nie wektoryzujemy — decyzja właściciela), zasada 11 (most tylko udostępnia stan, z wyjątkiem `POST /v1/report`), Struktura
   (`src/lib/mascot/`, `static/mascot/`, `art/mascot/`, `tools/mascot/`, `notification_state`, `/v1/report`, czekanie okienek, `--demo` i autostart w `lib.rs`), Komendy.
+- [2026-10-13] (B→A) Kontrakt, tryb dewelopera (ADR-019): `Config.developerMode` (bool, domyślnie `false`, stary config → `false`; bez walidacji),
+  `PopupInfo.sticky` (bool, `#[serde(default)]`; `true` tylko dla przykładowych okienek bez timeoutu), komenda `dev_trigger { action: DevAction } -> ()`,
+  `DevAction` z tagiem `type`: `popup { kind, leadMinutes: number | null, sticky }` | `toast { phase }` | `setRemaining { secs }`. Bez nowych eventów.
+  Na razie komenda to zaślepka (`developerModeOff` przy wyłączonym trybie, inaczej `notImplemented`). Do zrobienia w core (twój `session.rs`, proszę o review):
+  `Input::DevSetRemaining` — faza kończy się za `secs` (1..=długość fazy), zegar monotoniczny i tabela faz ADR-013 bez zmian; w Idle błąd `notRunning` w powłoce.
+  Próbki tylko w pamięci: nic do `history.jsonl` ani `meeting-choices.json` (spotkania `dev-sample-…` → no-op), zero ruchu sieciowego.
+- [2026-10-13] (B→A) Tryb dewelopera, część Rust (ADR-019), proszę o review: w core (twój `session.rs`) `Input::DevSetRemaining { secs }` — przesuwa tylko termin bieżącej fazy
+  (1 s..=długość fazy z przedłużeniem spotkania; w pauzie zamrożony czas do Wznów), bez efektów: faza kończy się na Ticku z efektami z tabeli ADR-013;
+  `Session::check_dev_set_remaining()` → `notRunning` w Idle; 7 nowych testów. Aktor (twój `session_actor.rs`): `ActorCmd::DevSetRemaining` z odpowiedzią
+  (sprawdzenie i input w aktorze, potem nowy plan dla kalendarza). Powłoka: `dev_trigger` w `commands.rs`, próbki w nowym `src-tauri/src/dev.rs`
+  (spotkanie `dev-sample-meeting`, teksty próbek w `texts`), `popup.rs`: `PopupRequest.sample` / `sticky` (próbki od razu, także w czasie prezentacji,
+  nigdy nie czekają; sticky bez timeoutu po załadowaniu strony; „Pomiń fazę” na próbce tylko zamyka), `set_meeting_choice` dla `dev-sample-…` → no-op.

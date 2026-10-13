@@ -34,6 +34,10 @@ Do tego poprawki: okienka czekają, gdy użytkownik prezentuje albo gra na pełn
 rozszerzenie zgłasza wzorce, których przeglądarka nie przyjęła jako reguł (`POST /v1/report`, jedyny zapis do mostu); wpis autostartu jest odświeżany przy starcie.
 Zmienia ADR-013, 014 i 015.
 
+**Stan na 2026-10-13 (tryb dewelopera):** [ADR-019](#adr-019-tryb-dewelopera) dokłada wyłączony domyślnie tryb dewelopera: zakładkę „Deweloper”
+z przyciskami wywołującymi okienka, toasty, maskotkę i skrócenie fazy, do zrzutów ekranu na prezentację. Próbki nie są zapisywane i nic nie opuszcza komputera
+(przyciski wyglądu i okna to skróty do prawdziwych ustawień); strona Deweloper jest tylko po angielsku, a jej okienka nie czekają na koniec prezentacji. Zmienia ADR-014 i 018.
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -1364,3 +1368,65 @@ Z testów wyszły też poprawki, które trafiają do tej samej rundy:
 - CLAUDE.md: opis zakresu (ADR-013…018 i maskotka); zasada 10 (własne grafiki projektu: maskotki nie przerysowujemy, nie przekolorowujemy ani nie obrysowujemy);
   zasada 11 (most tylko udostępnia stan, z wyjątkiem `POST /v1/report`); Struktura (`src/lib/mascot/`, `static/mascot/`, `art/mascot/`, `tools/mascot/`,
   `focus-platform/src/notification_state.rs`, `/v1/report` w `bridge.rs`, czekanie okienek w `popup.rs`); Komendy (`--demo` przy działającej aplikacji).
+
+## ADR-019: Tryb dewelopera
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu przygotowuje prezentację i potrzebuje zrzutów ekranu okienek, toastów, reakcji maskotki i banerów. W zwykłym użyciu
+większość z nich pojawia się tylko w konkretnej chwili sesji (koniec focusa, spotkanie przed przerwą, nowe zadania w trakcie focusa, zamknięty launcher),
+znika po kilku sekundach albo czeka, gdy użytkownik prezentuje (ADR-018 pkt 5). Profil demo (40 s / 20 s) skraca czekanie, ale bez kalendarza nie wywoła
+okienka spotkania, a bez narzędzi pracy paczki „Co dalej?”. Prośba właściciela: przełącznik „Włącz tryb dewelopera” w Ustawieniach, który dokłada zakładkę
+z dużą liczbą przycisków wywołujących okienka i inne efekty.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Tryb dewelopera w configu + strona z przyciskami + jedna komenda `dev_trigger`** | działa w zainstalowanej aplikacji; prawdziwe okienka i toasty (te same komponenty i teksty); jedna komenda zamiast kilku | kod deweloperski w wydaniu; trzeba pilnować, żeby próbki nie trafiły do plików ani do sieci |
+| Osobny build deweloperski (feature w Cargo albo zmienna środowiska) | zero dodatkowego kodu w wydaniu | właściciel nagrywa na zainstalowanej aplikacji; dwa buildy przed demo; odrzucone |
+| Fałszywe źródła danych (fikcyjny kalendarz i narzędzia pracy zapisane na dysku) | cała ścieżka jak w prawdziwym użyciu | fikcyjne dane w `history.jsonl` i `meeting-choices.json`, łatwo pomylić je z prawdziwymi; odrzucone |
+
+**Decyzja:**
+1. **`Config.developerMode`** (bool, domyślnie `false`; stary `config.json` → `false`). Ustawienia: ostatnia sekcja „Deweloper” z przełącznikiem
+   „Włącz tryb dewelopera” i jednozdaniową podpowiedzią. Przełącznik, podpowiedź i nazwa zakładki są przetłumaczone na wszystkie 10 języków.
+2. **Zakładka „Deweloper”** (trasa `/dev`) pojawia się w nawigacji po Ustawieniach tylko przy włączonym trybie. Animowane podświetlenie nawigacji
+   i przesunięcie tła działają z 4 zakładkami i wracają do 3 po wyłączeniu; kto jest wtedy na `/dev`, przechodzi na inną stronę. Powłoka odrzuca komendy
+   dewelopera kodem `developerModeOff`, gdy tryb jest wyłączony.
+3. **Strona Deweloper jest tylko po angielsku** (narzędzie deweloperskie, nie część produktu): jej teksty leżą w osobnym module `src/lib/i18n/dev.ts`
+   (zwykłe stałe, poza typem `Strings`). To wyjątek od zasady, że każdy tekst UI ma 10 wersji językowych (ADR-014 pkt 5, CLAUDE.md „Konwencje”).
+4. **Próbki nie są zapisywane i nic nie opuszcza komputera.** Przyciski nie piszą do `history.jsonl`, nie wołają kalendarzy ani narzędzi pracy przez sieć
+   i nie tworzą tokenów. Próbki żyją tylko w pamięci (stan frontendu w `src/lib/state/samples.ts` i warstwach próbek w magazynach albo flaga w pamięci
+   powłoki) i znikają po „Clear samples” oraz po restarcie; prawdziwe podsumowanie sesji, która właśnie się skończyła, zastępuje próbkę podsumowania.
+   Przykładowe spotkania mają id z prefiksem `dev-sample-`; `set_meeting_choice` i przyciski okienka dla takiego spotkania są przyjmowane jako no-op
+   (nic nie trafia do `meeting-choices.json` ani do sesji). „Pomiń fazę” na przykładowym okienku tylko je zamyka; o tym, do którego okienka należał
+   przycisk, decyduje wątek okienek (przycisk tuż przed pojawieniem się nowego okienka należy do poprzedniego, jak przy zamknięciu).
+   Wyjątek świadomy: przyciski sekcji „Look & feel” (motyw, język) i „Window & app” (reset wyboru przy X) oraz „Show the mascot” to skróty
+   do prawdziwych ustawień i zapisują `config.json` jak Ustawienia; test dzwonków na chwilę przełącza `chimeSound`, odtwarza dźwięk i zapisuje
+   z powrotem wybór użytkownika (dwa zapisy; przy awarii między nimi zostaje testowany dźwięk). Treść próbek widoczna poza stroną Deweloper
+   (spotkania, przypomnienie, komunikat o linku próbki) jest w języku interfejsu, tak jak próbki okienek z powłoki.
+5. **Zrzuty ekranu.** Przykładowe okienka pokazują się od razu, także gdy użytkownik prezentuje albo gra na pełnym ekranie (wyjątek od ADR-018 pkt 5:
+   właściciel nagrywa ekran właśnie w takim trybie), i mają opcję „Keep popup open” (`PopupInfo.sticky`: strona okienka nie odlicza, powłoka go nie chowa;
+   co kilka sekund sprawdza tylko, czy okno jeszcze istnieje, a wyłączenie trybu dewelopera zamyka próbkę).
+   Przyciski efektów w oknie głównym (maskotka, banery, próbki) przechodzą na zakładkę, na której efekt widać (Skupienie albo Podsumowanie), i działają
+   dopiero po zamontowaniu strony. Przełącznik „Clean screenshots” na stronie Deweloper chowa zakładkę Deweloper, dopóki Ctrl+Shift+D (albo wyłączenie
+   trybu w Ustawieniach) jej nie przywróci; ten stan jest tylko w pamięci.
+6. **Skrócenie fazy** (`setRemaining`) idzie przez nowy `Input` w core (`Input::DevSetRemaining`): bieżąca faza kończy się za podaną liczbę sekund
+   (przycięte do 1..=długość fazy). Zegar monotoniczny i `TimingProfile` się nie zmieniają (CLAUDE.md, zasada 2), a koniec fazy przebiega dokładnie
+   według tabeli ADR-013 (Tick po terminie). W Idle → `notRunning`.
+7. **Kontrakt** (`api.rs`, osobny mały commit przed implementacją): `Config.developerMode`, `PopupInfo.sticky` (`#[serde(default)]`), komenda
+   `dev_trigger { action: DevAction } -> ()`, gdzie `DevAction` to `popup { kind, leadMinutes, sticky }` | `toast { phase }` | `setRemaining { secs }`
+   (tag `type`). Bez nowych eventów. Szczegóły: ARCHITECTURE §6.11.
+
+**Konsekwencje:**
+- Wydanie zawiera kod dewelopera, ale domyślnie wyłączony i odcięty w powłoce (`developerModeOff`).
+- Przykładowe okienko używa tego samego okna co prawdziwe, więc może przykryć prawdziwe okienko (i odwrotnie).
+- Sesja skrócona przez `setRemaining` jest prawdziwą sesją: po Stop jej podsumowanie trafia do historii jak zwykle (przy `keepHistory`),
+  z czasem rzeczywiście spędzonym w skupieniu.
+- Toast z `toast` to prawdziwe powiadomienie Windows: przy włączonym „Nie przeszkadzać” system może go wyciszyć.
+- Strona Deweloper nie jest tłumaczona.
+
+**Co zmienia:**
+- ADR-014 pkt 5: strona Deweloper tylko po angielsku (pkt 3).
+- ADR-018 pkt 5: przykładowe okienka nie czekają na koniec prezentacji (pkt 5).
+- CLAUDE.md: Struktura (trasa `/dev`, `src/lib/state/dev.svelte.ts`, `src/lib/state/samples.ts`, `dev_trigger` w `commands.rs`), zakres ADR-014…019,
+  wyjątek od zasady tekstów UI w „Konwencjach” i wpis `popup.rs` (próbki nie czekają na koniec prezentacji).
