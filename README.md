@@ -6,20 +6,29 @@ strony z memami i launchery gier. W przerwie wszystko wraca, a muzyka gra dalej.
 aplikacjach naprawdę spędziłeś czas.
 
 Rust + Tauri 2 + Svelte 5 · Windows 10/11 (pełne wsparcie), macOS / Linux (best-effort) · projekt hackathonowy.
-Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu)
-i [ADR-014](docs/DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki).
+Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu),
+[ADR-014](docs/DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki)
+i [ADR-015](docs/DECISIONS.md#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia).
 
 ## Co potrafi
 
 - **Pętla skupienie ⇄ przerwa** aż do Stop. Czasy ustawiasz sam (1–240 / 1–120 min) albo wybierasz preset: 25/5, 45/15, 50/10, 90/20.
-- **Dzwonek i powiadomienie** przy każdej zmianie fazy. W przerwie aplikacja proponuje, jak się poruszać.
-  Zamiast zwykłego powiadomienia Windows możesz włączyć **okienka FocusMode**: małe okno w prawym dolnym rogu ekranu, w stylu aplikacji,
+- **Dzwonek i powiadomienie** przy każdej zmianie fazy. Dźwięk wybierasz z listy: pakiety pasujące do motywów (Midnight, Vaporwave, Lunar, Autumn),
+  klasyczny ding-dong, łagodny ton albo 8-bitowe arpeggio. Możesz też wskazać **własny plik** (mp3, wav, ogg, flac, m4a, do 10 MB):
+  FocusMode kopiuje go do swojego folderu danych i gra najwyżej 10 sekund.
+- **Przerwa z pomysłem**: przy każdej przerwie FocusMode losuje poradę dopasowaną do jej długości (oczy, rozciąganie, ruch, woda, oddech, wyjście na zewnątrz…).
+  Porady powstały na podstawie publicznych źródeł (m.in. HSE, OSHA, CIOP-PIB, AAO, WHO, CCOHS, NHS i badań nad przerwami w pracy), a źródło jest podane przy każdej z nich.
+  To propozycje, nie porady medyczne. Możesz też ustawić **własne przypomnienia na kolejne przerwy**, np. 1. przerwa: rozciąganie, 2.: woda i spacer z psem,
+  3.: obiad (opcjonalnie lista może się powtarzać).
+- Zamiast zwykłego powiadomienia Windows możesz włączyć **okienka FocusMode**: małe okno w prawym dolnym rogu ekranu, w stylu aplikacji,
   z przyciskami „Pokaż okno” i „Pomiń fazę”. Nie zabiera fokusu i znika samo po kilku sekundach. Pojawia się też, gdy sesja zatrzymała się
   po uśpieniu komputera i gdy FocusMode zamknął launchery gier. To okno aplikacji, a nie powiadomienie, więc „Nie przeszkadzać” go nie wycisza.
 - **Pauza, Wznów, Pomiń fazę, Stop** w dowolnej chwili, w oknie albo z ikony w zasobniku (działa też przy ukrytym oknie).
   Uśpienie komputera w trakcie sesji automatycznie ją wstrzymuje.
 - **Muzyka** (gra też w przerwie, chyba że wyłączysz to w ustawieniach):
-  - **stream**: domyślnie publiczny live „lofi hip hop radio” kanału Lofi Girl na YouTube albo dowolny adres radia internetowego,
+  - **muzyka w zestawie** (domyślnie): 12 utworów lo-fi z kolekcji [Open Lo-Fi](#muzyka-w-zestawie-i-licencje) na licencji CC0, dołączonych do aplikacji;
+    gra od razu, także bez internetu,
+  - **stream**: np. publiczny live „lofi hip hop radio” kanału Lofi Girl na YouTube albo dowolny adres radia internetowego,
   - **linki**: filmy i playlisty YouTube, YouTube Music, `youtu.be`, bezpośrednie adresy plików audio (z mieszaniem),
   - **folder**: pliki mp3, m4a, aac, flac, wav, ogg, opus i webm z wybranego katalogu,
   - **szum**: brązowy, różowy lub biały, generowany lokalnie (działa offline),
@@ -28,7 +37,7 @@ i [ADR-014](docs/DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-over
   YouTube gra w odtwarzaczu wbudowanym w okno FocusMode. Filmy, których właściciel nie pozwala osadzać w innych stronach
   (m.in. live Lofi Girl i część utworów YouTube Music), oraz linki do kanałów (`/@kanał`, `/@kanał/live`) otwierają się
   w **ukrytym oknie YouTube grającym w tle**, którym FocusMode steruje jak odtwarzaczem (odtwarzanie, pauza, głośność).
-  Domyślny stream to `https://www.youtube.com/@LofiGirl/live` (zawsze bieżąca transmisja kanału). Przy pierwszym uruchomieniu YouTube pyta
+  Podpowiadany adres streamu to `https://www.youtube.com/@LofiGirl/live` (zawsze bieżąca transmisja kanału). Przy pierwszym odtwarzaniu w tym oknie YouTube pyta
   o zgodę na ciasteczka: okno pojawi się wtedy na środku ekranu, a po wyborze opcji schowa się samo (wybór zostaje zapamiętany).
   Przycisk „Pokaż okno” w odtwarzaczu pokazuje je na żądanie; zamknięcie (X) tylko je chowa, muzyka gra dalej.
 - **Osłony skupienia** (każdą włączasz osobno w Ustawieniach; schodzą w przerwie, po Stop i przy wyjściu z aplikacji):
@@ -46,10 +55,21 @@ i [ADR-014](docs/DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-over
     i nie uruchamia launcherów ponownie w przerwie; w trakcie skupienia możesz je włączyć sam.
 - **Ciepłe kolory ekranu według pory dnia** (domyślnie wyłączone; Ustawienia → „Ciepłe kolory ekranu”): wieczorem ekran robi się cieplejszy,
   rano wraca do normy. Ustawiasz godzinę początku i końca (domyślnie 18:00 → 9:00), siłę i długość płynnego przejścia (domyślnie 30 min),
-  a przesunięcie suwaka siły od razu pokazuje podgląd. Działa niezależnie od sesji. To półprzezroczysta warstwa nad ekranem, przez którą normalnie klikasz,
-  a nie zmiana ustawień karty graficznej, więc po zamknięciu (albo awarii) aplikacji kolory od razu wracają.
+  a przesunięcie suwaka siły od razu pokazuje podgląd. Działa niezależnie od sesji. Kolory zmienia naprawdę, na jeden z dwóch sposobów:
+  - **Oświetlenie nocne Windows** (domyślnie): FocusMode włącza je w twoich godzinach i ustawia jego siłę, a poza nimi wyłącza,
+  - **gamma monitora**: zmiana kolorów każdego monitora (także w grach na pełnym ekranie); nie działa na monitorach HDR, a bardzo ciepłe wartości Windows osłabia.
+
+  Obraz nie traci kontrastu, a zrzuty ekranu mają normalne kolory. Twoje ustawienia Oświetlenia nocnego (albo kalibrację monitora) FocusMode zapamiętuje
+  przed pierwszą zmianą i przywraca je po wyłączeniu, przy zamknięciu aplikacji, a po awarii przy następnym uruchomieniu albo najpóźniej przy następnym logowaniu.
+- **Motywy**: Midnight (domyślny), Vaporwave, fazy księżyca, przytulna jesień, prosty ciemny, prosty jasny i 8-bit. Przełączanie zakładek
+  Skupienie / Podsumowanie / Ustawienia jest animowane (podświetlenie przesuwa się, a tło lekko przesuwa się w bok); przy włączonym w systemie
+  ograniczeniu animacji ruch jest wyłączony.
 - **Wykres produktywności**: w trakcie skupienia FocusMode co sekundę sprawdza, która aplikacja jest na pierwszym planie.
   Po Stop pokazuje czas według procesu (np. `Code.exe`, `chrome.exe`), osobno bezczynność, a historię sesji zapisuje lokalnie.
+  Elementy samego Windows (menu Start, wyszukiwanie, pasek zadań, pulpit, `ShellExperienceHost` itp.) nie są liczone.
+  Po najechaniu myszą na słupek widzisz najczęstsze **tytuły okien** tej aplikacji (np. karty przeglądarki albo foldery w Eksploratorze);
+  zapamiętywanie tytułów wyłączysz w Ustawieniach. Tam też możesz **wyłączyć zapisywanie historii** (podsumowanie po Stop nadal się pokaże)
+  i **usunąć całą historię** jednym przyciskiem (z potwierdzeniem).
 - **Zasobnik**: przy pierwszym kliknięciu X FocusMode pyta, czy schować się do zasobnika (obok zegara). „Tak” chowa okno (muzyka i sesja trwają dalej)
   i od razu włącza okienka FocusMode; „Nie” sprawia, że X zamyka aplikację. Wybór zapamiętuje i możesz go zmienić w Ustawieniach.
   Z menu ikony w zasobniku zawsze sterujesz sesją i zamkniesz aplikację („Zakończ”). Jedna instancja, opcjonalny start przy logowaniu
@@ -158,12 +178,26 @@ $env:FOCUSMODE_DEMO=1; npm run tauri dev
 
 W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
 
+## Muzyka w zestawie i licencje
+
+Domyślna muzyka to 12 utworów z kolekcji **Open Lo-Fi** autorstwa btahir (<https://github.com/btahir/open-lofi>, wydanie v1.0.0),
+udostępnionej na licencji [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (domena publiczna). Pliki są niezmienione;
+leżą w `src-tauri/resources/music/open-lofi/` razem z `library.json` (tytuły i kategorie) i trafiają do instalatora (ok. 37 MB).
+Pełna lista utworów, pochodzenie i pozostałe zasoby (maskotka, dźwięki): [CREDITS.md](CREDITS.md).
+
+Dzwonki są syntezowane w kodzie, bez plików z zewnątrz. Stream Lofi Girl to tylko link do ich publicznej transmisji, odtwarzany oficjalnym playerem YouTube;
+FocusMode nie zawiera grafik ani marki Lofi Girl.
+
 ## Prywatność
 
 - **Nic nie opuszcza komputera.** Nie ma kont, telemetrii ani analityki.
-- **Śledzenie aplikacji** zapisuje tylko nazwę procesu na pierwszym planie i czas bezczynności, raz na sekundę i tylko w trakcie
-  biegnącego skupienia (nie w pauzie i nie w przerwie). Tytułów okien nie zapisujemy: służą wyłącznie w pamięci do awaryjnego rozpoznania
-  rozpraszającej strony. Śledzenie wyłączysz w Ustawieniach.
+- **Śledzenie aplikacji** sprawdza raz na sekundę, i tylko w trakcie biegnącego skupienia (nie w pauzie i nie w przerwie), nazwę procesu
+  na pierwszym planie, czas bezczynności i tytuł okna. Elementy samego Windows (menu Start, pasek zadań, pulpit, wyszukiwanie) pomija.
+  Zapisuje sumy czasu według procesu, a gdy włączone jest **zapamiętywanie tytułów** (domyślnie tak), także najczęstsze tytuły okien każdej aplikacji
+  (przycięte do 120 znaków, w podsumowaniu najwyżej 5 na aplikację), żeby pokazać je w podpowiedzi na wykresie. Tytuły mogą zawierać prywatne informacje
+  (np. temat wiadomości, nazwę dokumentu albo tytuł strony z trybu prywatnego), dlatego: zostają tylko na twoim komputerze w `history.jsonl`, nigdy nie trafiają
+  do logów, do rozszerzenia ani do sieci, a w Ustawieniach możesz wyłączyć tytuły, wyłączyć zapisywanie historii albo usunąć całą historię (z potwierdzeniem).
+  Wyłączenie tytułów nie usuwa tych, które już są w historii; do tego służy „Usuń historię”. Całe śledzenie wyłączysz w Ustawieniach.
 - **Rozszerzenie nie wysyła historii przeglądania** ani do aplikacji, ani nigdzie indziej. Samo pobiera z aplikacji stan i listę domen
   oraz wzorców z `websiteblacklist.txt`, a adres karty porównuje lokalnie w przeglądarce. Nie ładuje zdalnego kodu. Jedynym adresem, z którym się łączy, jest `127.0.0.1:47615`.
 - **Lokalny most** nasłuchuje tylko na `127.0.0.1` (nie jest widoczny w sieci) i udostępnia wyłącznie odczyt stanu.
@@ -175,19 +209,23 @@ W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
   do komend aplikacji, przechodzi tylko po domenach YouTube i Google, a inne linki otwiera w twojej przeglądarce.
   Token Teams jest zaszyfrowany DPAPI dla bieżącego użytkownika Windows. Przed ustawieniem „Nie przeszkadzać” FocusMode odczytuje twój bieżący
   status z Microsoft Graph (ta sama zgoda `Presence.ReadWrite`); odczytu nigdzie nie zapisuje.
-- **Dostęp do plików**: odtwarzacz może czytać z dysku tylko pliki audio znalezione w wybranym folderze muzyki.
+- **Dostęp do plików**: odtwarzacz może czytać z dysku tylko muzykę dołączoną do aplikacji i pliki audio znalezione w wybranym folderze muzyki.
+  Własny dźwięk dzwonka jest kopiowany do folderu `sounds` w danych aplikacji; config przechowuje tylko nazwę pliku z tego folderu.
 - **Zamykanie launcherów gier** (tylko gdy je włączysz): na start skupienia FocusMode przegląda lokalnie listę uruchomionych procesów
   i zamyka wyłącznie te, których nazwa pliku dokładnie pasuje do zaznaczonych launcherów, tylko w twojej sesji Windows i bez praw administratora.
   Listy procesów nie zapisuje ani nigdzie nie wysyła.
-- **Ciepłe kolory ekranu, okienka FocusMode i język** działają lokalnie: ciepła warstwa to okno aplikacji nad ekranem (bez zmian w sterowniku grafiki
-  i ustawieniach Windows), godzina pochodzi z zegara systemu, a język z ustawień Windows.
+- **Ciepłe kolory ekranu, okienka FocusMode i język** działają lokalnie. Ciepłe kolory zmieniają ustawienie Oświetlenia nocnego bieżącego użytkownika
+  albo rampę gamma monitorów (bez praw administratora). Zaraz po pierwszej zmianie FocusMode zapisuje, co trzeba przywrócić, w pliku w swoim folderze danych
+  i dodaje ten sam wpis `FocusModeRestore` w `RunOnce` co przy wyciszeniu powiadomień, więc po awarii kolory wracają przy następnym uruchomieniu albo logowaniu.
+  Godzina pochodzi z zegara systemu, a język z ustawień Windows.
 - **Wyciszenie powiadomień** zmienia tylko ustawienie „Nie przeszkadzać” bieżącego użytkownika (bez praw administratora) i tylko wtedy,
   gdy było wyłączone. Zaraz po włączeniu FocusMode zapisuje, co trzeba cofnąć (`shields-restore.json`), i dodaje wpis `FocusModeRestore`
   w `HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce`, który przy następnym logowaniu uruchamia FocusMode z `--restore-shields`.
   Powiadomienia wracają w przerwie, po Stop i przy wyjściu, a po awarii przy następnym uruchomieniu aplikacji albo najpóźniej przy następnym logowaniu.
-- Dane leżą lokalnie w `%APPDATA%\com.focusmode.app`: `config.json` (ustawienia, także język, wybór zasobnika, odcień i launchery), `websiteblacklist.txt` (lista blokowanych stron),
-  `history.jsonl` (podsumowania sesji),
-  `teams-token.bin` (jeśli połączysz Teams), `shields-restore.json` (tylko w trakcie wyciszenia). Logi: `%LOCALAPPDATA%\com.focusmode.app\logs`,
+- Dane leżą lokalnie w `%APPDATA%\com.focusmode.app`: `config.json` (ustawienia, także język, wybór zasobnika, odcień, motyw, dzwonki, przypomnienia i launchery), `websiteblacklist.txt` (lista blokowanych stron),
+  `history.jsonl` (podsumowania sesji z czasem według aplikacji i, jeśli włączone, tytułami okien; przy wyłączonym zapisie historii nowe sesje nie są dopisywane,
+  a „Usuń historię” kasuje plik), `sounds\` (twoje własne dźwięki dzwonków), `teams-token.bin` (jeśli połączysz Teams), `shields-restore.json` (tylko w trakcie wyciszenia)
+  i `tint-restore.json` (tylko gdy FocusMode zmienił kolory ekranu). Logi (bez tytułów okien i tokenów): `%LOCALAPPDATA%\com.focusmode.app\logs`,
   dane WebView2 (w tym ciasteczka YouTube z okna YouTube i z osadzonego playera): `%LOCALAPPDATA%\com.focusmode.app\EBWebView`.
 
 ## Znane ograniczenia
@@ -201,9 +239,12 @@ W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
   Link, którego nie da się odtworzyć wcale, jest pomijany z komunikatem.
 - Rozszerzenie trzeba raz załadować ręcznie. Zmiana fazy dociera do niego najpóźniej po 30 s (przy otwieraniu stron szybciej).
 - Przerwa to dzwonek, powiadomienie (albo okienko FocusMode) i propozycje ruchu w oknie. Nie ma pełnoekranowej blokady ekranu.
-- Ciepłe kolory ekranu to warstwa nad ekranem, a nie zmiana kolorów karty graficznej: nie przykrywa gier w trybie wyłącznego pełnego ekranu,
-  ekranu blokady, okien UAC ani menu Start, a kursor zostaje w normalnych kolorach. Warstwa może być widoczna na zrzutach ekranu i nagraniach
-  i lekko obniża kontrast (czernie robią się odrobinę jaśniejsze). To efekt wizualny, nie kalibracja barw. Działa tylko na Windows.
+- Ciepłe kolory ekranu zmieniają ustawienie Windows (Oświetlenie nocne) albo rampę gamma monitora, więc po awarii aplikacji zostają ciepłe
+  do jej następnego uruchomienia albo najpóźniej do następnego logowania (Oświetlenie nocne możesz też od razu wyłączyć w szybkich ustawieniach Windows).
+  Sterowanie Oświetleniem nocnym korzysta z nieudokumentowanego zapisu ustawień i może przestać działać po aktualizacji Windows; wtedy FocusMode spróbuje gammy
+  albo pokaże błąd. **W Windows 11 24H2 i nowszych tego zapisu Windows już nie używa, więc tam FocusMode zawsze ociepla przez gammę** (Ustawienia to pokazują). W twoich godzinach FocusMode nadpisuje ręczne zmiany Oświetlenia nocnego. Tryb gamma nie działa na monitorach HDR, bardzo ciepłe wartości
+  Windows osłabia, a gry, które same ustawiają gammę, mogą ją zmienić. To zmiana wyglądu, nie kalibracja barw. Działa tylko na Windows.
+- Suma czasu na wykresie może być mniejsza od czasu skupienia, bo sekundy spędzone w menu Start, na pasku zadań czy na pulpicie nie są liczone.
 - Zamknięcie launchera przerywa w nim pobieranie i aktualizacje. Gry uruchomionej z launchera FocusMode nie zamyka, ale gra może stracić
   nakładkę launchera, a niektóre gry kończą się razem z nim. Po aktualizacji launchera nazwy jego procesów mogą się zmienić.
 - Teams: Microsoft Graph pokazuje „offline” tak samo dla „Wyświetlaj jako offline”, jak i dla braku zalogowania; w obu przypadkach FocusMode nie zmienia statusu.
@@ -237,11 +278,11 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Katalog | Zawartość |
 |---|---|
-| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów, config, parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki, harmonogram odcienia, launchery gier, języki; kontrakt IPC w `api.rs` |
-| `crates/focus-audio` | dzwonki (rodio) na dedykowanym wątku |
-| `crates/focus-platform` | integracje Windows: aktywne okno, wyciszenie powiadomień, keep-awake, Teams (Graph), zamykanie procesów, język systemu, czas lokalny |
-| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray, okienka faz, overlay odcienia |
-| `src/` | frontend SvelteKit (SPA): ekrany, odtwarzacz muzyki, teksty UI |
+| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów, config (z przypomnieniami i nazwami plików dzwonków), parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki (z pomijaniem powłoki Windows i tytułami okien), harmonogram i temperatura odcienia, launchery gier, języki; kontrakt IPC w `api.rs` |
+| `crates/focus-audio` | dzwonki (rodio) na dedykowanym wątku: syntezowane pakiety i własny plik |
+| `crates/focus-platform` | integracje Windows: aktywne okno (z klasą okna), wyciszenie powiadomień, keep-awake, Teams (Graph), zamykanie procesów, język systemu, czas lokalny, Oświetlenie nocne, rampa gamma |
+| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray, okienka faz, ciepło ekranu (Oświetlenie nocne / gamma); muzyka w zestawie w `resources/music/` |
+| `src/` | frontend SvelteKit (SPA): ekrany, odtwarzacz muzyki, motywy (`lib/themes/`), porady na przerwę (`lib/tips.ts`), teksty UI |
 | `browser-extension/` | rozszerzenie MV3 do blokady stron |
 | `spikes/` | wyrzucalne eksperymenty z M0 |
 
@@ -249,7 +290,8 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Plik | Zawartość |
 |---|---|
-| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013 i ADR-014 opisują aktualny zakres** |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013, ADR-014 i ADR-015 opisują aktualny zakres** |
+| [CREDITS.md](CREDITS.md) | licencje i autorzy dołączonej muzyki, grafiki i dźwięków |
 | [docs/TASKS.md](docs/TASKS.md) | taski (sekcja „Speedrun”), milestone'y i podział pracy A/B |
 | [docs/DESIGN.md](docs/DESIGN.md) | produkt, UX, ryzyka (sprzed pivotu, w części nieaktualne) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | stos, crate'y, wątki, narzędzia (sprzed pivotu, w części nieaktualne); kontrakt IPC w §6 aktualny |

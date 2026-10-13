@@ -260,7 +260,7 @@ config spoza zakresów → błąd walidacji.
 
 ## 6. Kontrakt IPC (UI ↔ Rust) (ADR-006, ADR-012, ADR-013)
 
-> Stan na 2026-10-13, zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
+> Stan na 2026-10-13 (z ADR-015, runda 2a), zgodny z `crates/focus-core/src/api.rs`. Przy rozbieżności wygrywa `api.rs`.
 
 DTO w `crates/focus-core/src/api.rs`: `#[derive(Serialize, Deserialize, TS)]`, **`#[ts(export)]`**,
 `#[serde(rename_all = "camelCase")]`. Liczby jako `u32` (unikamy `bigint` w TS); wyjątek to znaczniki czasu `startedAtMs` / `endedAtMs`
@@ -309,7 +309,11 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `get_popup` | – | `PopupInfo` | co pokazuje teraz okienko faz (dla okna `popup`) |
 | `popup_action` | `action: PopupAction` | `()` | przycisk w okienku albo jego timeout: `dismiss` (zamknij), `showMain` (pokaż i aktywuj okno główne), `skipPhase` (jak „Pomiń fazę” w zasobniku) |
 | `get_tint_status` | – | `TintStatus` | |
-| `preview_tint` | `strength: number \| null` | `()` | podgląd odcienia o sile 0..100 przez kilka sekund, mimo harmonogramu (Ustawienia); `null` kończy podgląd od razu |
+| `preview_tint` | `strength: number \| null` | `()` | podgląd ciepła o sile 0..100 przez kilka sekund, mimo harmonogramu (Ustawienia), wybranym mechanizmem (Oświetlenie nocne albo gamma, ADR-015); `null` kończy podgląd od razu |
+| `import_chime` | `path: string, chime: ChimeKind` | `Config` | kopiuje plik audio (mp3/wav/ogg/flac/m4a, najwyżej 10 MB, musi się dekodować) do folderu `sounds` w danych aplikacji jako własny dźwięk tego dzwonka i wybiera `chimeSound: custom` (ADR-015) |
+| `remove_custom_chime` | `chime: ChimeKind` | `Config` | usuwa własny dźwięk tego dzwonka; potem gra plik drugiego dzwonka, a gdy nie ma żadnego, dźwięk domyślny |
+| `list_library_tracks` | – | `Track[]` | muzyka dołączona do aplikacji (Open Lo-Fi, CC0); te pliki trafiają do scope asset protocol, odtwarzane przez `convertFileSrc(path)` |
+| `clear_history` | – | `()` | usuwa całą historię sesji (`history.jsonl` i ostatnie podsumowanie); UI najpierw prosi o potwierdzenie |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -333,7 +337,7 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `blocklist://changed` | `BlocklistInfo` | `websiteblacklist.txt` wczytany ponownie (automatycznie albo przez `reload_blocklist`) z innym wynikiem |
 | `app://close-requested` | `null` | do okna głównego, gdy użytkownik kliknął X, a `closeToTray` jest jeszcze `null`: UI pyta i odpowiada `resolve_close` |
 | `popup://show` | `PopupInfo` | okienko faz ma pokazać komunikat (albo się schować: `kind: null`) |
-| `tint://changed` | `TintStatus` | zmienił się poziom odcienia, podgląd albo stan okien overlay |
+| `tint://changed` | `TintStatus` | zmienił się poziom ciepła, podgląd, użyty mechanizm (`mode`), ograniczenie siły (`capped`) albo błąd |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -377,14 +381,14 @@ pub struct SessionSnapshot {
 |---|---|---|
 | `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
 | `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
-| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści) i `popup://show` |
-| overlay odcienia (jedno na monitor) | strona z grupy tras `(overlay)`: przezroczysta, klikalna na wylot, bez fokusu, zawsze na wierzchu; tylko gdy poziom odcienia > 0 (ADR-014) | tylko odczyt: `get_tint_status` i `tint://changed` |
+| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści i motywu) i `popup://show` |
 
 Okien przerwy i ostrzeżenia nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
-Strony z grupy `(overlay)` nie mają odtwarzacza muzyki ani nawigacji. Capability `overlays.json` daje oknom `popup` i `tint-*` tylko
-`core:event:default` (listen/unlisten), więc wtyczek (opener, dialog, autostart…) wywołać nie mogą. Komendy aplikacji Tauri przepuszcza lokalnym
+Okien overlay odcienia (`tint-*`) też już nie ma: ciepło ekranu daje Oświetlenie nocne Windows albo gamma ramp (ADR-015), a `TintStatus` czyta tylko okno główne.
+Strony z grupy `(overlay)` nie mają odtwarzacza muzyki ani nawigacji. Capability `overlays.json` daje oknu `popup` tylko
+`core:event:default` (listen/unlisten), więc wtyczek (opener, dialog, autostart…) wywołać nie może. Komendy aplikacji Tauri przepuszcza lokalnym
 oknom bez ACL, bo aplikacja nie ma manifestu komend: twarda izolacja komend per okno (manifest w `build.rs`, §10, B-12) nadal nie jest zrobiona,
-więc kolumna „Uprawnienia IPC” dla `popup` i overlayu opisuje, czego te okna używają, a nie egzekwowaną granicę.
+więc kolumna „Uprawnienia IPC” dla `popup` opisuje, czego to okno używa, a nie egzekwowaną granicę.
 
 ### 6.4 Przykłady JSON
 
@@ -408,28 +412,45 @@ więc kolumna „Uprawnienia IPC” dla `popup` i overlayu opisuje, czego te okn
   "extensionConnected": true }
 ```
 
-`Config`, tylko pola dodane przez ADR-014 (wartości domyślne):
+`Config`, tylko pola dodane przez ADR-014 (wartości domyślne; `tint.mode` z ADR-015):
 
 ```json
 { "language": "system", "closeToTray": null, "phasePopups": false,
-  "tint": { "enabled": false, "startMinutes": 1080, "endMinutes": 540, "strength": 45, "transitionMinutes": 30 },
+  "tint": { "enabled": false, "startMinutes": 1080, "endMinutes": 540, "strength": 45, "transitionMinutes": 30, "mode": "nightLight" },
   "shields": { "closeLaunchers": false, "launchers": ["steam", "epic", "gog", "ubisoft", "ea", "battleNet", "riot"] } }
 ```
 
-`PopupInfo` (okienko na start przerwy po pierwszym cyklu, profil 45/15):
+`Config`, tylko pola dodane przez ADR-015 (wartości domyślne):
 
 ```json
-{ "revision": 5, "kind": "breakStarted", "cycle": 1, "phaseSecs": 900, "launchers": [] }
+{ "theme": "midnight", "chimeSound": "midnight", "customChimes": { "breakFile": null, "focusFile": null },
+  "breakReminders": [], "repeatReminders": false, "trackTitles": true, "keepHistory": true,
+  "music": { "source": "library" } }
 ```
 
-`TintStatus` (18:15, domyślny harmonogram: połowa przejścia, więc połowa siły 45):
+`PopupInfo` (okienko na start drugiej przerwy, profil 45/15, z przypomnieniem użytkownika):
 
 ```json
-{ "revision": 12, "enabled": true, "level": 23, "preview": false, "active": true, "error": null }
+{ "revision": 5, "kind": "breakStarted", "cycle": 2, "phaseSecs": 900, "launchers": [], "reminder": "woda i spacer z psem" }
+```
+
+`TintStatus` (18:15, domyślny harmonogram: połowa przejścia, więc połowa siły 45; Oświetlenie nocne):
+
+```json
+{ "revision": 12, "enabled": true, "level": 23, "preview": false, "active": true, "mode": "nightLight", "capped": false, "error": null }
+```
+
+`AppUsage` w `UsageReport.apps` z tytułami okien (`trackTitles` włączone; najwyżej 5 tytułów):
+
+```json
+{ "process": "chrome.exe", "secs": 1260,
+  "titles": [ { "title": "Pull request #42 · focusmode - Google Chrome", "secs": 840 },
+              { "title": "Tauri 2 docs - Google Chrome", "secs": 300 } ] }
 ```
 
 Argumenty nowych komend: `resolve_close` → `{ "toTray": true }`, `popup_action` → `{ "action": "skipPhase" }`,
-`preview_tint` → `{ "strength": 60 }` albo `{ "strength": null }`.
+`preview_tint` → `{ "strength": 60 }` albo `{ "strength": null }`, `import_chime` → `{ "path": "C:\\Users\\ola\\Music\\gong.mp3", "chime": "breakStart" }`,
+`remove_custom_chime` → `{ "chime": "focusStart" }`.
 
 `MediaWindowStatus` (okno YouTube z domyślnym streamem):
 
@@ -493,7 +514,7 @@ Nowe pola `Config` (stary `config.json` bez nich wczytuje się z wartościami do
 | `language` | `Language` | `system` | język UI, zasobnika, okienek i toastów: `system` albo `en`, `pl`, `de`, `fr`, `it`, `uk`, `ru`, `es`, `zh`, `ja`; `system` = język wyświetlania systemu (`get_system_language`), a gdy go nie obsługujemy, `en`. Do przebiegu tłumaczeń teksty są po polsku |
 | `closeToTray` | `boolean \| null` | `null` | X na oknie głównym: `true` chowa do zasobnika, `false` kończy aplikację, `null` = zapytaj przy pierwszym X (`app://close-requested` → `resolve_close`) |
 | `phasePopups` | `boolean` | `false` | okienka FocusMode (okno `popup`) zamiast toastów Windows; włącza je też `resolve_close { toTray: true }` |
-| `tint.enabled` | `boolean` | `false` | odcień ekranu według pory dnia (overlay) |
+| `tint.enabled` | `boolean` | `false` | ciepło ekranu według pory dnia (mechanizm: `tint.mode`, §6.7; overlay z ADR-014 usunięty przez ADR-015) |
 | `tint.startMinutes` | `number` | `1080` (18:00) | minuta doby, od której odcień narasta; 0..1439 |
 | `tint.endMinutes` | `number` | `540` (09:00) | minuta doby, w której ekran wraca do normy; 0..1439, różna od `startMinutes` (okno może przechodzić przez północ) |
 | `tint.strength` | `number` | `45` | pełna siła 0..100 |
@@ -509,13 +530,13 @@ Nowe DTO i pola:
 | Typ | Pola / warianty | Uwagi |
 |---|---|---|
 | `Language` | `system`, `en`, `pl`, `de`, `fr`, `it`, `uk`, `ru`, `es`, `zh`, `ja` | `get_system_language` nigdy nie zwraca `system` |
-| `TintConfig` | `enabled`, `startMinutes`, `endMinutes`, `strength`, `transitionMinutes` | poziom liczy `focus_core::tint::tint_level(cfg, minute_of_day)`; minutę doby czasu lokalnego daje `focus-platform` (`clock.rs`) |
-| `TintStatus` | `revision`, `enabled`, `level` (0..100, 0 = brak overlayu), `preview`, `active` (okna overlay są pokazane), `error` (angielski szczegół, gdy okien nie da się utworzyć; harmonogram próbuje dalej) | getter `get_tint_status`, event `tint://changed` |
+| `TintConfig` | `enabled`, `startMinutes`, `endMinutes`, `strength`, `transitionMinutes`, `mode` (ADR-015) | poziom liczy `focus_core::tint::tint_level(cfg, minute_of_day)`; minutę doby czasu lokalnego daje `focus-platform` (`clock.rs`) |
+| `TintStatus` | `revision`, `enabled`, `level` (0..100, 0 = kolory nietknięte), `preview`, `active` (ciepło jest teraz zastosowane), `mode`, `capped`, `error` (angielski szczegół, gdy mechanizm zawiódł albo jest niedostępny; harmonogram próbuje dalej) | getter `get_tint_status`, event `tint://changed`; `mode` i `capped` z ADR-015 (§6.7) |
 | `GameLauncher` | `steam`, `epic`, `gog`, `ubisoft`, `ea`, `battleNet`, `riot`, `xbox`, `amazon`, `itch` | nazwy procesów i nazwy wyświetlane: `focus_core::launchers` |
 | `ShieldStatus.launchers` | `IntegrationStatus` | osłona „zamknij launchery”; poza Windows `unavailable` |
 | `ShieldStatus.closedLaunchers` | `GameLauncher[]` | launchery zamknięte na ostatnim starcie focusa (puste, gdy żaden nie działał) |
 | `PopupKind` | `breakStarted`, `focusStarted`, `interrupted` (auto-pauza po uśpieniu), `launchersClosed` | |
-| `PopupInfo` | `revision`, `kind` (`null` = schowaj), `cycle`, `phaseSecs` (długość fazy, która się zaczęła), `launchers` | getter `get_popup`, event `popup://show` |
+| `PopupInfo` | `revision`, `kind` (`null` = schowaj), `cycle`, `phaseSecs` (długość fazy, która się zaczęła), `launchers`, `reminder` (ADR-015) | getter `get_popup`, event `popup://show` |
 | `PopupAction` | `dismiss`, `showMain`, `skipPhase` | argument `popup_action` |
 | `BlocklistIssueCode` | §6.5 | |
 
@@ -523,6 +544,51 @@ Kolejność efektów z tabeli ADR-013 się nie zmienia: core nadal wysyła `Noti
 Zamykanie launcherów: na start każdej fazy Focus, tylko dokładne nazwy exe z `focus_core::launchers::process_names`, tylko procesy bieżącej sesji
 (`focus-platform/src/processes.rs`: Toolhelp + `ProcessIdToSessionId` + `TerminateProcess`), nigdy usługi ani procesy gier.
 Teams: przed ustawieniem DND powłoka czyta `GET /me/presence`; przy `availability` = `Offline` albo `DoNotDisturb` nie ustawia DND i potem go nie czyści.
+
+### 6.7 Ciepło ekranu, motywy, dźwięki, muzyka w zestawie, przypomnienia i historia (ADR-015)
+
+Nowe pola `Config` (stary `config.json` bez nich wczytuje się z wartościami domyślnymi):
+
+| Pole | Typ | Domyślnie | Znaczenie |
+|---|---|---|---|
+| `theme` | `Theme` | `midnight` | wygląd: `midnight` (dotychczasowy), `vaporwave`, `lunar` (fazy księżyca), `autumn` (przytulna jesień), `dark`, `light`, `pixel` (8-bit); zmienne CSS w `src/lib/themes/` |
+| `chimeSound` | `ChimeSound` | `midnight` | pakiet dzwonków: `midnight`, `vaporwave`, `lunar`, `autumn`, `classic`, `soft`, `chiptune` (syntezowane w `focus-audio`) albo `custom` (pliki z `customChimes`) |
+| `customChimes` | `CustomChimes` | `{ breakFile: null, focusFile: null }` | nazwy plików w folderze `sounds` danych aplikacji; same nazwy (`is_chime_file_name`), bez ścieżek; `chimeSound: custom` bez plików jest poprawne i gra `midnight` |
+| `breakReminders` | `string[]` | `[]` | przypomnienie na kolejne przerwy: indeks 0 = pierwsza przerwa sesji; `""` = bez przypomnienia dla tej przerwy; najwyżej 24 pozycje po 160 znaków |
+| `repeatReminders` | `boolean` | `false` | po ostatniej pozycji `breakReminders` zacznij od pierwszej |
+| `trackTitles` | `boolean` | `true` | zapamiętuj najczęstsze tytuły okien każdej aplikacji do podpowiedzi na wykresie (tylko lokalnie, nigdy w logach) |
+| `keepHistory` | `boolean` | `true` | zapisuj zakończone sesje w `history.jsonl`; wyłączone = podsumowanie po Stop się pokazuje, ale nie jest zapisywane |
+| `tint.mode` | `TintMode` | `nightLight` | `nightLight` (Oświetlenie nocne Windows, ustawienie użytkownika, bez praw administratora) albo `gamma` (rampa gamma każdego monitora; bez HDR, Windows może ograniczyć bardzo ciepłe wartości) |
+| `music.source` | `MusicSourceKind` | `library` | nowy wariant `library` (muzyka w zestawie) jest domyślny; config z zapisanym źródłem je zachowuje |
+
+Błędy walidacji: `config.invalid` z polem `breakReminders` (więcej niż 24 pozycje albo pozycja dłuższa niż 160 znaków, liczonych jako znaki, nie bajty),
+`customChimes.breakFile` albo `customChimes.focusFile` (nazwa, która nie przechodzi `is_chime_file_name`). Przypomnienia są przycinane, a znaki sterujące
+zamieniane na spacje; puste nazwy plików dzwonków stają się `null`.
+
+Nowe DTO i pola:
+
+| Typ | Pola / warianty | Uwagi |
+|---|---|---|
+| `Theme` | `midnight`, `vaporwave`, `lunar`, `autumn`, `dark`, `light`, `pixel` | tylko frontend (motyw okna głównego i `popup`) |
+| `ChimeSound` | `midnight`, `vaporwave`, `lunar`, `autumn`, `classic`, `soft`, `chiptune`, `custom` | każdy pakiet ma wariant przerwy (opadający) i skupienia (rosnący) |
+| `CustomChimes` | `breakFile`, `focusFile` (`string \| null`) | `CustomChimes::file_for(chime)`: własny plik dzwonka, potem plik drugiego, a `null` = dźwięk domyślny; `import_chime` zapisuje kopię pod nową nazwą `custom-<break\|focus>-<ms>.<ext>` (`src-tauri/src/chimes.rs`), a nieużywane pliki usuwa |
+| `TintMode` | `nightLight`, `gamma` | |
+| `TintStatus.mode` | `TintMode` | mechanizm, który faktycznie działa: wybrany albo `gamma` jako zastępstwo niedostępnego Oświetlenia nocnego (powód w `error`) |
+| `TintStatus.capped` | `boolean` | Windows nie przyjął pełnej siły (limity rampy gamma) i działa słabsza |
+| `PopupInfo.reminder` | `string \| null` | przypomnienie użytkownika na przerwę, która właśnie się zaczęła: `focus_core::config::reminder_for_break(cfg, snapshot.cycle)` |
+| `AppUsage.titles` | `TitleUsage[]` | najwyżej 5 tytułów na aplikację, od największej liczby sekund (remis: alfabetycznie); puste, gdy `trackTitles` wyłączone; `#[serde(default)]`, więc stara historia bez tytułów się wczytuje |
+| `TitleUsage` | `title` (oczyszczony, najwyżej 120 znaków), `secs` | |
+| `MusicSourceKind.library` | – | muzyka z `list_library_tracks` |
+
+Temperatura: `focus_core::tint::kelvin_for_level(level)` (0 → 6500 K, 100 → 1900 K, interpolacja w miredach) dla Oświetlenia nocnego,
+`rgb_gain_for_kelvin(kelvin)` (mnożniki `[r, g, b]` w 0..1, 6500 K = `[1, 1, 1]`) dla rampy gamma: `rampa = bazowa rampa monitora × mnożnik`.
+Platforma: `focus-platform/src/night_light.rs` i `gamma.rs`. Stan sprzed pierwszej zmiany powłoka (`src-tauri/src/tint.rs`) zapisuje w `tint-restore.json`
+i uzbraja wpis RunOnce `FocusModeRestore` (`--restore-shields` przywraca też kolory), jak przy osłonach; jeden wpis obsługuje oba przywracania (`safety_net.rs`).
+Gdy Oświetlenie nocne jest niedostępne, powłoka przechodzi na gammę (w drugą stronę zastępstwa nie ma).
+
+Śledzenie: tracker wywołuje `UsageAccumulator::add_sample(process, title, idle, ms)`, przy czym `title` to `None`, gdy `trackTitles` jest wyłączone.
+Sekundy, w których na pierwszym planie jest powierzchnia powłoki Windows (`focus_core::stats::is_shell_surface(process, class)`; klasa okna z `focus-platform`
+`foreground`), są pomijane w całości. `clear_history` usuwa `history.jsonl` i ostatnie podsumowanie; przy `keepHistory: false` powłoka nie dopisuje sesji do historii.
 
 ## 7. Model wątków i współbieżności
 
@@ -597,8 +663,10 @@ Ustalenia ze spike'a T0-10 (kod referencyjny: [spikes/audio-spike](../spikes/aud
 ## 9. Tint i integracje
 
 ### 9.1 Tint: overlay jako główny mechanizm (ADR-009)
-> **Aktualnie (ADR-014):** overlay wrócił do zakresu, domyślnie wyłączony; harmonogram z minutą doby czasu lokalnego (`focus-platform/src/clock.rs`)
-> i poziomem 0..100 z `focus_core::tint` zamiast kelwinów; okna i podgląd w `src-tauri/src/tint.rs`; kontrakt w §6.6. Poniżej plan sprzed pivotu.
+> **Aktualnie (ADR-015):** overlay jest **usunięty** (właściciel produktu go odrzucił). Ciepło daje Oświetlenie nocne Windows (domyślnie,
+> `focus-platform/src/night_light.rs`) albo rampa gamma (`gamma.rs`, kopia bazowej rampy każdego monitora, patrz §9.2), według harmonogramu z ADR-014
+> (minuta doby z `clock.rs`, poziom 0..100 → `kelvin_for_level` / `rgb_gain_for_kelvin` z `focus_core::tint`). Stan sprzed zmiany wraca przy wyjściu,
+> przy następnym starcie albo przy logowaniu (RunOnce), jak przy osłonach. Kontrakt w §6.6 i §6.7. Poniżej plan sprzed pivotu (nieaktualny).
 
 - Okna `tint-{n}` na każdym monitorze: przezroczyste, bez dekoracji, `always_on_top`, `skip_taskbar`, nieaktywujące się,
   `set_ignore_cursor_events(true)`. Kolor i alfa z `core::tint` (kelvin → RGBA).
@@ -608,6 +676,10 @@ Ustalenia ze spike'a T0-10 (kod referencyjny: [spikes/audio-spike](../spikes/aud
 - macOS wymaga `macos-private-api` do przezroczystości; Wayland nie ma always-on-top, więc tam tint jest niedostępny i UI to komunikuje.
 
 ### 9.2 Eksperymentalna gamma ramp (Could, S-02)
+> **Aktualnie (ADR-015):** gamma wchodzi jako tryb do wyboru (`tint.mode: gamma`), w poprawnej wersji opisanej niżej: bazowa rampa każdego monitora
+> zapisana przed pierwszą zmianą, a ustawiana rampa to baza × mnożniki kanałów. Gdy Windows odrzuci zbyt ciepłą rampę, działa słabsza (`TintStatus.capped`).
+> Rekomendacja „nie wdrażać” poniżej przestaje obowiązywać, bo overlay został odrzucony.
+
 - Tylko Windows, SDR, domyślnie wyłączona, poza ścieżką demo. Microsoft odradza `SetDeviceGammaRamp`: może zwrócić sukces
   bez efektu, zachowanie przy HDR jest niezdefiniowane, a system lub inne aplikacje mogą ją nadpisać.
 - Sprzątanie opisujemy osobno dla każdego przypadku: **zwykłe wyjście**, **panika**, **zabicie procesu**.

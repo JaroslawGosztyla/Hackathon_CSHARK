@@ -13,6 +13,12 @@ ADR-003, 009, 010, 011 i 012. Tam, gdzie DESIGN.md lub ARCHITECTURE.md mówią c
 zasobnik z okienkami faz, odcień ekranu (tylko overlay, domyślnie wyłączony), zamykanie launcherów gier, Teams z poszanowaniem statusu użytkownika
 i wybór języka. Zmienia przy tym ADR-009, 010, 012 i 013 (szczegóły w „Co zmienia”).
 
+**Stan na 2026-10-13 (runda 2a):** [ADR-015](#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia) usuwa overlay odcienia
+(ciepło ekranu daje teraz Oświetlenie nocne Windows albo gamma ramp) i dokłada motywy, animowaną nawigację, pakiety dzwonków z własnym plikiem,
+muzykę w zestawie (Open Lo-Fi, CC0) jako domyślne źródło, przypomnienia na kolejne przerwy, porady na przerwę ze źródłami
+oraz opcje historii (pomijanie powierzchni powłoki Windows, tytuły okien w podpowiedzi wykresu, „nie zapisuj historii”, „usuń historię”).
+Zmienia ADR-009, 012, 013 i 014.
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -116,7 +122,7 @@ CI buduje na 3 OS. Ograniczenia pozostałych platform są jawnie opisane (DESIGN
 ---
 
 ## ADR-009: Tint przez overlay; gamma ramp tylko jako eksperyment
-**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F01/F02); zakres odłożony przez ADR-013 (2026-10-12); overlay przywrócony przez ADR-014 (2026-10-13)
+**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F01/F02); zakres odłożony przez ADR-013 (2026-10-12); overlay przywrócony przez ADR-014 (2026-10-13); **zastąpiona przez ADR-015** (2026-10-13: overlay odrzucony, ciepło przez Oświetlenie nocne albo gamma)
 
 **Kontekst:** Microsoft odradza `SetDeviceGammaRamp` (może zwrócić sukces bez efektu, HDR jest niezdefiniowany, system może nadpisać).
 Drop, panic hook ani handler wyjścia nie wykonają się po zabiciu procesu, więc gamma nie daje gwarancji powrotu kolorów.
@@ -134,6 +140,11 @@ bo overlay pokrywa funkcję.
 
 **Poprawka (ADR-014, 2026-10-13):** tint wraca na prośbę właściciela produktu, **tylko jako overlay**, domyślnie wyłączony,
 z harmonogramem według pory dnia (od–do, siła, przejście) i podglądem w Ustawieniach. Gamma ramp (S-02) nadal nie wchodzi.
+
+**Poprawka (ADR-015, 2026-10-13):** właściciel produktu odrzucił overlay („półprzezroczysta warstwa koloru to nie jest odcień”), więc ta decyzja
+przestaje obowiązywać. Ciepło ekranu daje teraz **Oświetlenie nocne Windows** (domyślnie) albo **gamma ramp** (do wyboru). Obawy z kontekstu
+i z R08 rozwiązuje ADR-015: stan sprzed zmiany (ustawienia Oświetlenia nocnego albo bazowa rampa każdego monitora, a nie liniowa) jest zapisywany
+zaraz po zmianie i przywracany przy wyjściu, przy następnym starcie albo najpóźniej przy następnym logowaniu (jak osłony, zasada 7).
 
 ---
 
@@ -190,7 +201,7 @@ plan przerwy i wyniki przerwy. Sesja jest pętlą Focus ⇄ Break aż do Stop; t
 ---
 
 ## ADR-012: Okna odtwarzają stan ze snapshotu; protokół gotowości
-**Status:** Proponowana (z review F05/F11); w części zastąpiona przez ADR-013 (2026-10-12)
+**Status:** Proponowana (z review F05/F11); w części zastąpiona przez ADR-013 (2026-10-12); okna zmienione przez ADR-014 i ADR-015 (2026-10-13)
 
 **Decyzja:** `SessionSnapshot` zawiera wszystko, czego potrzebuje dowolne okno (z aktywnym planem przerwy i `break_id`) oraz `revision`.
 Okno: listen → `get_snapshot` → stosuj tylko nowszą rewizję → `window_ready`. Okna przerwy tworzone są ukryte i pokazywane po gotowości,
@@ -214,10 +225,14 @@ Odpadają okna przerwy, ostrzeżenia i `tint-*`, `window_ready`, heartbeat, watc
 Oba stany mają parę getter + event z rewizją: `get_tint_status` + `tint://changed` (`TintStatus`) i `get_popup` + `popup://show` (`PopupInfo`).
 Okna overlay tylko czytają stan, a okno `popup` dodatkowo wysyła `popup_action`. Protokół gotowości, heartbeat, watchdog i `break_id` nie wracają.
 
+**Poprawka (ADR-015, 2026-10-13):** okna overlay odcienia (`tint-*`) i trasa `/tint` znikają. Para `get_tint_status` + `tint://changed` zostaje,
+ale `TintStatus` opisuje teraz Oświetlenie nocne albo gamma ramp (nowe pola `mode` i `capped`), a czyta go tylko okno główne.
+Poza oknem głównym zostają okno `popup` i okno YouTube `media`.
+
 ---
 
 ## ADR-013: Speedrun: pivot produktu
-**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7)
+**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7) i ADR-015 (2026-10-13: pkt 2, 3 i 5)
 
 **Kontekst:** termin oddania to **jutro** (2026-10-13). Po T0-2/T0-3 nie było jeszcze kontraktu (T0-4), maszyny stanów ani okien przerwy,
 a plan M1–M4 zakładał jeszcze ok. 10 dni pracy. Równocześnie właściciel produktu zmienił wymagania:
@@ -387,10 +402,18 @@ i nie odpowiada na nowe wymagania. rodio nie odtworzy YouTube ani streamu bez po
 mogą się pojawiać okienka FocusMode. Pkt 7: tint nie jest już odłożony (wraca jako overlay). Pkt 4: dochodzi osłona „zamknij launchery gier”;
 Teams nie rusza statusu „offline” ani własnego DND użytkownika; `BlocklistIssue` niesie kod (`code`), a polski opis wybiera UI.
 
+**Poprawka (ADR-015, 2026-10-13):**
+- Pkt 2: dochodzi źródło `library` (muzyka dołączona do aplikacji: Open Lo-Fi, CC0, offline) i to ono jest domyślne w nowym configu.
+  Stream Lofi Girl zostaje jako wybór; stary `config.json` z zapisanym źródłem zachowuje je.
+- Pkt 3: oprócz syntetycznych pakietów dzwonków rodio gra też własny plik użytkownika skopiowany do folderu danych aplikacji.
+- Pkt 5: tracker pomija powierzchnie powłoki Windows (pasek zadań, pulpit, menu Start, wyszukiwanie, widok zadań, `ShellExperienceHost` itd.).
+  **Tytuły okien zapisujemy** (zdanie „Tytułów okien nie zapisujemy” przestaje obowiązywać), ale tylko przy włączonym `trackTitles`,
+  przycięte i tylko lokalnie, jako podpowiedź na wykresie. Zapis do `history.jsonl` można wyłączyć (`keepHistory`), a historię usunąć jednym przyciskiem.
+
 ---
 
 ## ADR-014: Zasobnik i okienka faz, odcień ekranu (overlay), zamykanie launcherów gier, języki
-**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); w części zmieniona przez ADR-015 (2026-10-13: pkt 2 i 6, overlay odcienia odrzucony)
 
 **Kontekst:** po pierwszych testach zakresu z ADR-013 właściciel produktu poprosił 2026-10-13 o:
 1. możliwość schowania aplikacji do zasobnika i **okienka przy starcie skupienia i przerwy** w stylu FocusMode (małe okno w rogu ekranu,
@@ -547,3 +570,183 @@ a parser `websiteblacklist.txt` w core zwracał opisy błędów po polsku.
   pkt 4 (nowa osłona: launchery gier; `BlocklistIssue.code`).
 - CLAUDE.md, twarda zasada 6: „Bez pełnoekranowych okien przerwy, gammy i trybu spotkania (odłożone, ADR-013); odcień ekranu tylko jako overlay,
   domyślnie wyłączony (ADR-009, ADR-014)”.
+
+**Poprawka (ADR-015, 2026-10-13):** pkt 2 nie obowiązuje w części o mechanizmie: overlay odcienia (okna `tint-*`, trasa `/tint`, wpis `tint-*`
+w `capabilities/overlays.json`) jest usunięty, a ciepło ekranu daje Oświetlenie nocne Windows albo gamma ramp, z powrotem kolorów jak przy osłonach.
+Harmonogram (`startMinutes`, `endMinutes`, `strength`, `transitionMinutes`), podgląd, domyślne wyłączenie i niezależność od sesji zostają.
+Pkt 6: grupa tras `(overlay)` obsługuje już tylko okno `popup`. Konsekwencje dotyczące overlayu (pełny ekran, kontrast, zrzuty ekranu, okna per monitor) przestają obowiązywać,
+a w ich miejsce wchodzą konsekwencje z ADR-015.
+
+---
+
+## ADR-015: Runda 2a: ciepło ekranu bez overlayu, motywy, dźwięki, muzyka, przerwy i historia
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** po testach zakresu z ADR-014 właściciel produktu poprosił 2026-10-13 o drugą rundę zmian (runda 2a):
+1. **Odcień ekranu jako overlay jest odrzucony**: „półprzezroczysta warstwa koloru to nie jest odcień”. Warstwa mieszana alfą obniża kontrast i rozjaśnia czernie,
+   nie zmienia kursora ani gier w wyłącznym pełnym ekranie, trafia na zrzuty ekranu i nagrania, a okna overlay były widoczne w Alt+Tab.
+   Potrzebna jest prawdziwa zmiana temperatury barwowej obrazu.
+2. **Motywy**: Midnight (obecny wygląd, domyślny), Vaporwave, fazy księżyca, przytulna jesień, prosty ciemny, prosty jasny i 8-bit.
+3. **Nawigacja**: podświetlenie aktywnej zakładki płynnie przesuwa się między Skupieniem, Podsumowaniem i Ustawieniami, a tło lekko przesuwa się
+   w lewo albo w prawo zgodnie z kolejnością zakładek.
+4. **Dźwięki dzwonków**: lista pasująca do motywów i „własny”: użytkownik wybiera plik, aplikacja kopiuje go do swoich danych i go używa.
+5. **Muzyka w zestawie**: utwory Open Lo-Fi (CC0) dołączone do aplikacji jako domyślna muzyka.
+6. **Własne przypomnienia na kolejne przerwy**, np. „1. przerwa: rozciąganie; 2.: woda i spacer z psem; 3.: obiad”.
+7. **Losowe porady na przerwę oparte na badaniach**, bez obietnic zdrowotnych.
+8. **Historia** (prośba użytkownika): nie liczyć w historii skupienia elementów powłoki Windows (np. `ShellExperienceHost`); gdy na pierwszym planie jest Eksplorator,
+   przeglądarka albo podobna aplikacja, zapamiętać tytuł okna i pokazać go po najechaniu myszą na wykres (z wyłącznikiem w Ustawieniach);
+   przycisk usuwający historię (z potwierdzeniem); opcja, żeby historii w ogóle nie zapisywać.
+
+Punkt 8 jest sprzeczny z twardą zasadą 11 w CLAUDE.md („tytułów okien nie zapisujemy”) i z ADR-013 pkt 5, więc wymaga tego ADR.
+Punkt 1 odwraca ADR-014 pkt 2, który odrzucił Oświetlenie nocne (brak publicznego API) i gamma ramp (ADR-009, R08).
+
+**Opcje — ciepło ekranu:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Overlay (ADR-014) | kolory wracają razem z procesem | **odrzucony przez właściciela**: warstwa koloru zamiast zmiany temperatury; niższy kontrast, jaśniejsze czernie, widoczny na zrzutach, nie obejmuje pełnego ekranu ani kursora |
+| **Oświetlenie nocne Windows** (domyślnie) | mechanizm systemu, który użytkownik zna; działa po kompozycji, więc zmienia cały obraz (także kursor) bez utraty kontrastu i nie trafia na zrzuty; ustawienie użytkownika, bez praw administratora | brak publicznego API: nieudokumentowany zapis ustawień w rejestrze, który może przestać działać po aktualizacji Windows (jak `IQuietHoursSettings` w ADR-013); zmienia ustawienie użytkownika, więc trzeba je przywracać także po crashu; jedna temperatura dla wszystkich monitorów |
+| **Gamma ramp** (`SetDeviceGammaRamp`, do wyboru) | po kompozycji, per monitor, także w grach na pełnym ekranie i na pasku zadań; nie rusza ustawień Windows | Microsoft odradza; brak efektu na monitorach HDR; Windows odrzuca rampy zbyt odległe od liniowej (bardzo ciepłe wartości są słabsze); rampa zostaje po crashu; konflikt z kalibracją monitora (R08) |
+
+**Opcje — tytuły okien w historii:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Najczęstsze tytuły każdej aplikacji, lokalnie, z wyłącznikiem** | odpowiada na prośbę; z „chrome.exe 40 min” wiadomo, co to było; ograniczona ilość danych | tytuły bywają prywatne (temat maila, nazwa dokumentu, strona w trybie prywatnym) i leżą w `history.jsonl` |
+| Tylko wybrane procesy (przeglądarki, Eksplorator) | mniej danych | lista procesów do utrzymania; prośba dotyczy „Eksploratora, przeglądarki itp.”, więc i tak szeroko |
+| Nie zapisywać (stan z ADR-013) | najprostsza prywatność | wykres nie mówi, co działo się w przeglądarce |
+
+**Decyzja:**
+
+1. **Ciepło ekranu: Oświetlenie nocne (domyślnie) albo gamma ramp; overlay usunięty.**
+   - `TintConfig.mode: TintMode` = `nightLight` (domyślnie) albo `gamma`. Harmonogram, siła, przejście, podgląd i domyślne wyłączenie zostają z ADR-014,
+     a odcień nadal działa według pory dnia, niezależnie od sesji. Siłę 0–100 zamienia na temperaturę `focus_core::tint::kelvin_for_level`
+     (0 = 6500 K, czyli bez zmian; 100 = 1900 K; interpolacja w miredach, żeby suwak zmieniał obraz równomiernie), a dla gammy
+     `rgb_gain_for_kelvin` daje mnożniki kanałów (dopasowanie krzywej ciała doskonale czarnego Tannera Hellanda, znormalizowane tak, że 6500 K = `[1, 1, 1]`).
+   - **Oświetlenie nocne** (`focus-platform/src/night_light.rs`): FocusMode włącza je i ustawia jego temperaturę według poziomu, a przy poziomie 0 wyłącza.
+     Zapis trafia do ustawień bieżącego użytkownika w rejestrze (`HKCU\…\CloudStore\…\windows.data.bluelightreduction.*`, nieudokumentowany format binarny),
+     bez praw administratora; do Windows 11 23H2 Windows stosuje zmianę sam. Zapisywane są tylko wartości, których układ FocusMode rozumie w całości.
+     **Od Windows 11 24H2 (kompilacja 26100+) zapis w rejestrze nie działa** (silnik czyta magazyn przez wewnętrzne API, a nie z rejestru; sprawdzone
+     na kompilacji 26200), więc `NightLight::available()` zwraca tam `false`, nic nie jest zapisywane, a domyślny tryb w praktyce działa przez gammę (niżej).
+   - **Gamma** (`focus-platform/src/gamma.rs`): dla każdego aktywnego monitora FocusMode przed pierwszą zmianą odczytuje **bazową rampę** (`GetDeviceGammaRamp`)
+     i ustawia bazę × mnożniki (`SetDeviceGammaRamp`), więc kalibracja monitora zostaje (R08). Gdy Windows odrzuci rampę jako zbyt odległą od liniowej,
+     FocusMode próbuje coraz słabszej i ustawia `TintStatus.capped` (na maszynie testowej najcieplej ok. 3300 K, czyli siła powyżej ok. 45 jest przycięta).
+     Monitor podłączony później dostaje rampę zapamiętaną przy pierwszym użyciu; ona też trafia do pliku przywracania i wraca przy przywracaniu.
+     Monitory HDR ignorują rampę (Windows przyjmuje wywołanie, obraz się nie zmienia), więc tam ocieplenie po prostu nie działa.
+   - Gdy Oświetlenie nocne jest niedostępne, powłoka (`src-tauri/src/tint.rs`, napisany od nowa) przechodzi na gammę, a powód podaje w `TintStatus.error`;
+     `TintStatus.mode` pokazuje mechanizm, który faktycznie działa. Przy `active: true` ten `error` to tylko informacja (UI pokazuje notkę o zastępstwie,
+     a nie błąd); niedostępność na danej wersji Windows nie wysyła `app://error`. Oświetlenie nocne jest próbowane ponownie przy następnym ciepłym okresie albo zmianie configu.
+     Gamma nie ma zastępstwa (błąd w `TintStatus.error`). Przy zmianie trybu (także przy przejściu na zastępstwo) powłoka najpierw przywraca stan poprzedniego
+     mechanizmu, więc oba nigdy nie działają naraz.
+   - **Powrót kolorów** (jak osłony, zasada 7): przed pierwszą zmianą FocusMode zapisuje to, co nadpisuje (kopię ustawień Oświetlenia nocnego
+     albo bazowe rampy monitorów), w `tint-restore.json` w katalogu danych aplikacji i uzbraja wpis RunOnce `FocusModeRestore` (`--restore-shields` przywraca też kolory).
+     Jeden wpis RunOnce obsługuje oba przywracania (`src-tauri/src/safety_net.rs`): istnieje, dopóki czeka którekolwiek, i znika, gdy nie czeka żadne.
+     Stan wraca, gdy poziom spada do 0, po wyłączeniu odcienia, przy zmianie trybu i przy wyjściu z aplikacji. Po crashu albo kill przywraca go następny start aplikacji,
+     a jeśli nikt jej nie uruchomi, następne logowanie. Plik jest usuwany dopiero po udanym przywróceniu.
+     Ustawienia Oświetlenia nocnego wracają takie, jakie były przed pierwszą zmianą.
+   - Usunięte: okna `tint-*`, trasa `src/routes/(overlay)/tint` i wpis `tint-*` w `capabilities/overlays.json`. `TintStatus` dostaje `mode` i `capped`,
+     a `active` znaczy „ciepło jest teraz zastosowane”.
+   - W UI „Ciepłe kolory ekranu” to zmiana wyglądu, bez kalibracji barw i bez obietnic zdrowotnych (zasada 10). Ustawienia uprzedzają,
+     że w trybie Oświetlenia nocnego FocusMode steruje tym ustawieniem Windows w swoich godzinach.
+
+2. **Motywy.** `Config.theme: Theme` = `midnight` (obecny wygląd, domyślny), `vaporwave`, `lunar` (fazy księżyca), `autumn` (przytulna jesień), `dark` (prosty ciemny),
+   `light` (prosty jasny) albo `pixel` (8-bit). Motyw to zestaw zmiennych CSS (kolory, akcent, tło) i dekoracja tła w `src/lib/themes/`, nakładany atrybutem
+   na korzeniu dokumentu w oknie głównym i w okienku `popup`. Tła powstają w kodzie (CSS/SVG); każda dołączona grafika z zewnątrz wymaga licencji i wpisu w `CREDITS.md` (zasada 10).
+   Tekst zachowuje kontrast co najmniej WCAG AA także w motywie jasnym, a animacje tła respektują `prefers-reduced-motion`.
+
+3. **Animowana nawigacja.** Podświetlenie aktywnej zakładki (kolor akcentu motywu, w Midnight pomarańczowy) przesuwa się płynnie między Skupieniem,
+   Podsumowaniem i Ustawieniami, a warstwa tła przesuwa się o kilka procent w lewo albo w prawo według numeru zakładki. Animujemy tylko `transform` i `opacity`
+   (bez przeliczania układu), a przy `prefers-reduced-motion: reduce` nic się nie przesuwa. Czysty frontend (layout `src/routes/(app)/`), bez zmian kontraktu.
+
+4. **Dźwięki dzwonków.**
+   - `Config.chimeSound: ChimeSound`: pakiety pasujące do motywów (`midnight`: miękki dzwon, dotychczasowy, domyślny; `vaporwave`: rozstrojony akord syntezatora;
+     `lunar`: szklane, kryształowe tony; `autumn`: ciepła drewniana marimba) oraz `classic` (ding-dong), `soft` (łagodny sinus), `chiptune` (8-bitowe arpeggio) i `custom`.
+     Każdy pakiet ma wariant przerwy (opadający) i skupienia (rosnący), syntezowany w `focus-audio`, bez plików. Dźwięk wybiera się osobno, więc zmiana motywu go nie zmienia.
+   - Własny plik: `import_chime { path, chime }` sprawdza rozszerzenie (mp3, wav, ogg, flac, m4a), rozmiar (najwyżej 10 MB) i to, czy plik się dekoduje,
+     kopiuje go do folderu `sounds` w danych aplikacji pod nową nazwą (`custom-<break|focus>-<ms>.<ext>`, więc plik, który wątek audio może jeszcze grać,
+     nigdy nie jest nadpisywany), zapisuje nazwę w `Config.customChimes` i wybiera `chimeSound: custom` (`src-tauri/src/chimes.rs`).
+     `remove_custom_chime { chime }` usuwa wpis; pliki, których config już nie wskazuje, powłoka usuwa (także przy starcie). W configu są tylko nazwy plików (`is_chime_file_name`: bez ścieżek, `..` i nazw urządzeń Windows),
+     więc config nie wskaże pliku spoza folderu `sounds`. Gdy brakuje pliku jednego dzwonka, gra plik drugiego (`CustomChimes::file_for`), a gdy nie ma żadnego,
+     pakiet `midnight`. Plik odtwarza rodio na wątku dzwonków, najwyżej 10 s.
+
+5. **Muzyka w zestawie jako domyślne źródło.**
+   - `MusicSourceKind::Library`: 12 utworów Open Lo-Fi (btahir, wydanie v1.0.0, **CC0**) w `src-tauri/resources/music/open-lofi/` z opisem `library.json`
+     (tytuł, kategoria). Trafiają do instalatora jako zasób (`bundle.resources`, ok. 37 MB). Licencja i pochodzenie: `CREDITS.md`.
+   - `list_library_tracks` → `Track[]` z bezwzględnymi ścieżkami. Powłoka dopuszcza w asset protocol dokładnie te pliki (jak przy folderze), a odtwarzacz gra je
+     przez `<audio>` i `convertFileSrc`. Działa offline, bez ciasteczek i bez okna YouTube.
+   - Nowy config (i config bez zapisanego źródła muzyki) dostaje `library`; zapisany wybór (np. `stream`) zostaje. Stream Lofi Girl (`@LofiGirl/live`) jest dalej jednym kliknięciem.
+
+6. **Przypomnienia na kolejne przerwy.** `Config.breakReminders: string[]`: indeks 0 to pierwsza przerwa sesji, 1 druga itd.; pusty tekst = bez przypomnienia dla tej przerwy.
+   Najwyżej 24 pozycje po 160 znaków (więcej → `config.invalid` z polem `breakReminders`); znaki sterujące zamieniane są na spacje.
+   `Config.repeatReminders` (domyślnie wyłączone) po ostatniej pozycji zaczyna listę od początku. Tekst wybiera `focus_core::config::reminder_for_break(cfg, n)`,
+   gdzie `n` to `cycle` ze snapshotu w chwili startu przerwy (przerwa po 1. cyklu to przerwa 1). Przypomnienie pokazuje okienko faz (`PopupInfo.reminder`)
+   i karta przerwy w oknie głównym.
+
+7. **Porady na przerwę ze źródłami.**
+   - Dane frontendu w `src/lib/tips.ts` (bez zmian kontraktu): **60 porad na przerwę** w kategoriach oczy, rozciąganie, ruch, picie, oddech, postawa, na zewnątrz,
+     ludzie, głowa i porządek, każda oznaczona jako na krótką przerwę, na długą albo na każdą; **10 porad do pracy** (ustawienie monitora, światło i odblaski, siedzenie,
+     krótkie i częste przerwy, 20-20-20, zmiana pozycji, poczta o stałych porach, jedno zadanie, telefon poza zasięgiem wzroku, woda pod ręką); przypis do rozciągania
+     („w wygodnym zakresie; coś boli, to pomiń”) i **nota prawna tylko po polsku** (kto pracuje przy monitorze co najmniej połowę dnia, ma 5 minut przerwy po każdej
+     godzinie, wliczanej do czasu pracy; rozporządzenie w sprawie bhp na stanowiskach wyposażonych w monitory ekranowe, Dz.U. 1998 nr 148 poz. 973).
+     Każda porada ma tekst PL i EN oraz źródło.
+   - Wybór jest losowy, ale powtarzalny: każda sesja ma własną, przetasowaną (ziarno z `sessionId`) kolejność porad pasujących do długości przerwy
+     (krótka < 10 min, długa ≥ 10 min), a kolejne przerwy idą po niej według numeru przerwy. Ten sam widok po odświeżeniu i każde okno pokazują tę samą poradę,
+     a porada nie wraca, zanim nie pojawią się wszystkie z puli. Przycisk „Inna propozycja” przesuwa się po tej kolejności. Porada do pracy zmienia się raz dziennie.
+   - Główne źródła: HSE (przerwy przy pracy z monitorem), OSHA eTools (stanowisko komputerowe), CIOP-PIB („Ergonomia pracy z komputerem”), AAO (zasada 20-20-20,
+     zmęczenie oczu), wytyczne WHO 2020 dotyczące aktywności fizycznej i siedzącego trybu życia, metaanaliza mikroprzerw Albulescu i in. 2022 (PLOS ONE,
+     [doi:10.1371/journal.pone.0272460](https://doi.org/10.1371/journal.pone.0272460)), CCOHS (rozciąganie w biurze) i NHS (ćwiczenia na siedząco, oddech, picie wody),
+     a do tego badania o odpoczynku w pracy (m.in. Kim i in. 2017, Sianoja i in. 2018, Trougakos i in. 2014, Lee i in. 2015, Kushlev i Dunn 2015, Mark i in. 2008).
+     Link do źródła jest przy każdej poradzie w `tips.ts`.
+   - **Bez obietnic zdrowotnych** (zasada 10): porady to propozycje czynności („spójrz w dal przez 20 s”), bez „zapobiega”, „leczy” czy „chroni wzrok”.
+     Źródło uzasadnia wybór porady, a nie obiecuje efektu.
+
+8. **Historia.**
+   - **Powierzchnie powłoki Windows nie trafiają do wykresu.** `focus_core::stats::is_ignored_process` pomija procesy powłoki (m.in. `ShellExperienceHost`,
+     `StartMenuExperienceHost`, `SearchHost`, `TextInputHost`, `LockApp`, `ApplicationFrameHost`, `dwm`), a `is_shell_surface(process, class)` rozpoznaje dodatkowo
+     po klasie okna pasek zadań, pulpit, przepełnienie zasobnika i widok zadań. `focus-platform` podaje klasę okna na pierwszym planie (`GetClassNameW`),
+     a tracker pomija taką sekundę w całości: nie liczy jej ani jako aplikacji, ani jako „Nieznane” (bezczynność liczy się jak dotąd).
+     `explorer.exe` liczy się tylko jako prawdziwe okno (np. folder), a nie jako pasek zadań czy pulpit.
+   - **Tytuły okien w podpowiedzi wykresu.** `Config.trackTitles` (domyślnie włączone, wyłącznik w Ustawieniach). Gdy jest włączone, tracker przekazuje tytuł okna
+     na pierwszym planie do `UsageAccumulator::add_sample`; core czyści go (znaki sterujące → spacje), przycina do 120 znaków i trzyma najwyżej 50 różnych tytułów
+     na aplikację (przy przepełnieniu wypada najrzadszy). Podsumowanie (`AppUsage.titles: TitleUsage[]`) ma najwyżej 5 tytułów na aplikację, od najdłużej oglądanego,
+     i razem z nim trafia do `history.jsonl`; wykres pokazuje je po najechaniu myszą na słupek. Tytuły zbieramy dla każdej aplikacji (najbardziej przydają się
+     dla przeglądarki i Eksploratora). Przy wyłączonym `trackTitles` tytuł nie trafia do core. Wyłączenie nie usuwa tytułów z zapisanej historii; służy do tego „Usuń historię”.
+   - **Tytułów nigdy nie logujemy** (`Debug` akumulatora pokazuje tylko liczby). Nie trafiają do mostu, rozszerzenia ani sieci i nie opuszczają komputera.
+     Awaryjny nudge po tytule okna przeglądarki działa jak dotąd, w pamięci.
+   - **Nie zapisuj historii.** `Config.keepHistory` (domyślnie włączone). Po wyłączeniu podsumowanie z wykresem nadal pokazuje się po Stop, ale nie trafia do `history.jsonl`.
+     Wyłączenie nie usuwa wcześniejszej historii.
+   - **Usuń historię.** Komenda `clear_history` usuwa plik `history.jsonl` i ostatnie podsumowanie. UI najpierw prosi o potwierdzenie (okno z przyciskiem „Usuń”;
+     operacji nie da się cofnąć). Trwającej sesji nie przerywa.
+
+9. **Kontrakt** (`api.rs`; jak w ADR-013 i ADR-014, w tej samej gałęzi co implementacja): komendy `import_chime`, `remove_custom_chime`, `list_library_tracks`
+   i `clear_history`; nowe DTO `Theme`, `ChimeSound`, `CustomChimes`, `TintMode` i `TitleUsage`; nowe pola `Config` (`theme`, `chimeSound`, `customChimes`,
+   `breakReminders`, `repeatReminders`, `trackTitles`, `keepHistory`), `TintConfig.mode`, `TintStatus.mode` i `capped`, `PopupInfo.reminder`, `AppUsage.titles`;
+   wariant `MusicSourceKind::library`. Eventów nie przybywa. Szczegóły: ARCHITECTURE §6.7.
+
+**Konsekwencje:**
+- Ciepło ekranu zmienia teraz stan systemu (ustawienie Oświetlenia nocnego albo rampę gamma) i nie znika samo z procesem. Po kill kolory zostają ciepłe
+  do następnego startu FocusMode albo najpóźniej do następnego logowania (RunOnce). Oświetlenie nocne można też od razu wyłączyć w szybkich ustawieniach Windows.
+- Oświetlenie nocne opiera się na nieudokumentowanym formacie ustawień w rejestrze i może przestać działać po aktualizacji Windows. Wtedy powłoka przechodzi na gammę
+  albo zgłasza `TintStatus.error` (+ `app://error`), a aplikacja działa dalej. W godzinach harmonogramu FocusMode nadpisuje ręczne zmiany Oświetlenia nocnego.
+- Gamma nie działa na monitorach HDR, a bardzo ciepłych wartości Windows nie przyjmuje (`capped`). Gry i aplikacje, które same ustawiają rampę, mogą ją nadpisać.
+- Oba mechanizmy działają po kompozycji: obraz nie traci kontrastu, kursor też robi się cieplejszy, a zrzuty ekranu i nagrania mają normalne kolory.
+- Tytuły okien mogą zawierać dane prywatne (temat wiadomości, nazwa dokumentu, tytuł strony z trybu prywatnego). Leżą na dysku w `history.jsonl`
+  (profil użytkownika Windows, bez szyfrowania), dopóki użytkownik nie usunie historii. Dlatego wyłącznik tytułów, „Nie zapisuj historii” i „Usuń historię”
+  są obok siebie w Ustawieniach, a README to opisuje.
+- Pominięte sekundy powłoki nie wchodzą do `trackedSecs`, więc suma na wykresie może być mniejsza od czasu skupienia.
+- Instalator rośnie o ok. 37 MB (muzyka). Nowych crate'ów i pakietów npm nie ma; w `focus-platform` dochodzą feature'y `windows`: `Win32_UI_ColorSystem` i `Win32_Graphics_Gdi`.
+- Nieznana wartość enuma w `config.json` (np. motyw z nowszej wersji po powrocie do starszej) nadal unieważnia cały config (`config.corrupt`, jak w ADR-014).
+
+**Co zmienia:**
+- ADR-009: zastąpiona. Overlay odpada; gamma ramp wraca jako tryb do wyboru, z kopią bazowej rampy każdego monitora (R08) i powrotem kolorów jak przy osłonach.
+- ADR-012: okna overlay odcienia znikają; `TintStatus` z rewizją zostaje (czyta go tylko okno główne).
+- ADR-013: pkt 2 (domyślne źródło `library`), pkt 3 (dzwonek z pliku użytkownika), pkt 5 (pomijanie powłoki Windows, tytuły okien przy `trackTitles`,
+  `keepHistory`, `clear_history`).
+- ADR-014: pkt 2 (odcień przez Oświetlenie nocne albo gammę zamiast overlayu) i pkt 6 (grupa tras `(overlay)` tylko dla okna `popup`).
+- CLAUDE.md (zmiana czeka na zatwierdzenie przez użytkownika, notatka w TASKS z 2026-10-13):
+  - twarda zasada 6: „Bez pełnoekranowych okien przerwy i trybu spotkania — odłożone (ADR-013). **Odcień ekranu tylko przez Oświetlenie nocne Windows albo
+    gamma ramp, nigdy przez overlay**, domyślnie wyłączony; stan sprzed zmiany zapisany od razu i przywracany jak osłony (zasada 7; ADR-015)”;
+  - twarda zasada 11, zdanie o trackerze: „Tracker zapisuje nazwy procesów i sumy czasu, a tytuły okien **tylko przy włączonym `trackTitles`**: przycięte,
+    tylko lokalnie w `history.jsonl` (przy wyłączonym `keepHistory` nic), **nigdy w logach**, moście, rozszerzeniu ani w sieci (ADR-015). Powierzchnie powłoki Windows pomijamy.”;
+  - Struktura: `focus-platform` (`night_light`, `gamma`, klasa okna w `foreground`), powłoka (`tint.rs`: Oświetlenie nocne / gamma i plik przywracania),
+    `src/lib/themes/`, `src/lib/tips.ts`, `src-tauri/resources/music/`.

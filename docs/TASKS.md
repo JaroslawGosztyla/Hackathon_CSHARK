@@ -1,7 +1,7 @@
 # FocusMode — Taski i podział pracy
 
-> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014); wersja 2 po cross-review (2026-09-27).
-> Decyzje: ADR-008…014 w [DECISIONS.md](DECISIONS.md).
+> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014 i ADR-015); wersja 2 po cross-review (2026-09-27).
+> Decyzje: ADR-008…015 w [DECISIONS.md](DECISIONS.md).
 
 **Legenda statusu:** `[ ]` do zrobienia · `[~]` w toku · `[x]` zrobione · `[-]` porzucone
 Przy braniu taska wpisz obok statusu kto: `[~] (A)`. Edytuj **tylko swoje linie** (mniej konfliktów).
@@ -15,6 +15,9 @@ Całość powstaje w jednej gałęzi `b/speedrun-mvp` (równoległe agenty AI po
 zadania z oknami przerwy, ćwiczeniami, ostrzeżeniem, trybem spotkania i gammą są odłożone. Ich statusy zostawiamy do decyzji obu osób.
 Tint wraca w uproszczonej formie jako overlay ([ADR-014](DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki), SR-13 zamiast A-07/B-08).
 ADR-014 (2026-10-13) dokłada też zasobnik z okienkami faz, zamykanie launcherów gier, Teams z poszanowaniem statusu użytkownika i wybór języka (SR-12…SR-18).
+Runda 2a ([ADR-015](DECISIONS.md#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia), 2026-10-13) zastępuje overlay
+Oświetleniem nocnym Windows albo gammą (SR-19) i dokłada motywy, animowaną nawigację, dzwonki z własnym plikiem, muzykę w zestawie, przypomnienia,
+porady na przerwę oraz opcje historii (SR-20…SR-29).
 
 - [~] **SR-01** (B) Kontrakt IPC od nowa (`crates/focus-core/src/api.rs`): DTO configu (czasy, muzyka, osłony), snapshot sesji, `ShieldStatus`,
   użycie aplikacji i `SessionSummary`, Teams, most dla rozszerzenia (`BRIDGE_PORT = 47615`), stałe komend i eventów. Bindingi w `src/lib/bindings/`
@@ -33,6 +36,8 @@ ADR-014 (2026-10-13) dokłada też zasobnik z okienkami faz, zamykanie launcher�
 - [~] **SR-07** (B) Rozszerzenie MV3 `browser-extension/`: odpytywanie mostu, reguły `declarativeNetRequest`, strona „Wracaj do pracy”, popup, README.
 - [~] **SR-08** (B) Dokumentacja: ADR-013 (+ statusy ADR-003, 009–012), README (funkcje, instalacja, rozszerzenie, prywatność), CLAUDE.md, ten plik.
   2026-10-13: ADR-014 (+ poprawki ADR-009, 010, 012, 013), ARCHITECTURE §6 (nowe komendy, eventy, DTO, §6.6 pola configu), README, CLAUDE.md (zasada 6, struktura, teksty).
+  2026-10-13 (runda 2a): ADR-015 (+ poprawki ADR-009, 012, 013, 014), ARCHITECTURE §6 (nowe komendy, §6.7 pola configu i DTO, §9.1/9.2), README (funkcje, muzyka, prywatność), CREDITS.md.
+  Zmiana CLAUDE.md (zasady 6 i 11, struktura) czeka na zatwierdzenie (notatka 2026-10-13).
 - [ ] **SR-09** (A+B, po merge'u) Zaktualizować DESIGN.md i ARCHITECTURE.md do ADR-013 (tabela faz, wątki, kontrakt, okna). ARCHITECTURE §6 (kontrakt IPC) zaktualizowany 2026-10-13.
 - [~] **SR-10** (B) Okno YouTube jako fallback (ADR-013 pkt 2): gdy YouTube odmawia osadzania (błędy 101/150/153; m.in. live Lofi Girl i część YouTube Music)
   albo linku nie da się osadzić (`/@kanał/live`, `/channel/<id>/live`, `/@kanał`), link gra w ukrytym oknie Tauri `media` ze stroną YouTube (odtwarzacz w tle, bez uprawnień IPC,
@@ -50,7 +55,8 @@ ADR-014 (2026-10-13) dokłada też zasobnik z okienkami faz, zamykanie launcher�
   start focusa, auto-pauza po uśpieniu, zamknięte launchery. Kontrakt: `resolve_close`, `get_popup` / `popup_action` + `popup://show`, `app://close-requested`.
   DoD: świeży config → pierwsze X pyta; „Tak” → okno w zasobniku, muzyka gra, przy zmianie fazy okienko w rogu nie zabiera fokusu, „Pomiń fazę” z okienka działa;
   „Nie” → X kończy aplikację, a powiadomienia Windows wracają.
-- [~] **SR-13** (B) Odcień ekranu jako overlay (ADR-014 pkt 2, zastępuje A-07/B-08): `focus_core::tint` (poziom 0–100 z minuty doby), `focus-platform/src/clock.rs` (`GetLocalTime`),
+- [-] **SR-13** (B) **2026-10-13: overlay odrzucony przez właściciela produktu (ADR-015), zastępuje go SR-19**; harmonogram (`focus_core::tint`), `clock.rs` i karta w Ustawieniach przechodzą do SR-19.
+  Odcień ekranu jako overlay (ADR-014 pkt 2, zastępuje A-07/B-08): `focus_core::tint` (poziom 0–100 z minuty doby), `focus-platform/src/clock.rs` (`GetLocalTime`),
   `src-tauri/src/tint.rs` (przezroczyste, klikalne na wylot okna per monitor, harmonogram, podgląd), karta w Ustawieniach (od–do, siła, przejście, podgląd).
   Domyślnie wyłączony. Kontrakt: `Config.tint`, `get_tint_status` / `preview_tint` + `tint://changed`.
   DoD: włączony z harmonogramem obejmującym bieżącą godzinę → ciepła warstwa na każdym monitorze, kliknięcia przechodzą, fokus zostaje; podgląd pokazuje siłę i sam znika;
@@ -69,6 +75,42 @@ ADR-014 (2026-10-13) dokłada też zasobnik z okienkami faz, zamykanie launcher�
   (UI, tray, okienka, toasty). Zależy od: SR-16.
 - [ ] **SR-18** (B, `/sync-contract`) Osobny `BlocklistIssueCode` dla linii `*.domena` (np. `wildcardDomain` z domeną w `message`), żeby podpowiedź „wpisz samo facebook.com”
   dała się przetłumaczyć; dziś to tylko angielski dopisek do szczegółu `invalidRegex`.
+- [~] **SR-19** (B) Ciepło ekranu przez Oświetlenie nocne albo gammę (ADR-015 pkt 1, zastępuje overlay z SR-13): `focus_core::tint` (`kelvin_for_level`, `rgb_gain_for_kelvin`; gotowe),
+  `focus-platform/src/night_light.rs` (Oświetlenie nocne bieżącego użytkownika) i `gamma.rs` (bazowa rampa każdego monitora, `capped`), `src-tauri/src/tint.rs` od nowa
+  (harmonogram, podgląd, mechanizm zastępczy, plik przywracania + RunOnce `FocusModeRestore` / `--restore-shields`), wybór trybu w Ustawieniach.
+  Usunięte: okna `tint-*`, trasa `src/routes/(overlay)/tint`, wpis `tint-*` w `capabilities/overlays.json`. Kontrakt: `TintConfig.mode`, `TintStatus.mode` / `capped`.
+  DoD: harmonogram obejmujący bieżącą godzinę → Oświetlenie nocne włączone z temperaturą według siły, poza godzinami wyłączone; zrzut ekranu ma normalne kolory;
+  własne ustawienia Oświetlenia nocnego wracają po wyłączeniu odcienia, po „Zakończ”, po kill + ponownym starcie i po kill + logowaniu; tryb gamma: cieplej na każdym monitorze,
+  kalibracja wraca po wyłączeniu, zbyt ciepła wartość → `capped`, monitor HDR → komunikat zamiast cichej porażki.
+- [~] **SR-20** (B) Motywy (ADR-015 pkt 2): `Config.theme`, `src/lib/themes/` (Midnight, Vaporwave, fazy księżyca, przytulna jesień, prosty ciemny, prosty jasny, 8-bit),
+  wybór w Ustawieniach, motyw także w okienku `popup`. DoD: zmiana motywu działa od razu i zostaje po restarcie; każdy motyw czytelny (kontrast WCAG AA, także jasny);
+  przy `prefers-reduced-motion` tło się nie animuje.
+- [~] **SR-21** (B) Animowana nawigacja (ADR-015 pkt 3): podświetlenie zakładki płynnie przesuwa się między Skupieniem, Podsumowaniem i Ustawieniami, a tło przesuwa się lekko
+  w lewo albo w prawo według kolejności zakładek (tylko `transform` / `opacity`). DoD: płynnie w obie strony, bez skoku układu; przy `prefers-reduced-motion` bez ruchu.
+- [~] **SR-22** (B) Dźwięki dzwonków (ADR-015 pkt 4): pakiety `midnight`, `vaporwave`, `lunar`, `autumn`, `classic`, `soft`, `chiptune` w `focus-audio` (wariant przerwy i skupienia),
+  własny plik (`import_chime` / `remove_custom_chime`, folder `sounds` w danych aplikacji, mp3/wav/ogg/flac/m4a do 10 MB, gra najwyżej 10 s), lista i „Testuj” w Ustawieniach.
+  DoD: każdy pakiet gra przy zmianie fazy i w „Testuj”; plik z innym rozszerzeniem, za duży albo niedekodowalny → komunikat; usunięcie pliku → gra plik drugiego dzwonka albo `midnight`.
+- [~] **SR-23** (B) Muzyka w zestawie (ADR-015 pkt 5): 12 utworów Open Lo-Fi (CC0) w `src-tauri/resources/music/open-lofi/` + `library.json`, `bundle.resources`,
+  `list_library_tracks`, źródło `library` domyślne w odtwarzaczu; licencja w `CREDITS.md`. DoD: świeża instalacja bez sieci → Start → gra muzyka z zestawu;
+  stary config ze źródłem `stream` zostaje przy streamie.
+- [~] **SR-24** (B) Przypomnienia na kolejne przerwy (ADR-015 pkt 6): edytor listy w Ustawieniach („1. przerwa: …”), `repeatReminders`, `reminder_for_break` w powłoce przy starcie przerwy
+  (gotowe w core), `PopupInfo.reminder` w okienku i na karcie przerwy. DoD: „rozciąganie / woda i spacer z psem / obiad” → kolejne przerwy pokazują kolejne teksty,
+  czwarta nic (albo znowu pierwszy przy włączonym powtarzaniu).
+- [~] **SR-25** (B) Porady na przerwę (ADR-015 pkt 7): `src/lib/tips.ts` (60 porad PL/EN ze źródłami, na krótką / długą / każdą przerwę; 10 porad do pracy; przypis do rozciągania;
+  nota prawna tylko po polsku), wybór z ziarna `sessionId` + numer przerwy. DoD: krótka i długa przerwa pokazują porady z właściwej puli; ta sama porada po odświeżeniu;
+  w tekstach brak obietnic zdrowotnych.
+- [~] **SR-26** (B) **Pomijać w historii skupienia elementy powłoki Windows** (`ShellExperienceHost` i podobne; prośba użytkownika, ADR-015 pkt 8): menu Start, wyszukiwanie,
+  pasek zadań, pulpit, zasobnik, widok zadań. Core gotowy (`focus_core::stats::is_ignored_process` / `is_shell_surface`); zostaje klasa okna w `focus-platform` (`foreground`, `GetClassNameW`)
+  i pomijanie takich sekund w trackerze. DoD: klikanie w menu Start, pasek zadań, zasobnik i pulpit w trakcie Focus → w podsumowaniu brak `ShellExperienceHost.exe`, `SearchHost.exe`
+  i `explorer.exe` za pasek zadań czy pulpit; okno folderu w Eksploratorze nadal liczy się jako `explorer.exe`.
+- [~] **SR-27** (B) **Tytuł okna w podpowiedzi po najechaniu myszą na wykres** (prośba użytkownika, ADR-015 pkt 8): gdy na pierwszym planie jest Eksplorator, przeglądarka itp.,
+  zapamiętać tytuł okna; przełącznik w Ustawieniach (`trackTitles`, domyślnie wł.). Core gotowy (`add_sample` z tytułem, `AppUsage.titles`, najwyżej 5 na aplikację);
+  tracker przekazuje tytuł tylko przy włączonym przełączniku i nigdy go nie loguje, wykres pokazuje podpowiedź. DoD: dwie karty w Chrome → podpowiedź na słupku `chrome.exe`
+  pokazuje oba tytuły z czasem; po wyłączeniu nowe sesje są bez tytułów; w logach nie ma tytułów.
+- [~] **SR-28** (B) **Przycisk „Usuń historię” z potwierdzeniem** (prośba użytkownika, ADR-015 pkt 8): `clear_history` usuwa `history.jsonl` i ostatnie podsumowanie; UI najpierw pyta.
+  DoD: „Usuń historię” → pytanie → „Anuluj” nic nie zmienia; „Usuń” → historia pusta, także po restarcie; trwająca sesja działa dalej.
+- [~] **SR-29** (B) **Opcja „Nie zapisuj historii”** (prośba użytkownika, ADR-015 pkt 8): `Config.keepHistory` (domyślnie wł.); po wyłączeniu podsumowanie po Stop widać,
+  ale nie trafia do `history.jsonl`. DoD: wyłączone → sesja → Stop → podsumowanie widoczne, po restarcie tej sesji nie ma w historii; wcześniejsza historia nietknięta.
 
 **Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
 - [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
@@ -81,7 +123,10 @@ ADR-014 (2026-10-13) dokłada też zasobnik z okienkami faz, zamykanie launcher�
 - [ ] uśpienie laptopa w Focus i w przerwie → auto-pauza, czas luki nie liczy się do skupienia
 - [ ] instalator NSIS: instalacja per-user poza repo, skrót, start bez sieci (szum/folder), folder rozszerzenia otwiera się z Ustawień, autostart startuje zminimalizowany do zasobnika
 - [ ] pierwsze X pyta o zasobnik; „Tak” → okienka przy zmianie fazy (bez kradzieży fokusu, także przy włączonym „Nie przeszkadzać”); „Nie” → X kończy aplikację i osłony schodzą
-- [ ] odcień: domyślnie wyłączony; po włączeniu warstwa na każdym monitorze, klikalna na wylot; podgląd; kill → kolory wracają
+- [ ] ciepło ekranu (ADR-015): domyślnie wyłączone; Oświetlenie nocne według harmonogramu i w podglądzie, zrzut ekranu w normalnych kolorach; własne ustawienia
+  Oświetlenia nocnego wracają po wyłączeniu, po „Zakończ”, po kill + starcie i po kill + logowaniu; tryb gamma na każdym monitorze, kalibracja wraca
+- [ ] świeża instalacja bez sieci: domyślnie gra muzyka z zestawu (Open Lo-Fi); motywy, animowana nawigacja i dzwonki (także własny plik) działają; przy przerwie przypomnienie i porada
+- [ ] historia: bez elementów powłoki Windows (menu Start, pasek zadań, pulpit); tytuły okien w podpowiedzi wykresu i bez nich po wyłączeniu; „Nie zapisuj historii”; „Usuń historię” z potwierdzeniem
 - [ ] launchery: Steam/Epic zamknięte na start focusa (także w drugim cyklu), usługi nietknięte, w przerwie nie wracają
 - [ ] Teams (jeśli tenant pozwala): „Wyświetlaj jako offline” i własne DND zostają nietknięte przez całą sesję
 
@@ -247,3 +292,6 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
 - [2026-10-13] (B→A) Kontrakt: okno YouTube — komendy open_media_window / control_media_window / get_media_window, event media://window (MediaWindowStatus z rewizją); powód: Lofi Girl i część YouTube Music odmawia osadzania (błąd 150).
 - [2026-10-13] (B→A) Kontrakt: websiteblacklist.txt — komendy get_blocklist / open_blocklist_file / reload_blocklist, event blocklist://changed (BlocklistInfo z rewizją), BridgeState.patterns, usunięte shields.blocklist z Config.
 - [2026-10-13] (B→A) Kontrakt: resolve_close, get_system_language, get_popup/popup_action + popup://show, get_tint_status/preview_tint + tint://changed, app://close-requested; Config: language, closeToTray, phasePopups, tint, shields.closeLaunchers/launchers; ShieldStatus.launchers/closedLaunchers; BlocklistIssue.code.
+- [2026-10-13] (B→A) Kontrakt, runda 2a (ADR-015): komendy import_chime / remove_custom_chime / list_library_tracks / clear_history (bez nowych eventów); Config: theme, chimeSound, customChimes, breakReminders, repeatReminders, trackTitles, keepHistory; TintConfig.mode (TintMode: nightLight | gamma); TintStatus.mode / capped; PopupInfo.reminder; AppUsage.titles (TitleUsage); MusicSourceKind.library (nowe domyślne źródło). Zmiana API w core: `UsageAccumulator::add_sample(process, title, idle, ms)` oraz nowe `is_ignored_process` / `is_shell_surface`, `reminder_for_break`, `kelvin_for_level` / `rgb_gain_for_kelvin`.
+- [2026-10-13] (B→A) Overlay odcienia odrzucony przez właściciela produktu (ADR-015). Ciepło daje Oświetlenie nocne Windows (domyślnie, nieudokumentowany zapis ustawień użytkownika w rejestrze) albo gamma ramp z kopią bazowej rampy każdego monitora, czyli wersja S-02 zgodna z R08. Proszę o review `focus-platform/src/night_light.rs` i `gamma.rs` oraz powrotu kolorów po kill (plik przywracania + RunOnce). S-02 i A-07 to twoje linie: zdecyduj, czy oznaczyć je jako zastąpione przez SR-19.
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-015 („Co zmienia”: zasada 6 — odcień tylko przez Oświetlenie nocne albo gammę, nigdy overlay; zasada 11 — tytuły okien tylko przy `trackTitles`, lokalnie, nigdy w logach; Struktura — nowe moduły) czeka na zatwierdzenie przez użytkownika. Do tego czasu CLAUDE.md opisuje stan z ADR-014, a przy różnicy wygrywa ADR-015.

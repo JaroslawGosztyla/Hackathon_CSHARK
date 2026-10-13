@@ -1,11 +1,13 @@
 # FocusMode — instrukcje dla Claude
 
 Aplikacja desktopowa do sesji skupienia w stylu „lofi”: użytkownik ustawia czasy (domyślnie 45 min focus / 15 min przerwy)
-i muzykę (stream, np. Lofi Girl na YouTube, linki YouTube/YouTube Music, folder, szum) → Start → pętla Focus ⇄ Przerwa aż do Stop,
+i muzykę (domyślnie dołączone Open Lo-Fi, CC0; stream, np. Lofi Girl na YouTube, linki YouTube/YouTube Music, folder, szum) → Start → pętla Focus ⇄ Przerwa aż do Stop,
 z dzwonkiem i toastem (albo okienkiem FocusMode w rogu ekranu) przy każdej zmianie fazy. Na czas focusa „osłony”: wyciszenie powiadomień Windows,
 Teams „Nie przeszkadzać” (Graph; nie rusza „offline” ani własnego DND użytkownika), blokada rozpraszających stron (rozszerzenie przeglądarki + lokalny most),
-nieusypianie ekranu, zamknięcie launcherów gier. W przerwie osłony schodzą, a muzyka gra dalej. Opcjonalnie odcień ekranu według pory dnia (overlay).
-Po Stop wykres produktywności według aktywnego procesu. **Aktualny zakres: ADR-013 (speedrun) + ADR-014**; wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
+nieusypianie ekranu, zamknięcie launcherów gier. W przerwie osłony schodzą, a muzyka gra dalej; przerwa pokazuje poradę i przypomnienie użytkownika.
+Opcjonalnie ciepłe kolory ekranu według pory dnia (Oświetlenie nocne Windows albo gamma). Motywy i pakiety dzwonków (także własny plik).
+Po Stop wykres produktywności według aktywnego procesu (z tytułami okien w podpowiedzi, jeśli włączone). **Aktualny zakres: ADR-013 (speedrun) + ADR-014 + ADR-015**;
+wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
 Architektura multiplatformowa, **odbiór i gwarancje UX tylko na Windows** (ADR-008).
 Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), prowadzony z pomocą AI.
 
@@ -15,7 +17,7 @@ Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), pro
 2. Ustal, dla kogo pracujesz (A czy B): sprawdź `CLAUDE.local.md`; jeśli go nie ma — zapytaj.
 3. Przy pracy nad architekturą/IPC czytaj [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md);
    przy decyzjach produktowych [docs/DESIGN.md](docs/DESIGN.md); ADR-y w [docs/DECISIONS.md](docs/DECISIONS.md).
-   Oba dokumenty są sprzed pivotu: najpierw ADR-013, ADR-014 i `crates/focus-core/src/api.rs`.
+   Oba dokumenty są sprzed pivotu: najpierw ADR-013, ADR-014, ADR-015 i `crates/focus-core/src/api.rs`.
 
 ## Stos
 
@@ -26,30 +28,36 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
 
 ## Struktura
 
-- `crates/focus-core/` — czysta logika: `timing.rs` (profil czasów), `session.rs` (maszyna stanów Focus ⇄ Przerwa), `config.rs` (domyślne + walidacja),
+- `crates/focus-core/` — czysta logika: `timing.rs` (profil czasów), `session.rs` (maszyna stanów Focus ⇄ Przerwa),
+  `config.rs` (domyślne + walidacja, przypomnienia na przerwy `reminder_for_break`, nazwy plików dzwonków),
   `blocklist.rs` (parser `websiteblacklist.txt`: domeny + regexy RE2, procesy przeglądarek, dopasowanie tytułów; błędy jako `BlocklistIssueCode`),
-  `stats.rs` (użycie aplikacji, podsumowanie), `tint.rs` (harmonogram odcienia: poziom 0–100 z minuty doby),
+  `stats.rs` (użycie aplikacji, tytuły okien, pomijanie powłoki Windows `is_shell_surface`, podsumowanie),
+  `tint.rs` (harmonogram odcienia: poziom 0–100 z minuty doby; temperatura `kelvin_for_level` i mnożniki gammy `rgb_gain_for_kelvin`),
   `launchers.rs` (launchery gier i ich dokładne nazwy procesów), `language.rs` (obsługiwane języki, tag systemu → `Language`).
   `src/api.rs` = kontrakt IPC. `assets/websiteblacklist.txt` = domyślna lista stron wbudowana w aplikację (ADR-013 pkt 4).
-- `crates/focus-audio/` — dedykowany wątek rodio, syntetyczne dzwonki (`ChimePlayer`). Muzyka nie gra w Ruście.
-- `crates/focus-platform/` — integracje OS za traitami z `Noop`: `foreground` (aktywne okno + bezczynność),
+- `crates/focus-audio/` — dedykowany wątek rodio, dzwonki (`ChimePlayer`): syntetyczne pakiety `ChimeSound` i własny plik użytkownika. Muzyka nie gra w Ruście.
+- `crates/focus-platform/` — integracje OS za traitami z `Noop`: `foreground` (aktywne okno z klasą okna + bezczynność),
   `notifications` (DND Windows przez nieudokumentowany COM `IQuietHoursSettings`, stan sprzed focusa awaryjnie z WNF),
   `power` (keep-awake), `teams` (Graph, device code, token DPAPI, odczyt statusu przed DND),
   `processes` (zamykanie procesów po dokładnej nazwie exe w bieżącej sesji: Toolhelp + `TerminateProcess`),
-  `locale` (język wyświetlania systemu), `clock` (minuta doby czasu lokalnego dla odcienia, `GetLocalTime`).
+  `locale` (język wyświetlania systemu), `clock` (minuta doby czasu lokalnego dla odcienia, `GetLocalTime`),
+  `night_light` (Oświetlenie nocne bieżącego użytkownika: nieudokumentowany zapis w rejestrze), `gamma` (rampa gamma każdego monitora z kopią bazowej rampy).
 - `src-tauri/src/` — powłoka: `commands.rs` (cienkie adaptery), `session_actor.rs` (aktor + tick 1 s), `effects.rs` (dispatch efektów),
   `shields.rs` (wątek osłon z generacją, `shields-restore.json` + wpis RunOnce `FocusModeRestore` → `--restore-shields`; także zamykanie launcherów),
   `tracker.rs` (próbkowanie aktywnej aplikacji + awaryjny nudge po tytule okna, gdy rozszerzenie nie odpytało mostu przez 90 s),
-  `bridge.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia), `persistence.rs` (`config.json`, `history.jsonl`),
+  `bridge.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia), `persistence.rs` (`config.json`, `history.jsonl`, `keepHistory`, `clear_history`),
   `blocklist.rs` (`websiteblacklist.txt` w katalogu konfiguracji: utworzenie z domyślnej listy, odczyt, auto-przeładowanie po zapisie, `blocklist://changed`),
-  `music.rs` (skan folderu; asset scope tylko dla znalezionych plików audio), `media_window.rs` (ukryte okno YouTube, ADR-013 pkt 2),
-  `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`), `tint.rs` (overlay odcienia na każdym monitorze, harmonogram, podgląd, `tint://changed`),
+  `music.rs` (skan folderu i muzyka w zestawie; asset scope tylko dla znalezionych plików audio), `media_window.rs` (ukryte okno YouTube, ADR-013 pkt 2),
+  `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`), `tint.rs` (ciepło ekranu przez Oświetlenie nocne albo gammę, harmonogram, podgląd,
+  `tint-restore.json`, `tint://changed`; ADR-015), `safety_net.rs` (jeden wpis RunOnce `FocusModeRestore` dla osłon i kolorów ekranu),
   `close.rs` (X na oknie głównym: zasobnik, wyjście albo pytanie `app://close-requested`), `window_util.rs` (opcje WebView2 okna głównego dla
   pozostałych okien, pozycja w rogu ekranu), `teams.rs`, `tray.rs`, `texts.rs` (wszystkie teksty powłoki: toasty, tray, okienka).
-  `src-tauri/capabilities/`: `default.json` (okno `main`), `overlays.json` (okna `popup` i `tint-*`: tylko eventy).
+  `src-tauri/capabilities/`: `default.json` (okno `main`), `overlays.json` (okno `popup`: tylko eventy).
+  `src-tauri/resources/music/open-lofi/` = muzyka w zestawie (Open Lo-Fi, CC0, opis w `library.json`, licencja w `CREDITS.md`).
 - `src/` — **frontend Svelte/TS** (nie Rust!). `src/lib/api.ts` = jedyne miejsce z `invoke`/`listen`. `src/lib/player/` = odtwarzacz muzyki.
-  Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w layoucie odtwarzacz),
-  `src/routes/(overlay)/` = lekkie strony okna `popup` i overlayu odcienia, **bez odtwarzacza** (inaczej muzyka grałaby w kilku oknach).
+  `src/lib/themes/` = motywy (zmienne CSS i tła), `src/lib/tips.ts` = porady na przerwę (PL/EN, źródło przy każdej).
+  Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w layoucie odtwarzacz i animowana nawigacja),
+  `src/routes/(overlay)/` = lekka strona okna `popup`, **bez odtwarzacza** (inaczej muzyka grałaby w kilku oknach).
 - `src/lib/bindings/` — **generowane** przez ts-rs, nie edytuj ręcznie.
 - `browser-extension/` — rozszerzenie MV3 (Chrome/Edge/Brave/Opera/Vivaldi): odpytuje most i przekierowuje rozpraszające strony na `blocked.html`.
   Trafia do instalatora jako zasób (`bundle.resources`).
@@ -89,8 +97,9 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
    Żadnego UI na surowym Win32/HWND — okna robi Tauri.
 5. **Kontrakt IPC zmieniasz tylko przez `/sync-contract`**. Każdy stan widoku (snapshot sesji, `ShieldStatus`, `TeamsStatus`, `TintStatus`, `PopupInfo`…)
    ma getter + event z rewizją (ADR-012): UI robi listen → getter → stosuje tylko nowszą `revision`.
-6. **Bez pełnoekranowych okien przerwy, gammy i trybu spotkania** — odłożone (ADR-013). **Odcień ekranu tylko jako overlay**
-   (przezroczyste, klikalne na wylot okna per monitor), **domyślnie wyłączony** (ADR-009, ADR-014).
+6. **Bez pełnoekranowych okien przerwy i trybu spotkania** — odłożone (ADR-013). **Odcień ekranu tylko przez Oświetlenie nocne Windows
+   albo gamma ramp, nigdy przez overlay** (warstwę koloru), **domyślnie wyłączony**. Stan sprzed zmiany (ustawienia Oświetlenia nocnego, bazowe rampy monitorów)
+   zapisujemy zaraz po zmianie i przywracamy jak osłony: przy wyjściu, przy następnym starcie, najpóźniej przy logowaniu (zasada 7; ADR-015).
 7. **Sesja nie może uwięzić użytkownika**: Stop działa w każdej fazie i jest idempotentny; Pauza/Wznów/Pomiń fazę z UI i z traya
    (tray idzie kanałem aktora, niezależnie od WebView). **Osłony zawsze wracają**: schodzą w przerwie, po Stop i przy wyjściu,
    a token wyciszenia powiadomień jest zapisywany zaraz po zmianie (`shields-restore.json` + wpis RunOnce `FocusModeRestore`
@@ -106,7 +115,9 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
     Żadnych obietnic zdrowotnych w UI (przerwa to propozycje ruchu, nie terapia).
 11. **Prywatność**: nic nie opuszcza komputera poza ruchem, który wybrał użytkownik (muzyka, opcjonalnie Graph dla Teams).
     Most słucha tylko na `127.0.0.1` i tylko udostępnia stan; rozszerzenie nie wysyła adresów stron i nie ładuje zdalnego kodu.
-    Tracker zapisuje tylko nazwy procesów i sumy czasu; tytułów okien nie zapisujemy ani nie logujemy. Tokenów nie logujemy.
+    Tracker zapisuje nazwy procesów i sumy czasu, a tytuły okien **tylko przy włączonym `trackTitles`**: przycięte, tylko lokalnie w `history.jsonl`
+    (przy wyłączonym `keepHistory` nic), **nigdy w logach** (także nie w `Debug`), moście, rozszerzeniu ani w sieci (ADR-015).
+    Powierzchnie powłoki Windows (pasek zadań, pulpit, menu Start, `ShellExperienceHost`…) pomijamy. Tokenów nie logujemy.
     Launchery gier zamykamy tylko po dokładnych nazwach exe z `focus-core/src/launchers.rs`, tylko w bieżącej sesji,
     nigdy usług, procesów gier ani niczego, co wymaga praw administratora (ADR-014).
 
