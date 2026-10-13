@@ -3,6 +3,7 @@ import type { MeetingHoldView } from "./MeetingHoldView";
 import type { MicroStep } from "./MicroStep";
 import type { Phase } from "./Phase";
 import type { SessionGoal } from "./SessionGoal";
+import type { SmartBreak } from "./SmartBreak";
 
 /**
  * Full view state of the session. Windows apply it only when `revision` is newer than what they have.
@@ -55,4 +56,10 @@ goal: SessionGoal | null,
 /**
  * Small steps of the coming (Idle) or running session (beta, ADR-022). Empty while small steps are off.
  */
-steps: Array<MicroStep>, };
+steps: Array<MicroStep>, 
+/**
+ * Smart breaks (ADR-023): the break after the current focus block (or the running break) was moved around a
+ * meeting; the one-line note under the timer ("Break moved to 13:50 · meeting at 14:00") and its undo. No
+ * meeting subject. `None` in Idle, while `Config.smart_breaks` is off and when nothing was moved.
+ */
+smartBreak: SmartBreak | null, };

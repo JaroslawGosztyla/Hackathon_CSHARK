@@ -2,6 +2,7 @@
 import type { CalendarSourceStatus } from "./CalendarSourceStatus";
 import type { Meeting } from "./Meeting";
 import type { MeetingConflict } from "./MeetingConflict";
+import type { SmartBreak } from "./SmartBreak";
 
 export type CalendarStatus = { 
 /**
@@ -23,4 +24,14 @@ planned: boolean, lastSyncMs: number | null,
 /**
  * Google sign-in in progress (browser opened).
  */
-googlePending: boolean, };
+googlePending: boolean, 
+/**
+ * Breaks moved by smart breaks (ADR-023), in break order. Empty while `Config.smart_breaks` is off. A meeting
+ * listed here is not in `conflicts`: it no longer collides with the adjusted plan.
+ */
+smartBreaks: Array<SmartBreak>, 
+/**
+ * Meeting ids the user asked to decide about by hand ("Ask me instead", `set_smart_break_opt_out`); their
+ * collisions stay in `conflicts` with the usual question.
+ */
+smartOptOuts: Array<string>, };

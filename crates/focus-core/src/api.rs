@@ -5,6 +5,8 @@
 //! `src/lib/bindings/names.ts` by the `export_names` test, so `src/lib/api.ts` never types them by hand.
 //! Change this file only through `/sync-contract`.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -160,6 +162,18 @@ pub mod commands {
     /// `{ id: number, done: boolean } -> ()` ticks / unticks a step (Focus or Break, also paused). Idle or an
     /// unknown id: no-op. `stepsOff` while small steps are off.
     pub const SET_STEP_DONE: &str = "set_step_done";
+    /// `() -> SunCity[]` the built-in cities for the sunset / sunrise tint schedule (ADR-023), in list order.
+    /// Static data compiled into the app: no location service, no network.
+    pub const LIST_SUN_CITIES: &str = "list_sun_cities";
+    /// `{ meetingId: string, optOut: boolean } -> CalendarStatus` "Ask me instead" for one meeting (ADR-023):
+    /// `true` undoes the automatic smart-break fit for it (the session gets its unadjusted phase end back through
+    /// the actor, and the meeting is asked about like any collision); `false` lets smart breaks fit it again.
+    /// Stored with the meeting choices (ids only). Never blocks Stop / Skip / Pause.
+    pub const SET_SMART_BREAK_OPT_OUT: &str = "set_smart_break_opt_out";
+    /// `{ weekStart: string } -> WeeklyStats` the ISO week (Monday first, local time) containing the date
+    /// `weekStart` (`YYYY-MM-DD`, any day of that week), aggregated from `history.jsonl` (ADR-023).
+    /// A malformed date → `stats.week` (field `weekStart`).
+    pub const GET_WEEKLY_STATS: &str = "get_weekly_stats";
 }
 
 /// Event names (`emit` from the shell, `listen` in `api.ts`).
@@ -200,6 +214,10 @@ pub mod events {
     /// `RewardsStatus` (beta, ADR-022), after every applied fact, ack, reset, config change, reward-day rollover and
     /// load. Never emitted with `active: true` while the rewards are off.
     pub const REWARDS_CHANGED: &str = "rewards://changed";
+    /// `HistoryChanged` (ADR-023), whenever the stored history changed (a session was saved, a goal marked, the
+    /// history cleared or deleted) or `Config.app_categories` changed: the UI asks `get_weekly_stats` again for the
+    /// week it shows and keeps answers whose `revision` is not older.
+    pub const HISTORY_CHANGED: &str = "history://changed";
 }
 
 /// Loopback port of the browser-extension bridge (`GET http://127.0.0.1:{BRIDGE_PORT}/v1/state` → `BridgeState`).
@@ -277,6 +295,11 @@ pub struct SessionSnapshot {
     /// Small steps of the coming (Idle) or running session (beta, ADR-022). Empty while small steps are off.
     #[serde(default)]
     pub steps: Vec<MicroStep>,
+    /// Smart breaks (ADR-023): the break after the current focus block (or the running break) was moved around a
+    /// meeting; the one-line note under the timer ("Break moved to 13:50 · meeting at 14:00") and its undo. No
+    /// meeting subject. `None` in Idle, while `Config.smart_breaks` is off and when nothing was moved.
+    #[serde(default)]
+    pub smart_break: Option<SmartBreak>,
 }
 
 /// A small step of the session plan (beta, ADR-022). `text` is the user's own text: it stays local (memory, the IPC
@@ -408,6 +431,18 @@ pub struct Config {
     pub beta_features: bool,
     /// Sparks, streak and small steps (ADR-022). Effective only while `beta_features` is on.
     pub rewards: RewardsConfig,
+    /// Smart breaks (ADR-023): while a calendar is connected, a meeting that collides with a break moves that break
+    /// by shortening or lengthening the focus block before it (within the bounds of ADR-023) instead of asking; when
+    /// no fit is possible the meeting is asked about as before. Default false.
+    pub smart_breaks: bool,
+    /// The user's labels for apps in the weekly stats (ADR-023): exe name → category. Keys are stored trimmed and
+    /// lowercased (`str::to_lowercase`, JS `toLowerCase()`); an app without a key is unlabelled. Default empty;
+    /// at most `config::MAX_APP_CATEGORIES` entries.
+    pub app_categories: BTreeMap<String, AppCategory>,
+    /// The first-run wizard was finished or skipped (ADR-023). Default true, so a `config.json` without the field
+    /// (every install before the wizard) never shows it; only the config the shell creates on a fresh install
+    /// (`Config::first_run`) starts with false. "Delete everything" resets to the defaults, so it stays true there.
+    pub onboarding_done: bool,
 }
 
 /// Beta: sparks, levels, daily goal, streak, celebrations and small steps (ADR-022). Every switch is effective only
@@ -578,8 +613,8 @@ pub enum Language {
     Ja,
 }
 
-/// Warm overlay schedule. Times are minutes after local midnight; the schedule may cross midnight.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Warm screen schedule. Times are minutes after local midnight; the schedule may cross midnight.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
 pub struct TintConfig {
@@ -595,6 +630,63 @@ pub struct TintConfig {
     pub transition_minutes: u32,
     /// How the warmth is applied. Default `NightLight`.
     pub mode: TintMode,
+    /// What opens and closes the warm window (ADR-023): the fixed hours above or local sunset → sunrise. Default
+    /// `Fixed`. Without a `location`, and on days without a sunset or sunrise (polar day / night), the fixed hours
+    /// are used (`TintStatus.schedule` says which).
+    pub schedule: TintSchedule,
+    /// Where sunset and sunrise are computed for `Sun`: typed by the user or picked from `list_sun_cities`. Never
+    /// located automatically (no location service, no network). Default `None`.
+    pub location: Option<TintLocation>,
+    /// Suspend the warmth while one of `pause_apps` is the foreground window (ADR-023). Default true.
+    pub pause_for_apps: bool,
+    /// Colour-critical apps: exact exe names (`Photoshop.exe`), matched case-insensitively. Stored trimmed, without
+    /// empty entries and case-insensitive duplicates (the first spelling stays), at most `config::MAX_PAUSE_APPS`
+    /// names of at most `config::MAX_PROCESS_NAME_CHARS` characters, no path separators. Default
+    /// `tint::DEFAULT_PAUSE_APPS`.
+    pub pause_apps: Vec<String>,
+    /// Suspend the warmth while a full-screen app or game is in front (ADR-023). Default false.
+    pub pause_for_fullscreen: bool,
+}
+
+/// What opens and closes the warm window (ADR-023).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TintSchedule {
+    /// `TintConfig.start_minutes` → `end_minutes`.
+    Fixed,
+    /// Local sunset → sunrise at `TintConfig.location`, computed offline (NOAA solar algorithm in `focus-core`).
+    Sun,
+}
+
+/// A place on Earth for the sunset / sunrise schedule (ADR-023). Stays in `config.json`; never sent anywhere.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TintLocation {
+    /// Degrees, -90..=90 (north positive).
+    pub latitude: f64,
+    /// Degrees, -180..=180 (east positive).
+    pub longitude: f64,
+    /// `SunCity.id` when the place was picked from the built-in list (the UI shows that city); `None` for typed
+    /// coordinates. Stored trimmed (empty → `None`), at most `config::MAX_CITY_ID_CHARS` characters; not checked
+    /// against the list (an id the list no longer has shows as typed coordinates).
+    pub city: Option<String>,
+}
+
+/// One built-in city for the sunset / sunrise schedule (`list_sun_cities`, ADR-023).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SunCity {
+    /// Stable id, e.g. `pl-warszawa`.
+    pub id: String,
+    /// The city's own name (`Warszawa`, `München`, `Tokyo`); the UI may add the localized country.
+    pub name: String,
+    /// ISO 3166-1 alpha-2 country code (`PL`), for `Intl.DisplayNames` in the UI.
+    pub country: String,
+    pub latitude: f64,
+    pub longitude: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -817,6 +909,23 @@ pub struct SessionSummary {
     /// `None` (the TS field is optional: `undefined` or `null` = none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sparks: Option<u32>,
+    /// Wall-clock intervals of running focus in this session (no pauses, no sleep gaps), oldest first, for the
+    /// weekly heatmaps (ADR-023). Timestamps only. Left out of the JSON when empty, so lines written before stay
+    /// as they were (TS field optional); for those the weekly stats spread `focused_secs` evenly between
+    /// `started_at_ms` and `ended_at_ms` (`WeeklyStats.estimated`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus_spans: Vec<TimeSpan>,
+}
+
+/// `[start_ms, end_ms)` on the wall clock (Unix epoch milliseconds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TimeSpan {
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1047,6 +1156,58 @@ pub struct TintStatus {
     pub capped: bool,
     /// The mechanism failed or is unavailable (English detail); the schedule keeps trying.
     pub error: Option<String>,
+    /// The warmth is suspended by an exception (ADR-023): `level` fades to 0 and comes back when it ends. `None`
+    /// when nothing suspends it (also during a settings preview, which ignores the exceptions).
+    #[serde(default)]
+    pub paused_by: Option<TintPause>,
+    /// Which schedule is in effect today (ADR-023).
+    #[serde(default)]
+    pub schedule: TintScheduleState,
+    /// The warm window in effect today, minutes after local midnight (`0..1440`): sunset and sunrise for `sun`,
+    /// otherwise the fixed hours (`TintConfig.start_minutes` / `end_minutes`).
+    #[serde(default)]
+    pub window_start_minutes: u32,
+    #[serde(default)]
+    pub window_end_minutes: u32,
+}
+
+/// Why the warmth is suspended (ADR-023).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TintPause {
+    pub reason: TintPauseReason,
+    /// Exe name of the foreground app (`Photoshop.exe`), when known; the UI shows it without `.exe`
+    /// ("Paused: Photoshop in front"). Process name only, never a window title; never logged.
+    pub app: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TintPauseReason {
+    /// One of `TintConfig.pause_apps` is in front (`pause_for_apps`).
+    App,
+    /// A full-screen app or game is in front (`pause_for_fullscreen`).
+    Fullscreen,
+}
+
+/// The schedule in effect today (`TintStatus.schedule`, ADR-023).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TintScheduleState {
+    /// The fixed hours were chosen.
+    #[default]
+    Fixed,
+    /// Sunset → sunrise at the configured location.
+    Sun,
+    /// `sun` chosen, but the sun does not set today at that place: the fixed hours are used.
+    PolarDay,
+    /// `sun` chosen, but the sun does not rise today at that place: the fixed hours are used.
+    PolarNight,
+    /// `sun` chosen without a location: the fixed hours are used.
+    NoLocation,
 }
 
 // ---------------------------------------------------------------------------
@@ -1144,6 +1305,49 @@ pub struct CalendarStatus {
     pub last_sync_ms: Option<i64>,
     /// Google sign-in in progress (browser opened).
     pub google_pending: bool,
+    /// Breaks moved by smart breaks (ADR-023), in break order. Empty while `Config.smart_breaks` is off. A meeting
+    /// listed here is not in `conflicts`: it no longer collides with the adjusted plan.
+    #[serde(default)]
+    pub smart_breaks: Vec<SmartBreak>,
+    /// Meeting ids the user asked to decide about by hand ("Ask me instead", `set_smart_break_opt_out`); their
+    /// collisions stay in `conflicts` with the usual question.
+    #[serde(default)]
+    pub smart_opt_outs: Vec<String>,
+}
+
+/// One break moved around a meeting by smart breaks (ADR-023). Wall-clock times; no meeting subject (the UI may
+/// look it up in `CalendarStatus.meetings` by `meeting_id` where ADR-016 allows showing it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SmartBreak {
+    /// `Meeting.id`.
+    pub meeting_id: String,
+    #[ts(type = "number")]
+    pub meeting_start_ms: i64,
+    #[ts(type = "number")]
+    pub meeting_end_ms: i64,
+    /// 1-based number of the moved break; the focus block before it changes length.
+    pub break_number: u32,
+    pub kind: SmartBreakKind,
+    /// Change of that focus block in seconds: negative = shortened (to at least 60 % of the focus length and never
+    /// under 10 minutes, demo profile scaled), positive = lengthened (by at most 25 %).
+    pub focus_delta_secs: i32,
+    /// The moved break, `[start, end)`.
+    #[ts(type = "number")]
+    pub break_start_ms: i64,
+    #[ts(type = "number")]
+    pub break_end_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SmartBreakKind {
+    /// The break ends right when the meeting starts.
+    EndsBeforeMeeting,
+    /// The break starts when the meeting starts.
+    StartsAtMeeting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1769,6 +1973,111 @@ pub enum RewardSound {
 }
 
 // ---------------------------------------------------------------------------
+// Weekly stats and heatmaps (ADR-023)
+// ---------------------------------------------------------------------------
+
+/// The user's label for an app (`Config.app_categories`). Only the user labels apps; nothing is labelled by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum AppCategory {
+    Productive,
+    Neutral,
+    Distracting,
+}
+
+/// Payload of `history://changed`: the stored history (or the app labels) changed; ask `get_weekly_stats` again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HistoryChanged {
+    /// Set by the shell; grows with every change. `WeeklyStats.revision` is the revision it was computed from.
+    pub revision: u32,
+}
+
+/// One ISO week (Monday first, local time) from `history.jsonl` (`get_weekly_stats`, ADR-023). Aggregated by
+/// `focus_core::stats` from the stored sessions; demo sessions are left out. Seconds everywhere (the UI rounds).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WeeklyStats {
+    /// The history revision (`HistoryChanged.revision`) these numbers come from.
+    pub revision: u32,
+    /// Monday of the week, `YYYY-MM-DD` (the requested date moved back to its Monday).
+    pub week_start: String,
+    /// ISO 8601 week-numbering year and week (1..=53): `2026-W42`.
+    pub iso_year: u32,
+    pub iso_week: u32,
+    /// The week contains today (the UI disables "next week").
+    pub current_week: bool,
+    /// Monday of the week of the oldest stored session (the UI disables "previous week" there); `None` without history.
+    pub first_week_start: Option<String>,
+    /// `Config.keep_history` is off: new sessions are not stored (the numbers still cover what is stored, usually
+    /// nothing; the UI explains).
+    pub history_off: bool,
+    /// Always 7 entries, Monday..Sunday.
+    pub days: Vec<DayStats>,
+    pub focus_secs: u32,
+    pub break_secs: u32,
+    /// Breaks started (sum of `SessionSummary.cycles_completed`).
+    pub breaks_taken: u32,
+    /// Sessions that started in this week.
+    pub sessions: u32,
+    /// The day with the most focus (the earlier one on a tie); `None` for a week without focus.
+    pub best_day: Option<Weekday>,
+    /// Focus seconds by weekday × local hour of this week: 7 rows (Monday..Sunday) of 24 cells (00..23).
+    pub heatmap: Vec<Vec<u32>>,
+    /// The same shape summed over the `recent_weeks` weeks that end with this one.
+    pub recent_heatmap: Vec<Vec<u32>>,
+    /// Number of weeks in `recent_heatmap` (`focus_core::stats::RECENT_WEEKS`, 8).
+    pub recent_weeks: u32,
+    /// Apps of this week by focus time, most first (at most `focus_core::stats::TOP_APPS_PER_WEEK`).
+    pub top_apps: Vec<WeekApp>,
+    /// App time of this week per category (all apps, not only `top_apps`; idle and unknown time left out).
+    pub categories: CategoryTotals,
+    /// Some sessions of `recent_heatmap` were stored without `focus_spans` (older history): their focus is spread
+    /// evenly between start and end, so the hours are approximate.
+    pub estimated: bool,
+}
+
+/// One day of `WeeklyStats.days`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DayStats {
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    pub weekday: Weekday,
+    pub focus_secs: u32,
+    pub break_secs: u32,
+    /// Sessions that started on this day.
+    pub sessions: u32,
+}
+
+/// One app in `WeeklyStats.top_apps`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WeekApp {
+    /// Process executable name as tracked (`Code.exe`); `Config.app_categories` uses it lowercased.
+    pub process: String,
+    pub secs: u32,
+    /// `None` = unlabelled.
+    pub category: Option<AppCategory>,
+}
+
+/// App time of a week per category (`WeeklyStats.categories`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CategoryTotals {
+    pub productive_secs: u32,
+    pub neutral_secs: u32,
+    pub distracting_secs: u32,
+    pub unlabelled_secs: u32,
+}
+
+// ---------------------------------------------------------------------------
 // Browser extension bridge
 // ---------------------------------------------------------------------------
 
@@ -1802,10 +2111,12 @@ pub struct BridgeState {
 #[cfg(test)]
 mod tests {
     use super::{
-        CelebrationLevel, Config, DailyGoal, DevAction, MicroStep, MomentKind, Phase, PopupInfo,
-        PopupKind, PopupRewards, PrivacyItemKind, Rarity, RewardKind, RewardLine, RewardMoment,
-        RewardSound, SessionSnapshot, SessionSummary, StepDraft, StickerId, Weekday, WorkSource,
-        YoutubeAccount, commands, events,
+        AppCategory, CalendarStatus, CategoryTotals, CelebrationLevel, Config, DailyGoal, DayStats,
+        DevAction, HistoryChanged, MicroStep, MomentKind, Phase, PopupInfo, PopupKind,
+        PopupRewards, PrivacyItemKind, Rarity, RewardKind, RewardLine, RewardMoment, RewardSound,
+        SessionSnapshot, SessionSummary, SmartBreak, SmartBreakKind, StepDraft, StickerId,
+        TimeSpan, TintPause, TintPauseReason, TintSchedule, TintScheduleState, TintStatus, WeekApp,
+        Weekday, WeeklyStats, WorkSource, YoutubeAccount, commands, events,
     };
     use std::fmt::Write as _;
 
@@ -2131,6 +2442,144 @@ mod tests {
         );
     }
 
+    #[test]
+    fn views_written_before_adr_023_load_with_its_fields_empty() {
+        let snapshot: SessionSnapshot = serde_json::from_str(
+            r#"{"revision":1,"sessionId":null,"phase":"idle","paused":false,"cycle":0,"remainingSecs":0,"phaseTotalSecs":0,"focusSecs":2700,"breakSecs":900,"focusedSecs":0,"demo":false}"#,
+        )
+        .expect("old snapshot");
+        assert_eq!(snapshot.smart_break, None);
+
+        let tint: TintStatus = serde_json::from_str(
+            r#"{"revision":3,"enabled":true,"level":23,"preview":false,"active":true,"mode":"nightLight","capped":false,"error":null}"#,
+        )
+        .expect("old tint status");
+        assert_eq!(tint.paused_by, None);
+        assert_eq!(tint.schedule, TintScheduleState::Fixed);
+
+        let calendar: CalendarStatus = serde_json::from_str(
+            r#"{"revision":9,"sources":[],"meetings":[],"conflicts":[],"planned":true,"lastSyncMs":null,"googlePending":false}"#,
+        )
+        .expect("old calendar status");
+        assert!(calendar.smart_breaks.is_empty() && calendar.smart_opt_outs.is_empty());
+
+        let summary: SessionSummary = serde_json::from_str(OLD_SUMMARY).expect("old summary");
+        assert!(summary.focus_spans.is_empty());
+        let with_spans = SessionSummary {
+            focus_spans: vec![TimeSpan {
+                start_ms: 1_760_342_400_000,
+                end_ms: 1_760_345_100_000,
+            }],
+            ..summary
+        };
+        assert_eq!(
+            serde_json::to_value(&with_spans).expect("serialize")["focusSpans"],
+            serde_json::json!([{ "startMs": 1_760_342_400_000_i64, "endMs": 1_760_345_100_000_i64 }])
+        );
+    }
+
+    #[test]
+    fn tint_pause_and_smart_break_wire_format() {
+        let pause = TintPause {
+            reason: TintPauseReason::App,
+            app: Some("Photoshop.exe".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&pause).expect("serialize"),
+            serde_json::json!({ "reason": "app", "app": "Photoshop.exe" })
+        );
+        assert_eq!(
+            serde_json::to_value(TintScheduleState::PolarNight).expect("serialize"),
+            serde_json::json!("polarNight")
+        );
+        assert_eq!(
+            serde_json::to_value(TintSchedule::Sun).expect("serialize"),
+            serde_json::json!("sun")
+        );
+
+        let moved = SmartBreak {
+            meeting_id: "microsoft:AAMk-1760356800000".into(),
+            meeting_start_ms: 1_760_356_800_000,
+            meeting_end_ms: 1_760_360_400_000,
+            break_number: 2,
+            kind: SmartBreakKind::EndsBeforeMeeting,
+            focus_delta_secs: -480,
+            break_start_ms: 1_760_355_900_000,
+            break_end_ms: 1_760_356_800_000,
+        };
+        let json = serde_json::to_value(&moved).expect("serialize");
+        assert_eq!(json["kind"], "endsBeforeMeeting");
+        assert_eq!(json["focusDeltaSecs"], -480);
+        assert_eq!(json["breakNumber"], 2);
+        assert_eq!(
+            serde_json::from_value::<SmartBreak>(json).expect("deserialize"),
+            moved
+        );
+    }
+
+    #[test]
+    fn weekly_stats_wire_format() {
+        let mut heatmap = vec![vec![0_u32; 24]; 7];
+        heatmap[2][9] = 1800;
+        let stats = WeeklyStats {
+            revision: 4,
+            week_start: "2026-10-12".into(),
+            iso_year: 2026,
+            iso_week: 42,
+            current_week: true,
+            first_week_start: Some("2026-09-07".into()),
+            history_off: false,
+            days: vec![DayStats {
+                date: "2026-10-14".into(),
+                weekday: Weekday::Wed,
+                focus_secs: 1800,
+                break_secs: 300,
+                sessions: 1,
+            }],
+            focus_secs: 1800,
+            break_secs: 300,
+            breaks_taken: 1,
+            sessions: 1,
+            best_day: Some(Weekday::Wed),
+            heatmap: heatmap.clone(),
+            recent_heatmap: heatmap,
+            recent_weeks: 8,
+            top_apps: vec![WeekApp {
+                process: "Code.exe".into(),
+                secs: 1500,
+                category: Some(AppCategory::Productive),
+            }],
+            categories: CategoryTotals {
+                productive_secs: 1500,
+                unlabelled_secs: 300,
+                ..CategoryTotals::default()
+            },
+            estimated: false,
+        };
+        let json = serde_json::to_value(&stats).expect("serialize");
+        assert_eq!(json["weekStart"], "2026-10-12");
+        assert_eq!(json["isoWeek"], 42);
+        assert_eq!(json["bestDay"], "wed");
+        assert_eq!(json["heatmap"][2][9], 1800);
+        assert_eq!(json["recentHeatmap"].as_array().map(Vec::len), Some(7));
+        assert_eq!(
+            json["topApps"],
+            serde_json::json!([{ "process": "Code.exe", "secs": 1500, "category": "productive" }])
+        );
+        assert_eq!(
+            json["categories"],
+            serde_json::json!({ "productiveSecs": 1500, "neutralSecs": 0, "distractingSecs": 0, "unlabelledSecs": 300 })
+        );
+        assert_eq!(
+            serde_json::from_value::<WeeklyStats>(json).expect("deserialize"),
+            stats
+        );
+        assert_eq!(
+            serde_json::to_value(HistoryChanged { revision: 5 }).expect("serialize"),
+            serde_json::json!({ "revision": 5 })
+        );
+    }
+
     /// Writes `names.ts` with command and event names next to the ts-rs bindings.
     #[test]
     fn export_names() {
@@ -2197,6 +2646,9 @@ mod tests {
             ("playRewardSound", commands::PLAY_REWARD_SOUND),
             ("setSessionSteps", commands::SET_SESSION_STEPS),
             ("setStepDone", commands::SET_STEP_DONE),
+            ("listSunCities", commands::LIST_SUN_CITIES),
+            ("setSmartBreakOptOut", commands::SET_SMART_BREAK_OPT_OUT),
+            ("getWeeklyStats", commands::GET_WEEKLY_STATS),
         ];
         let evts: &[(&str, &str)] = &[
             ("sessionSnapshot", events::SESSION_SNAPSHOT),
@@ -2216,6 +2668,7 @@ mod tests {
             ("privacyChanged", events::PRIVACY_CHANGED),
             ("youtubeAccount", events::YOUTUBE_ACCOUNT),
             ("rewardsChanged", events::REWARDS_CHANGED),
+            ("historyChanged", events::HISTORY_CHANGED),
         ];
         let mut out = String::from(
             "// This file was generated by `cargo test -p focus-core` (api.rs). Do not edit this file manually.\n\n",

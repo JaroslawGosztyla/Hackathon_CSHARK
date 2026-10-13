@@ -63,6 +63,9 @@ export const COMMANDS = {
   playRewardSound: "play_reward_sound",
   setSessionSteps: "set_session_steps",
   setStepDone: "set_step_done",
+  listSunCities: "list_sun_cities",
+  setSmartBreakOptOut: "set_smart_break_opt_out",
+  getWeeklyStats: "get_weekly_stats",
 } as const;
 
 export const EVENTS = {
@@ -83,6 +86,7 @@ export const EVENTS = {
   privacyChanged: "privacy://changed",
   youtubeAccount: "youtube://account",
   rewardsChanged: "rewards://changed",
+  historyChanged: "history://changed",
 } as const;
 
 export const BRIDGE_PORT = 47615;

@@ -16,6 +16,7 @@ import type {
   Config,
   DevAction,
   DeviceCodePrompt,
+  HistoryChanged,
   Language,
   MediaAction,
   MediaWindowStatus,
@@ -33,10 +34,12 @@ import type {
   SessionSummary,
   ShieldStatus,
   StepDraft,
+  SunCity,
   TeamsStatus,
   TintStatus,
   Track,
   UsageReport,
+  WeeklyStats,
   WorkSource,
   WorkStatus,
   YoutubeAccount,
@@ -258,6 +261,22 @@ export const setSessionSteps = (steps: StepDraft[]) => call<void>(COMMANDS.setSe
 /** Ticks / unticks a step (Focus or Break, also paused; no-op when idle or for an unknown id). */
 export const setStepDone = (id: number, done: boolean) => call<void>(COMMANDS.setStepDone, { id, done });
 
+// ADR-023: tint exceptions, smart breaks, weekly stats (the first-run wizard needs only `Config.onboardingDone`).
+/** The built-in cities for the sunset / sunrise tint schedule: static data in the app (no location service, no network). */
+export const listSunCities = () => call<SunCity[]>(COMMANDS.listSunCities);
+/**
+ * "Ask me instead" for a meeting that smart breaks fitted (`optOut: true`): the session gets its unadjusted phase end
+ * back and the meeting is asked about like any collision; `false` lets smart breaks fit it again.
+ */
+export const setSmartBreakOptOut = (meetingId: string, optOut: boolean) =>
+  call<CalendarStatus>(COMMANDS.setSmartBreakOptOut, { meetingId, optOut });
+/**
+ * One ISO week (Monday first, local time) from the stored history. `weekStart` is any `YYYY-MM-DD` day of that week
+ * (the answer's `weekStart` is its Monday). A malformed date → `stats.week` (field `weekStart`). Prefer
+ * `watchWeeklyStats`, which also follows `history://changed`.
+ */
+export const getWeeklyStats = (weekStart: string) => call<WeeklyStats>(COMMANDS.getWeeklyStats, { weekStart });
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -325,6 +344,53 @@ export const subscribeYoutubeAccount = (apply: (a: YoutubeAccount) => void, onEr
 /** Rewards view state (beta, ADR-022), revision-guarded like every other view state (ADR-012). */
 export const subscribeRewards = (apply: (r: RewardsStatus) => void, onError?: (e: AppError) => void) =>
   subscribe(EVENTS.rewardsChanged, getRewards, apply, onError);
+
+/** Raw `history://changed` (ADR-023): the stored history or the app labels changed (prefer `watchWeeklyStats`). */
+export const onHistoryChanged = (handler: (c: HistoryChanged) => void) =>
+  on<HistoryChanged>(EVENTS.historyChanged, handler);
+
+/** Handle returned by `watchWeeklyStats`. */
+export type WeeklyStatsWatch = {
+  /** Reads `week()` again now (call it after the user picked another week). */
+  refresh: () => void;
+  stop: UnlistenFn;
+};
+
+/**
+ * The ADR-012 protocol for a getter with a parameter (ADR-023): listens to `history://changed` first, then reads the
+ * week `week()` names, and reads it again after every change. Only the answer to the latest request is applied, and
+ * for the same week never one with an older `revision` than the last applied, so neither a slow answer for the
+ * previous week nor a stale one can roll the view back.
+ */
+export async function watchWeeklyStats(
+  week: () => string,
+  apply: (stats: WeeklyStats) => void,
+  onError?: (error: AppError) => void,
+): Promise<WeeklyStatsWatch> {
+  let latest = 0;
+  let applied: { weekStart: string; revision: number } | null = null;
+  const load = async () => {
+    const request = ++latest;
+    try {
+      const stats = await getWeeklyStats(week());
+      if (request !== latest) return;
+      if (
+        applied !== null &&
+        applied.weekStart === stats.weekStart &&
+        isNewerRevision(applied.revision, stats.revision)
+      ) {
+        return;
+      }
+      applied = { weekStart: stats.weekStart, revision: stats.revision };
+      apply(stats);
+    } catch (e) {
+      if (request === latest) onError?.(toAppError(e));
+    }
+  };
+  const stop = await onHistoryChanged(() => void load());
+  await load();
+  return { refresh: () => void load(), stop };
+}
 
 export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
 export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);
