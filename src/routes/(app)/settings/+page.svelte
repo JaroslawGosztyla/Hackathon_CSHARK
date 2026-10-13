@@ -12,6 +12,7 @@
   import TeamsSettings from "$lib/components/TeamsSettings.svelte";
   import ThemeSettings from "$lib/components/ThemeSettings.svelte";
   import TintSettings from "$lib/components/TintSettings.svelte";
+  import WorkSettings from "$lib/components/WorkSettings.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
@@ -193,6 +194,13 @@
         <h2 id="calendar-settings">{strings.calendar.title}</h2>
       </div>
       <CalendarSettings />
+    </section>
+
+    <section class="card" aria-labelledby="work-settings">
+      <div class="card-title">
+        <h2 id="work-settings">{strings.work.title}</h2>
+      </div>
+      <WorkSettings />
     </section>
 
     <section class="card" aria-labelledby="reminders-settings">
@@ -391,7 +399,7 @@
     max-width: 340px;
   }
 
-  /* Linked from the Skupienie page (#calendar-settings): keep the heading clear of the sticky header. */
+  /* Linked from the Skupienie page (#calendar-settings, #work-settings): keep the heading clear of the sticky header. */
   .page :global(h2[id]) {
     scroll-margin-top: 110px;
   }

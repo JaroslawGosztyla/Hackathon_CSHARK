@@ -4,6 +4,7 @@
   import { formatDuration, formatSpan } from "$lib/format";
   import { config } from "$lib/state/config.svelte";
   import { summary } from "$lib/state/summary.svelte";
+  import { isOpenableUrl, work } from "$lib/state/work.svelte";
   import { strings } from "$lib/strings";
 
   const selected = $derived(summary.selected);
@@ -14,6 +15,10 @@
       config.value?.keepHistory === false &&
       !summary.history.some((s) => s.sessionId === selected?.sessionId),
   );
+  const goal = $derived(selected?.goal ?? null);
+  const goalName = $derived(goal ? strings.work.itemName(goal.key, goal.title) : "");
+  const goalDone = $derived(selected?.goalDone ?? null);
+  const goalBusy = $derived(summary.goalBusyId !== null);
 </script>
 
 <svelte:head>
@@ -64,6 +69,63 @@
           <dd>{formatDuration(selected.breakSecs)}</dd>
         </div>
       </dl>
+
+      {#if goal}
+        {@const sessionId = selected.sessionId}
+        <div class="goal" class:done={goalDone === true}>
+          <p class="goal-line">
+            <span class="goal-label">{strings.summary.goalLabel}:</span>
+            <span class="badge goal-source">{strings.work.sourceShort[goal.source]}</span>
+            {#if isOpenableUrl(goal.url)}
+              <button
+                type="button"
+                class="goal-name link"
+                title={goalName}
+                aria-label={strings.summary.goalOpenAria(goalName)}
+                onclick={() => work.open(goal.url)}
+              >
+                {#if goal.key}<span class="goal-key">{goal.key}</span>{/if}
+                {goal.title}
+              </button>
+            {:else}
+              <span class="goal-name" title={goalName}>
+                {#if goal.key}<span class="goal-key">{goal.key}</span>{/if}
+                {goal.title}
+              </span>
+            {/if}
+          </p>
+          <div class="goal-answer">
+            <span class="goal-question" aria-hidden="true">{strings.summary.goalQuestion}</span>
+            <div class="row" role="group" aria-label={strings.summary.goalGroup}>
+              <button
+                type="button"
+                class="btn btn-sm"
+                class:btn-primary={goalDone === true}
+                aria-pressed={goalDone === true}
+                disabled={goalBusy}
+                onclick={() => summary.markGoalDone(sessionId, true)}
+              >
+                {strings.summary.goalYes}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm"
+                class:chosen-no={goalDone === false}
+                aria-pressed={goalDone === false}
+                disabled={goalBusy}
+                onclick={() => summary.markGoalDone(sessionId, false)}
+              >
+                {strings.summary.goalNo}
+              </button>
+            </div>
+            {#if goalDone !== null}
+              <p class="small secondary" aria-live="polite">
+                {goalDone ? strings.summary.goalDone : strings.summary.goalNotDone}
+              </p>
+            {/if}
+          </div>
+        </div>
+      {/if}
     </section>
 
     <section class="card" aria-labelledby="chart-title">
@@ -141,5 +203,96 @@
 
   .not-saved {
     margin-top: 4px;
+  }
+
+  .goal {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 16px;
+    margin-top: 14px;
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--surface-inset);
+  }
+
+  .goal.done {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .goal-line {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .goal-label {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .goal-source {
+    align-self: center;
+  }
+
+  .goal-name {
+    min-width: 0;
+    font-weight: 600;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-weight: 600;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .link:hover,
+  .link:focus-visible {
+    text-decoration: underline;
+  }
+
+  .link:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  .goal-key {
+    margin-right: 6px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    color: var(--accent-strong);
+  }
+
+  .goal-answer {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .goal-question {
+    font-weight: 600;
+  }
+
+  .goal-answer p {
+    flex-basis: 100%;
+  }
+
+  .chosen-no {
+    border-color: var(--text-2);
+    background: var(--surface-hover);
   }
 </style>

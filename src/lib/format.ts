@@ -64,6 +64,14 @@ export function formatTimeNear(ms: number, nowMs: number = Date.now()): string {
   return `${formatShortDate(ms)} ${formatTimeOfDay(ms)}`;
 }
 
+/** A day that may be today: `dziś`, `jutro`, `14 paź`. */
+export function formatDayNear(ms: number, nowMs: number = Date.now()): string {
+  const offset = dayOffset(ms, nowMs);
+  if (offset === 0) return strings.time.today;
+  if (offset === 1) return strings.calendar.tomorrow;
+  return formatShortDate(ms);
+}
+
 /** Fraction 0..1 → `54%`. Values that round to 0 but are not 0 show as `<1%`. */
 export function formatPercent(fraction: number): string {
   if (!Number.isFinite(fraction) || fraction <= 0) return pctFmt.format(0);

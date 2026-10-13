@@ -20,6 +20,7 @@ const IDLE_SNAPSHOT: SessionSnapshot = {
   demo: false,
   musicMuted: false,
   meetingHold: null,
+  goal: null,
 };
 
 class SessionStore {
@@ -37,9 +38,20 @@ class SessionStore {
   /** Focus or Break and not paused. */
   running = $derived(this.snapshot.phase !== "idle" && !this.snapshot.paused);
 
+  /** Takes a snapshot unless it is older than the one shown (it may come from the event or from `reload`). */
   apply(snapshot: SessionSnapshot): void {
+    if (this.connected && !api.isNewerRevision(snapshot.revision, this.snapshot.revision)) return;
     this.snapshot = snapshot;
     this.connected = true;
+  }
+
+  /** Reads the snapshot now (e.g. right after a command that changed it). Failures stay quiet: the next event fixes it. */
+  async reload(): Promise<void> {
+    try {
+      this.apply(await api.getSnapshot());
+    } catch {
+      // `session://snapshot` brings it anyway.
+    }
   }
 
   announce(change: PhaseChange): void {

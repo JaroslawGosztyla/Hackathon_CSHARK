@@ -48,6 +48,80 @@ export function isGoogleClientId(id: string): boolean {
   );
 }
 
+/** Mirrors focus-core `config.rs` (MAX_WORK_URL_LEN, MAX_HOST_LEN, MAX_JIRA_EMAIL_LEN, MAX_AZURE_ORG_LEN). */
+const WORK = { maxUrlBytes: 512, maxHostLen: 253, maxJiraEmailChars: 254, maxAzureOrgBytes: 64 } as const;
+
+const utf8 = new TextEncoder();
+
+/** Mirrors focus-core `is_host_name` on the lowercased host: labels of `[a-z0-9-]`, not empty, no `-` at either end. */
+function isHostName(host: string): boolean {
+  return (
+    host.length <= WORK.maxHostLen &&
+    host.split(".").every((label) => label !== "" && !label.startsWith("-") && !label.endsWith("-") && /^[a-z0-9-]+$/.test(label))
+  );
+}
+
+/**
+ * Mirrors focus-core `normalize_work_url` (accepts exactly what the shell stores): empty, or `https://` (any case) +
+ * host + optional port 1..=65535 + optional path of `[A-Za-z0-9._~%-]` segments (no `.` / `..` / empty segment,
+ * trailing `/` allowed); no `@`, `?` or `#`; at most 512 bytes after trimming.
+ */
+export function isWorkUrl(raw: string): boolean {
+  const url = raw.trim();
+  if (url === "") return true;
+  if (utf8.encode(url).length > WORK.maxUrlBytes) return false;
+  const scheme = "https://";
+  if (url.slice(0, scheme.length).toLowerCase() !== scheme) return false;
+  const rest = url.slice(scheme.length);
+  if (/[@?#]/.test(rest)) return false;
+  const slash = rest.indexOf("/");
+  const authority = slash === -1 ? rest : rest.slice(0, slash);
+  const path = slash === -1 ? "" : rest.slice(slash);
+  const colon = authority.indexOf(":");
+  // ASCII-only lowercasing, like Rust's `to_ascii_lowercase` (e.g. the Kelvin sign must stay invalid).
+  const host = (colon === -1 ? authority : authority.slice(0, colon)).replace(/[A-Z]/g, (ch) => ch.toLowerCase());
+  const port = colon === -1 ? null : authority.slice(colon + 1);
+  if (!isHostName(host)) return false;
+  if (port !== null && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) return false;
+  const trimmedPath = path.replace(/\/+$/, "");
+  return trimmedPath
+    .split("/")
+    .slice(1)
+    .every((segment) => segment !== "" && segment !== "." && segment !== ".." && /^[A-Za-z0-9._~%-]+$/.test(segment));
+}
+
+/**
+ * Mirrors focus-core `normalize_jira_email`: empty, or at most 254 characters without whitespace, control characters
+ * or `:`, with a non-empty part before and after the last `@`.
+ */
+export function isJiraEmail(raw: string): boolean {
+  const email = raw.trim();
+  if (email === "") return true;
+  if (charCount(email) > WORK.maxJiraEmailChars || /[\s\p{Cc}:]/u.test(email)) return false;
+  const at = email.lastIndexOf("@");
+  return at > 0 && at < email.length - 1;
+}
+
+/**
+ * Mirrors focus-core `normalize_azure_org`: a pasted `https://dev.azure.com/<org>/…` or `<org>.visualstudio.com` counts
+ * as `<org>`; then empty or at most 64 characters of `[A-Za-z0-9._-]`, not only dots.
+ */
+export function isAzureOrg(raw: string): boolean {
+  let org = raw.trim().replace(/^https?:\/\//i, "");
+  const devAzure = /^dev\.azure\.com\//i;
+  if (devAzure.test(org)) {
+    org = org.replace(devAzure, "").split("/")[0] ?? "";
+  } else {
+    const host = org.split("/")[0] ?? "";
+    const suffix = ".visualstudio.com";
+    if (host.length >= suffix.length && host.slice(host.length - suffix.length).toLowerCase() === suffix) {
+      org = host.slice(0, host.length - suffix.length);
+    }
+  }
+  if (org !== "" && /^\.+$/.test(org)) return false;
+  return utf8.encode(org).length <= WORK.maxAzureOrgBytes && /^[A-Za-z0-9._-]*$/.test(org);
+}
+
 /** Mirrors focus-core `is_google_client_secret`: 1..=100 characters of `[A-Za-z0-9_-]` (e.g. `GOCSPX-…`). */
 export function isGoogleClientSecret(secret: string): boolean {
   return secret.length > 0 && secret.length <= CALENDAR.maxGoogleClientSecretLen && /^[A-Za-z0-9_-]+$/.test(secret);
@@ -118,6 +192,14 @@ export function validateConfig(c: Config): Record<string, string> {
       );
     }
   }
+  // Validated even when the tools are off, like in focus-core. Missing only with an older shell build.
+  const work = c.work as Config["work"] | undefined;
+  if (work) {
+    if (!isWorkUrl(work.gitlabUrl)) errors["work.gitlabUrl"] = strings.work.urlInvalid;
+    if (!isWorkUrl(work.jiraUrl)) errors["work.jiraUrl"] = strings.work.urlInvalid;
+    if (!isJiraEmail(work.jiraEmail)) errors["work.jiraEmail"] = strings.work.emailInvalid;
+    if (!isAzureOrg(work.azureOrg)) errors["work.azureOrg"] = strings.work.azureOrgInvalid;
+  }
   return errors;
 }
 
@@ -127,6 +209,7 @@ export const LIMITS = {
   tint: TINT,
   reminders: REMINDERS,
   calendar: CALENDAR,
+  work: WORK,
 } as const;
 
 function copyField<K extends keyof Config>(target: Config, source: Config, key: K): void {

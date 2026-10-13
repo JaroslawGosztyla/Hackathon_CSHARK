@@ -13,6 +13,7 @@ import { summary } from "./summary.svelte";
 import { teams } from "./teams.svelte";
 import { tint } from "./tint.svelte";
 import { toasts } from "./toasts.svelte";
+import { reportWorkError, work } from "./work.svelte";
 
 /** Starts all subscriptions; returns a cleanup function. */
 export function initAppState(): () => void {
@@ -47,6 +48,8 @@ export function initAppState(): () => void {
   keep(api.subscribeTint((t) => tint.apply(t), reportError));
   // Calendar errors never log their detail (it could come from a calendar server).
   keep(api.subscribeCalendar((c) => calendar.apply(c), reportCalendarError));
+  // Same for the developer tools (a detail could come from a tool's server); tokens never reach the UI.
+  keep(api.subscribeWork((w) => work.apply(w), reportWorkError));
   keep(api.onPhaseChanged((change) => session.announce(change)));
   keep(api.onNudge((n) => nudge.show(n)));
   keep(

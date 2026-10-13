@@ -23,6 +23,7 @@ import type {
   PhaseChange,
   PopupAction,
   PopupInfo,
+  SessionGoal,
   SessionSnapshot,
   SessionSummary,
   ShieldStatus,
@@ -30,6 +31,8 @@ import type {
   TintStatus,
   Track,
   UsageReport,
+  WorkSource,
+  WorkStatus,
 } from "./types";
 
 export type { UnlistenFn };
@@ -171,6 +174,22 @@ export const setIcsUrls = (urls: string[]) => call<CalendarStatus>(COMMANDS.setI
 /** The stored ICS links (only to edit them in Settings; never show them in errors or logs). */
 export const getIcsUrls = () => call<string[]>(COMMANDS.getIcsUrls);
 
+/** Ranked work items ("Co dalej?") from the connected developer tools, plus the state of every tool. */
+export const getWork = () => call<WorkStatus>(COMMANDS.getWork);
+/** Fetches all connected tools now. */
+export const refreshWork = () => call<WorkStatus>(COMMANDS.refreshWork);
+/**
+ * Stores (encrypted, never in config.json) or, with `null`, forgets the access token of a tool. The token is a
+ * secret: never log it, never keep it in a store, never put it into an error text.
+ */
+export const setWorkToken = (source: WorkSource, token: string | null) =>
+  call<WorkStatus>(COMMANDS.setWorkToken, { source, token });
+/** The item the user focuses on (shown under the timer, kept in the summary); `null` clears it. Works in any phase. */
+export const setSessionGoal = (goal: SessionGoal | null) => call<void>(COMMANDS.setSessionGoal, { goal });
+/** Marks the goal of a finished session as done / not done (history). */
+export const markGoalDone = (sessionId: string, done: boolean) =>
+  call<void>(COMMANDS.markGoalDone, { sessionId, done });
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -229,6 +248,8 @@ export const subscribeTint = (apply: (t: TintStatus) => void, onError?: (e: AppE
   subscribe(EVENTS.tintChanged, getTintStatus, apply, onError);
 export const subscribeCalendar = (apply: (c: CalendarStatus) => void, onError?: (e: AppError) => void) =>
   subscribe(EVENTS.calendarChanged, getCalendar, apply, onError);
+export const subscribeWork = (apply: (w: WorkStatus) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.workChanged, getWork, apply, onError);
 
 export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
 export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);

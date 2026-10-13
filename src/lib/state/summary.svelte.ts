@@ -59,6 +59,30 @@ class SummaryStore {
     this.selectedId = sessionId === this.last?.sessionId ? null : sessionId;
   }
 
+  /** A `mark_goal_done` call is in flight for this session. */
+  goalBusyId = $state<string | null>(null);
+
+  /**
+   * "Zrobione?" for the goal of a finished session. Stored in the history by the shell; a session that was not saved
+   * (history off) is only marked here. Resolves true when the answer is shown.
+   */
+  async markGoalDone(sessionId: string, done: boolean): Promise<boolean> {
+    if (this.goalBusyId !== null) return false;
+    const stored = config.value?.keepHistory !== false || this.history.some((s) => s.sessionId === sessionId);
+    this.goalBusyId = sessionId;
+    try {
+      if (stored) await api.markGoalDone(sessionId, done);
+    } catch (e) {
+      toasts.error(e);
+      return false;
+    } finally {
+      this.goalBusyId = null;
+    }
+    if (this.last?.sessionId === sessionId) this.last.goalDone = done;
+    for (const s of this.history) if (s.sessionId === sessionId) s.goalDone = done;
+    return true;
+  }
+
   /** Deletes the whole history in the shell (the UI confirmed first), then empties the views. Throws on failure. */
   async clear(): Promise<void> {
     await api.clearHistory();

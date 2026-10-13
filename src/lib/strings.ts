@@ -15,6 +15,9 @@ import type {
   Phase,
   PopupKind,
   TintMode,
+  WorkItemKind,
+  WorkReason,
+  WorkSource,
 } from "./types";
 
 /** Polish plural form: 1 minuta, 2–4 minuty, 5+ minut (with the 12–14 exception). */
@@ -250,6 +253,21 @@ export const strings = {
     showSession: (date: string) => `Pokaż sesję z ${date}`,
     backToLast: "Wróć do ostatniej sesji",
     privacy: "Dane o aplikacjach zostają na tym komputerze.",
+    goalLabel: "Cel sesji",
+    goalQuestion: "Zrobione?",
+    goalYes: "Tak",
+    goalNo: "Nie",
+    goalGroup: "Czy cel sesji został zrobiony?",
+    goalDone: "Zrobione — brawo!",
+    goalNotDone: "Nie tym razem — możesz wybrać go znowu w „Co dalej?”.",
+    goalOpenAria: (name: string) => `Otwórz ${name} w przeglądarce`,
+    /** History entry: short mark next to the stats. */
+    goalMark: (done: boolean | null) => (done === true ? "cel ✓" : done === false ? "cel ✗" : "cel"),
+    goalMarkTitle: (name: string, done: boolean | null) =>
+      `Cel: ${name}${done === true ? " — zrobione" : done === false ? " — niezrobione" : ""}`,
+    /** Added to a history entry's label for screen readers. */
+    goalAria: (done: boolean | null) =>
+      done === true ? "cel zrobiony" : done === false ? "cel niezrobiony" : "cel bez odpowiedzi",
   },
 
   settings: {
@@ -467,7 +485,12 @@ export const strings = {
       launchersClosed: "Zamknięto launchery gier",
       meetingReminder: "Spotkanie w czasie przerwy",
       breakHeld: "Przerwa wstrzymana",
+      workDigest: "Co dalej?",
     } satisfies Record<PopupKind, string>,
+    /** Work digest: `5 nowych zadań i powiadomień czeka na przerwę`. */
+    workDigest: (n: number) =>
+      `${n} ${plural(n, "nowe zadanie lub powiadomienie czeka", "nowe zadania i powiadomienia czekają", "nowych zadań i powiadomień czeka")} na przerwę`,
+    workDigestGeneric: "Nowe zadania i powiadomienia czekają na przerwę",
     /** Meeting reminder: `11:00–11:30 · Planowanie sprintu`. */
     meetingMessage: (range: string, subject: string) => `${range} · ${subject}`,
     meetingTitle: (n: number) => `Spotkanie w czasie ${n}. przerwy`,
@@ -700,6 +723,166 @@ export const strings = {
       `Minutnik przerwy czeka. Naciśnij „Wznów”, gdy spotkanie się skończy (planowo o ${time}).`,
   },
 
+  work: {
+    // --- Settings → Narzędzia pracy ---
+    title: "Narzędzia pracy (Co dalej?)",
+    lead: "Połącz narzędzia, w których pracujesz, a FocusMode podpowie, czym zająć się w następnej sesji: najpierw zadania przypisane do Ciebie, potem to, na co ktoś czeka (recenzje, poprawki, wzmianki), na końcu pozostałe powiadomienia. Narzędzia są tylko odczytywane — FocusMode niczego w nich nie zmienia.",
+    privacy:
+      "Tokeny są zapisane w postaci zaszyfrowanej, poza plikiem ustawień, i nie trafiają do logów. FocusMode łączy się tylko z narzędziami włączonymi powyżej; zadania i powiadomienia zostają na tym komputerze i nie są wysyłane do żadnej AI ani innej usługi.",
+    sourceName: {
+      github: "GitHub",
+      gitlab: "GitLab",
+      jira: "Jira",
+      azureDevops: "Azure DevOps",
+      linear: "Linear",
+    } satisfies Record<WorkSource, string>,
+    /** Text badge in "Co dalej?" (no logos). */
+    sourceShort: {
+      github: "GitHub",
+      gitlab: "GitLab",
+      jira: "Jira",
+      azureDevops: "Azure",
+      linear: "Linear",
+    } satisfies Record<WorkSource, string>,
+    sourceHint: {
+      github: "Zgłoszenia przypisane do Ciebie, pull requesty czekające na Twoją recenzję lub poprawki i — z tokenem klasycznym — powiadomienia.",
+      gitlab: "Zgłoszenia przypisane do Ciebie, merge requesty do recenzji i Twoje merge requesty z nieudanym CI. Działa z GitLab.com i z własną instancją.",
+      jira: "Zgłoszenia przypisane do Ciebie, z aktywnym sprintem, priorytetem i terminem. Jira Cloud albo Data Center.",
+      azureDevops: "Elementy pracy przypisane do Ciebie (z bieżącą iteracją) i pull requesty czekające na Twoją recenzję.",
+      linear: "Zgłoszenia przypisane do Ciebie, z bieżącym cyklem, priorytetem i terminem.",
+    } satisfies Record<WorkSource, string>,
+    state: {
+      off: "wyłączone",
+      on: "połączono",
+      unavailable: "nie połączono",
+      error: "błąd",
+    } satisfies Record<IntegrationState, string>,
+    connectedAs: (account: string | null) => (account ? `Połączono jako ${account}` : "Połączono"),
+    syncing: "Token zapisany — trwa pierwsze odczytanie…",
+    notConnected: "Nie połączono — zapisz token poniżej.",
+    noSecretStore: "W tym systemie nie da się bezpiecznie zapisać tokenu, więc to narzędzie nie działa.",
+    tokenInvalid: "Token może zawierać tylko widoczne znaki ASCII, bez spacji (najwyżej 4 KB).",
+    needsUrl: {
+      gitlab: "Najpierw wpisz adres GitLab.",
+      jira: "Najpierw wpisz adres Jira.",
+      azureDevops: "Najpierw wpisz nazwę organizacji.",
+    },
+    errorLead: "Nie udało się odczytać:",
+
+    gitlabUrl: "Adres GitLab",
+    gitlabUrlPlaceholder: "https://gitlab.com",
+    gitlabUrlHint: "Dla własnej instancji wpisz jej adres, np. https://gitlab.firma.pl.",
+    jiraUrl: "Adres Jira",
+    jiraUrlPlaceholder: "https://firma.atlassian.net",
+    jiraUrlHint: "Adres Twojej witryny Jira Cloud albo serwera Jira Data Center. Możesz wkleić adres z przeglądarki bez części po znaku ?.",
+    jiraEmail: "E-mail konta Atlassian (tylko Jira Cloud)",
+    jiraEmailPlaceholder: "jan.kowalski@firma.pl",
+    jiraEmailHint: "Dla Jira Data Center z osobistym tokenem dostępu zostaw puste.",
+    azureOrg: "Organizacja Azure DevOps",
+    azureOrgPlaceholder: "firma",
+    azureOrgHint: "Nazwa z adresu https://dev.azure.com/<nazwa> — możesz też wkleić cały adres.",
+    urlInvalid:
+      "Wpisz adres zaczynający się od https://, np. https://firma.atlassian.net — bez loginu, hasła oraz znaków ? i #.",
+    emailInvalid: "Wpisz adres e-mail konta, np. jan@firma.pl (bez spacji i dwukropka), albo zostaw puste.",
+    azureOrgInvalid: "Wpisz nazwę organizacji: litery, cyfry, myślniki, kropki i podkreślenia (do 64 znaków).",
+
+    token: (name: string) => `Token dostępu ${name}`,
+    tokenPlaceholder: "Wklej token",
+    tokenPlaceholderReplace: "Wklej nowy token, aby zastąpić zapisany",
+    tokenHint: "Token jest zapisywany zaszyfrowany i nie wraca do tego pola.",
+    tokenSave: "Zapisz token",
+    tokenSaving: "Zapisuję…",
+    tokenRemove: "Usuń token",
+    tokenSaved: (name: string) => `Token ${name} został zapisany.`,
+    tokenRemoved: (name: string) => `Token ${name} został usunięty.`,
+    helpTitle: "Jak utworzyć token tylko do odczytu?",
+    help: {
+      github: [
+        "Na GitHubie: Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token.",
+        "Resource owner: Twoje konto albo organizacja, w której pracujesz (token fine-grained widzi repozytoria tylko jednego właściciela). Repository access: All repositories albo wybrane repozytoria.",
+        "Repository permissions, każde tylko „Read-only”: Issues, Pull requests i Metadata (Metadata GitHub dodaje sam). Nic więcej nie zaznaczaj. Ustaw termin ważności.",
+      ],
+      githubNotifications:
+        "Powiadomienia GitHub (wzmianki, prośby o recenzję spoza repozytoriów tokenu) i wyniki GitHub Actions API udostępnia tylko tokenom klasycznym — token fine-grained ich nie odczyta. Jeśli chcesz je widzieć, utwórz zamiast niego token klasyczny (Tokens (classic)) z zakresem notifications. Do prywatnych repozytoriów token klasyczny potrzebuje też zakresu repo, który daje również prawo zapisu — FocusMode z niego nie korzysta, ale dlatego domyślnie polecamy token fine-grained.",
+      gitlab: [
+        "W GitLab: awatar → Edytuj profil → Tokeny dostępu (Personal access tokens) → Dodaj nowy token (w nowszych wersjach: „Legacy token”).",
+        "Zaznacz tylko zakres read_api (odczyt API). Ustaw termin ważności.",
+        "Dla własnej instancji GitLab wpisz wyżej jej adres.",
+      ],
+      jira: [
+        "Jira Cloud: wejdź na id.atlassian.com/manage-profile/security/api-tokens i wybierz „Utwórz token API z zakresami” (Create API token with scopes), aplikację Jira i tylko zakresy read:jira-work i read:jira-user. Ustaw krótki termin ważności.",
+        "Wyżej wpisz adres witryny i e-mail konta Atlassian. Token z zakresami działa tylko przez bramkę api.atlassian.com — FocusMode sam ją wybierze. Zwykły token bez zakresów też zadziała, ale ma wszystkie uprawnienia Twojego konta (FocusMode tylko odczytuje zgłoszenia).",
+        "Jira Data Center: profil → Osobiste tokeny dostępu (Personal Access Tokens) → Utwórz token, z terminem ważności. Pole e-mail zostaw puste.",
+      ],
+      azureDevops: [
+        "Na dev.azure.com/<organizacja>: Ustawienia użytkownika (ikona obok awatara) → Personal access tokens → New Token.",
+        "Organization: Twoja organizacja. Scopes: Custom defined → Work Items: Read, Code: Read i Project and Team: Read — nic więcej. Ustaw termin ważności.",
+      ],
+      linear: [
+        "W Linear: Settings → Security & access → Personal API keys → New API key.",
+        "Permissions: „Only select permissions” → tylko Read. Dostęp do zespołów: wszystkie albo wybrane.",
+      ],
+    } as const,
+
+    holdDuringFocus: "Wstrzymuj powiadomienia podczas skupienia",
+    holdDuringFocusHint:
+      "Nowe zadania i powiadomienia z czasu skupienia FocusMode pokaże dopiero w przerwie albo przed następną sesją — nic nie przerywa skupienia.",
+    lastSync: (time: string) => `Ostatnia synchronizacja: ${time}`,
+    neverSynced: "Narzędzia nie były jeszcze odczytane.",
+    refresh: "Odśwież teraz",
+    refreshing: "Odświeżam…",
+
+    // --- Skupienie: "Co dalej?" ---
+    cardTitle: "Co dalej?",
+    cardLead: "Najpierw to, co przypisane do Ciebie, potem to, na co ktoś czeka.",
+    loading: "Wczytuję zadania…",
+    connectHint: "Połącz GitHub, GitLab, Jirę, Azure DevOps albo Linear, a FocusMode podpowie, czym zająć się w tej sesji.",
+    connectLink: "Ustawienia narzędzi pracy",
+    noTokenHint: "Zapisz token w Ustawieniach, a pojawią się tu Twoje zadania.",
+    empty: "Nic na Ciebie nie czeka — brak przypisanych zadań, próśb o recenzję i powiadomień.",
+    sourceErrors: (names: string) => `Nie udało się odczytać: ${names}.`,
+    sourceErrorsLink: "Szczegóły w Ustawieniach",
+    held: (n: number) => `${n} ${plural(n, "nowe", "nowe", "nowych")} z czasu skupienia`,
+    newCount: (n: number) => `${n} ${plural(n, "nowe", "nowe", "nowych")}`,
+    unseen: "nowe",
+    showMore: (n: number) => `Pokaż więcej (${n})`,
+    showLess: "Pokaż mniej",
+    open: "Otwórz",
+    openAria: (name: string) => `Otwórz ${name} w przeglądarce`,
+    setGoal: "Ustaw jako cel",
+    setGoalAria: (name: string) => `Ustaw ${name} jako cel sesji`,
+    isGoal: "Cel sesji",
+    due: (date: string) => `termin: ${date}`,
+    reasonsLabel: "Dlaczego teraz",
+    reason: {
+      assigned: "przypisane do Ciebie",
+      inSprint: "sprint",
+      highPriority: "wysoki priorytet",
+      dueToday: "termin dziś",
+      overdue: "po terminie",
+      inProgress: "w toku",
+      blockingOthers: "czeka na Twoją recenzję",
+      waitingLong: "długo czeka",
+      mentioned: "wzmianka",
+    } satisfies Record<WorkReason, string>,
+    /** Kinds that no reason names (`assigned`, `reviewRequested` and `mention` already have one). */
+    kind: {
+      assigned: "zadanie",
+      reviewRequested: "recenzja",
+      changesRequested: "prośba o poprawki",
+      ciFailed: "CI nie przechodzi",
+      mention: "wzmianka",
+      notification: "powiadomienie",
+    } satisfies Record<WorkItemKind, string>,
+    /** `PROJ-123 Tytuł` for labels and the goal line. */
+    itemName: (key: string, title: string) => (key && title ? `${key} ${title}` : key || title),
+
+    // --- Goal under the timer ---
+    goalLabel: "Cel sesji:",
+    goalOpenAria: (name: string) => `Cel sesji: ${name}. Otwórz w przeglądarce`,
+    goalClear: "Wyczyść cel sesji",
+  },
+
   nudge: {
     title: "Wracaj do pracy",
     body: (domain: string) => `${domain} poczeka do przerwy.`,
@@ -769,6 +952,12 @@ export const strings = {
       "calendar.disconnect": "Nie udało się usunąć zapisanych danych kalendarza.",
       "calendar.icsUrl": "Któryś z linków nie jest poprawnym linkiem do kalendarza (https:// albo webcal://).",
       "calendar.icsSave": "Nie udało się bezpiecznie zapisać linków do kalendarza.",
+      // Developer tools ("Co dalej?"); other `work.*` codes fall back to the `work` area below.
+      // Codes of src-tauri/src/work.rs (+ work/model.rs, work/fetch.rs).
+      "work.sync": "Nie udało się odczytać narzędzia pracy — szczegóły w Ustawieniach → Narzędzia pracy.",
+      "work.unavailable": "Narzędzia pracy nie odpowiadają — uruchom aplikację ponownie.",
+      "work.token": "Token może zawierać tylko widoczne znaki ASCII, bez spacji (najwyżej 4 KB) — wklej go ponownie.",
+      "work.tokenSave": "Nie udało się bezpiecznie zapisać ani usunąć tokenu.",
       autostart: "Nie udało się zmienić uruchamiania przy logowaniu.",
       "session.unavailable": "Sesja nie odpowiada — uruchom aplikację ponownie.",
       "ipc.unavailable": "Ta funkcja działa tylko w aplikacji FocusMode.",
@@ -794,6 +983,7 @@ export const strings = {
       calendar: "Problem z kalendarzem — sesja działa dalej.",
       google: "Problem z kalendarzem Google.",
       ics: "Problem z kalendarzem z linku ICS.",
+      work: "Problem z narzędziami pracy (Co dalej?) — sesja działa dalej.",
     } as Record<string, string>,
   },
 
@@ -822,6 +1012,10 @@ export const strings = {
     "calendar.horizonHours": "zakres sprawdzania kalendarza",
     "calendar.googleClientId": "identyfikator klienta Google",
     "calendar.googleClientSecret": "tajny klucz klienta Google",
+    "work.gitlabUrl": "adres GitLab",
+    "work.jiraUrl": "adres Jira",
+    "work.jiraEmail": "e-mail konta Jira",
+    "work.azureOrg": "organizacja Azure DevOps",
   } as Record<string, string>,
 
   dialog: {
@@ -861,6 +1055,7 @@ export const strings = {
     hours: (h: number) => `${h} h`,
     minutes: (m: number) => `${m} min`,
     seconds: (s: number) => `${s} s`,
+    today: "dziś",
   },
 };
 

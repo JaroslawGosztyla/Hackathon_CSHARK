@@ -16,6 +16,7 @@
   /** Popups that explain something stay longer. */
   const VISIBLE_MS_BY_KIND: Partial<Record<PopupKind, number>> = {
     breakHeld: 15_000,
+    workDigest: 12_000,
   };
   /** Buttons of a meeting reminder; "Przypomnij później" only while `remindLaterAllowed` (not on the last one). */
   const MEETING_CHOICES: readonly MeetingChoice[] = ["extend", "pauseAtBreak", "ignore", "remindLater"];
@@ -31,6 +32,7 @@
     launchersClosed: "🎮",
     meetingReminder: "📅",
     breakHeld: "⏸️",
+    workDigest: "📋",
   };
 
   const p = strings.popup;
@@ -129,6 +131,9 @@
           : "";
       case "breakHeld":
         return meeting ? p.breakHeld(meetingSubject) : p.breakHeldGeneric;
+      case "workDigest":
+        // Only a count: titles of work items never appear in the popup.
+        return current.workCount > 0 ? p.workDigest(current.workCount) : p.workDigestGeneric;
     }
   });
 
@@ -547,7 +552,8 @@
   }
 
   .kind-focusStarted .title,
-  .kind-meetingReminder .title {
+  .kind-meetingReminder .title,
+  .kind-workDigest .title {
     color: var(--accent-strong);
   }
 

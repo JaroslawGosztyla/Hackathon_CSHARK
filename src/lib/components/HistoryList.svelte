@@ -61,6 +61,13 @@
   }
 
   const hasIdle = $derived(history.some((s) => s.usage.idleSecs + s.usage.unknownSecs > 0));
+  /** Some session had a goal: every row gets the goal column, so the columns stay aligned. */
+  const hasGoals = $derived(history.some((s) => s.goal != null));
+
+  function entryLabel(s: SessionSummary): string {
+    const label = strings.summary.showSession(`${formatDate(s.startedAtMs)}, ${formatTimeOfDay(s.startedAtMs)}`);
+    return s.goal ? `${label}, ${strings.summary.goalAria(s.goalDone ?? null)}` : label;
+  }
 </script>
 
 {#if history.length === 0}
@@ -86,8 +93,9 @@
         <button
           type="button"
           class="entry"
+          class:with-goal={hasGoals}
           aria-current={s.sessionId === selectedId ? "true" : undefined}
-          aria-label={strings.summary.showSession(`${formatDate(s.startedAtMs)}, ${formatTimeOfDay(s.startedAtMs)}`)}
+          aria-label={entryLabel(s)}
           onclick={() => onselect(s.sessionId)}
         >
           <span class="when">
@@ -99,6 +107,21 @@
             <span class="cycles">{strings.summary.cyclesCount(s.cyclesCompleted)}</span>
             {#if s.demo}<span class="badge">{strings.summary.demo}</span>{/if}
           </span>
+          {#if hasGoals}
+            <span class="goal-cell" class:none={!s.goal}>
+              {#if s.goal}
+                {@const done = s.goalDone ?? null}
+                <span
+                  class="goal-mark"
+                  class:done={done === true}
+                  class:not-done={done === false}
+                  title={strings.summary.goalMarkTitle(strings.work.itemName(s.goal.key, s.goal.title), done)}
+                >
+                  {strings.summary.goalMark(done)}
+                </span>
+              {/if}
+            </span>
+          {/if}
           <span class="mini" aria-hidden="true">
             {#if total > 0}
               {#each segs as seg (seg.key)}
@@ -163,8 +186,37 @@
     cursor: pointer;
   }
 
+  .entry.with-goal {
+    grid-template-columns: 7.5rem 10rem 4.5rem 1fr;
+  }
+
   .entry:hover {
     border-color: var(--border-strong);
+  }
+
+  .goal-cell {
+    display: flex;
+    min-width: 0;
+  }
+
+  .goal-mark {
+    padding: 1px 8px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .goal-mark.done {
+    border-color: transparent;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+
+  .goal-mark.not-done {
+    color: var(--text-2);
   }
 
   .entry[aria-current="true"] {
@@ -214,8 +266,15 @@
   }
 
   @media (max-width: 640px) {
-    .entry {
+    .entry,
+    .entry.with-goal {
       grid-template-columns: 1fr auto;
+    }
+    .goal-cell {
+      grid-column: 1 / -1;
+    }
+    .goal-cell.none {
+      display: none;
     }
     .mini {
       grid-column: 1 / -1;

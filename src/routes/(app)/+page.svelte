@@ -5,6 +5,8 @@
   import MeetingConflicts from "$lib/components/MeetingConflicts.svelte";
   import MeetingHoldBanner from "$lib/components/MeetingHoldBanner.svelte";
   import MusicSourcePicker from "$lib/components/MusicSourcePicker.svelte";
+  import NextUp from "$lib/components/NextUp.svelte";
+  import SessionGoalLine from "$lib/components/SessionGoalLine.svelte";
   import ShieldChips from "$lib/components/ShieldChips.svelte";
   import TimerRing from "$lib/components/TimerRing.svelte";
   import TimingEditor from "$lib/components/TimingEditor.svelte";
@@ -12,6 +14,7 @@
   import { calendarEnabled } from "$lib/state/calendar.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
+  import { workEnabled } from "$lib/state/work.svelte";
   import { strings } from "$lib/strings";
 
   const snap = $derived(session.snapshot);
@@ -26,6 +29,9 @@
   const remaining = $derived(session.isIdle ? idleSecs : snap.remainingSecs);
   const total = $derived(session.isIdle ? idleSecs : snap.phaseTotalSecs);
   const calendarOn = $derived(calendarEnabled(config.value));
+  const workOn = $derived(workEnabled(config.value));
+  /** "Co dalej?" stays out of the focus phase unless the user turned off holding notifications during focus. */
+  const workDuringFocus = $derived(workOn && config.value?.work.holdDuringFocus === false);
 </script>
 
 <svelte:head>
@@ -108,6 +114,8 @@
   {:else}
     <p class="secondary small tabular">{strings.timer.focusedSoFar(formatDuration(snap.focusedSecs))}</p>
   {/if}
+
+  <SessionGoalLine />
 </section>
 
 <MeetingHoldBanner />
@@ -116,6 +124,11 @@
   {#if calendarOn}
     <div class="above">
       <MeetingConflicts />
+    </div>
+  {/if}
+  {#if workOn}
+    <div class="above">
+      <NextUp />
     </div>
   {/if}
   <div class="grid">
@@ -130,6 +143,10 @@
         <a href="/settings#calendar-settings">{strings.calendar.connectLink}</a>
       </p>
     {/if}
+    {#if config.ready && !workOn}
+      <!-- Without a connected tool, "Co dalej?" is just a hint with the link to Settings. -->
+      <NextUp />
+    {/if}
   </div>
 {:else if snap.phase === "focus"}
   <div class="grid">
@@ -141,8 +158,18 @@
       <MeetingConflicts />
     </div>
   {/if}
+  {#if workDuringFocus}
+    <div class="below">
+      <NextUp />
+    </div>
+  {/if}
 {:else}
   <BreakCard />
+  {#if workOn}
+    <div class="below">
+      <NextUp />
+    </div>
+  {/if}
   {#if calendarOn}
     <div class="below">
       <MeetingConflicts />
