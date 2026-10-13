@@ -1,7 +1,8 @@
 <script lang="ts">
   import { blocklist } from "$lib/state/blocklist.svelte";
+  import { config } from "$lib/state/config.svelte";
   import { shields } from "$lib/state/shields.svelte";
-  import { strings } from "$lib/strings";
+  import { launcherList, strings } from "$lib/strings";
   import type { IntegrationStatus } from "$lib/types";
 
   interface Chip {
@@ -31,7 +32,20 @@
       },
       { key: "keepAwake", name: strings.shieldChip.keepAwake, status: s.keepAwake },
     ];
-    return all.filter((c) => c.status.state !== "off");
+    const visible = all.filter((c) => c.status.state !== "off");
+    // Launchers are closed once, when focus starts: with the option on, the chip stays for the whole focus.
+    if (config.value?.shields.closeLaunchers || s.launchers.state !== "off") {
+      const status: IntegrationStatus = s.launchers.state === "off" ? { ...s.launchers, state: "on" } : s.launchers;
+      const closed = s.closedLaunchers.length > 0 ? strings.shieldChip.launchersClosed(launcherList(s.closedLaunchers)) : null;
+      const result = closed ?? (status.state === "on" ? strings.shieldChip.launchersNothing : null);
+      visible.push({
+        key: "launchers",
+        name: strings.shieldChip.launchers,
+        status,
+        title: [result, s.launchers.detail].filter(Boolean).join(" — ") || undefined,
+      });
+    }
+    return visible;
   });
 </script>
 

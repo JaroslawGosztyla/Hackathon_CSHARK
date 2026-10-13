@@ -13,14 +13,18 @@ import type {
   ChimeKind,
   Config,
   DeviceCodePrompt,
+  Language,
   MediaAction,
   MediaWindowStatus,
   Nudge,
   PhaseChange,
+  PopupAction,
+  PopupInfo,
   SessionSnapshot,
   SessionSummary,
   ShieldStatus,
   TeamsStatus,
+  TintStatus,
   Track,
   UsageReport,
 } from "./types";
@@ -105,6 +109,26 @@ export const openBlocklistFile = () => call<void>(COMMANDS.openBlocklistFile);
 /** Re-reads `websiteblacklist.txt` now (the shell also reloads it by itself after every save). */
 export const reloadBlocklist = () => call<BlocklistInfo>(COMMANDS.reloadBlocklist);
 
+/**
+ * Answer to `app://close-requested` (the first X on the main window): stores `closeToTray` (and turns on
+ * `phasePopups` when `toTray`), then the shell hides the window or quits. Resolves with the stored config.
+ */
+export const resolveClose = (toTray: boolean) => call<Config>(COMMANDS.resolveClose, { toTray });
+/** The supported language closest to the OS UI language (`en` when none matches). */
+export const getSystemLanguage = () => call<Language>(COMMANDS.getSystemLanguage);
+
+/** What the phase popup window shows now (popup window only). */
+export const getPopup = () => call<PopupInfo>(COMMANDS.getPopup);
+/** A button in the phase popup, or its timeout (`dismiss`). */
+export const popupAction = (action: PopupAction) => call<void>(COMMANDS.popupAction, { action });
+
+export const getTintStatus = () => call<TintStatus>(COMMANDS.getTintStatus);
+/**
+ * Shows the warm tint at `strength` (0..=100) for a few seconds, ignoring the schedule (settings preview);
+ * `null` ends the preview at once.
+ */
+export const previewTint = (strength: number | null) => call<void>(COMMANDS.previewTint, { strength });
+
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
@@ -157,12 +181,18 @@ export const subscribeMediaWindow = (apply: (s: MediaWindowStatus) => void, onEr
   subscribe(EVENTS.mediaWindow, getMediaWindow, apply, onError);
 export const subscribeBlocklist = (apply: (b: BlocklistInfo) => void, onError?: (e: AppError) => void) =>
   subscribe(EVENTS.blocklistChanged, getBlocklist, apply, onError);
+export const subscribePopup = (apply: (p: PopupInfo) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.popupShow, getPopup, apply, onError);
+export const subscribeTint = (apply: (t: TintStatus) => void, onError?: (e: AppError) => void) =>
+  subscribe(EVENTS.tintChanged, getTintStatus, apply, onError);
 
 export const onPhaseChanged = (handler: (c: PhaseChange) => void) => on<PhaseChange>(EVENTS.sessionPhaseChanged, handler);
 export const onSessionSummary = (handler: (s: SessionSummary) => void) => on<SessionSummary>(EVENTS.sessionSummary, handler);
 export const onNudge = (handler: (n: Nudge) => void) => on<Nudge>(EVENTS.focusNudge, handler);
 export const onAppError = (handler: (e: AppError) => void) =>
   on<unknown>(EVENTS.appError, (payload) => handler(toAppError(payload)));
+/** The user pressed X on the main window while `closeToTray` is undecided: ask, then call `resolveClose`. */
+export const listenCloseRequested = (handler: () => void) => on<null>(EVENTS.appCloseRequested, () => handler());
 
 // ---------------------------------------------------------------------------
 // Files, dialogs, opener, autostart

@@ -49,3 +49,21 @@ export function formatPercent(fraction: number): string {
 export function processLabel(process: string): string {
   return process.replace(/\.exe$/i, "");
 }
+
+const MINUTES_PER_DAY = 24 * 60;
+
+/** Minutes after midnight → `HH:MM` (the value format of `<input type="time">`). */
+export function minutesToTime(minutes: number): string {
+  const m = ((Math.trunc(minutes) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  return `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+}
+
+/** `HH:MM` (or `HH:MM:SS`) from `<input type="time">` → minutes after midnight; null when empty or malformed. */
+export function timeToMinutes(value: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(value.trim());
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (h > 23 || m > 59) return null;
+  return h * 60 + m;
+}

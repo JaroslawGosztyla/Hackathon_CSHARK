@@ -1,15 +1,26 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getAutostart, setAutostart, testChime, toAppError, ERR_NO_SHELL } from "$lib/api";
+  import { getAutostart, getSystemLanguage, setAutostart, testChime, toAppError, ERR_NO_SHELL } from "$lib/api";
   import BlocklistFile from "$lib/components/BlocklistFile.svelte";
   import ExtensionGuide from "$lib/components/ExtensionGuide.svelte";
+  import LauncherSettings from "$lib/components/LauncherSettings.svelte";
   import Switch from "$lib/components/Switch.svelte";
   import TeamsSettings from "$lib/components/TeamsSettings.svelte";
+  import TintSettings from "$lib/components/TintSettings.svelte";
   import { config } from "$lib/state/config.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
-  import { strings } from "$lib/strings";
-  import type { ChimeKind, Config } from "$lib/types";
+  import { LANGUAGES, strings } from "$lib/strings";
+  import type { ChimeKind, Config, Language } from "$lib/types";
+
+  /** `closeToTray` as a select value: null = ask at the first X. */
+  type CloseChoice = "ask" | "tray" | "quit";
+  const CLOSE_CHOICES: readonly CloseChoice[] = ["ask", "tray", "quit"];
+  const closeLabels: Record<CloseChoice, string> = {
+    ask: strings.settings.closeAsk,
+    tray: strings.settings.closeTray,
+    quit: strings.settings.closeQuit,
+  };
 
   const cfg = $derived(config.value);
   const chimeError = $derived(config.fieldErrors.chimeVolume ?? null);
@@ -17,6 +28,16 @@
   let autostart = $state<boolean | null>(null);
   let autostartBusy = $state(false);
   let chimeBusy = $state(false);
+  /** OS UI language as resolved by the shell, for the "Systemowy (…)" option. */
+  let systemLanguage = $state<Language | null>(null);
+
+  const closeChoice = $derived.by((): CloseChoice => {
+    const v = cfg?.closeToTray;
+    return v === true ? "tray" : v === false ? "quit" : "ask";
+  });
+  const systemLanguageName = $derived(
+    systemLanguage && systemLanguage !== "system" ? strings.languageNames[systemLanguage] : null,
+  );
 
   onMount(() => {
     getAutostart()
@@ -25,7 +46,25 @@
         const err = toAppError(e);
         if (err.code !== ERR_NO_SHELL) toasts.error(err);
       });
+    getSystemLanguage()
+      .then((lang) => (systemLanguage = lang))
+      .catch((e: unknown) => {
+        // Only the label of the "system" option depends on it.
+        const err = toAppError(e);
+        if (err.code !== ERR_NO_SHELL) console.warn(`[FocusMode] ${err.code}: ${err.message}`);
+      });
   });
+
+  function setCloseChoice(value: string) {
+    if (!CLOSE_CHOICES.includes(value as CloseChoice)) return;
+    const choice = value as CloseChoice;
+    set((c) => (c.closeToTray = choice === "ask" ? null : choice === "tray"));
+  }
+
+  function setLanguage(value: string) {
+    const lang = value === "system" ? "system" : LANGUAGES.find((l) => l === value);
+    if (lang) set((c) => (c.language = lang));
+  }
 
   function set(mutate: (c: Config) => void) {
     config.update(mutate, true);
@@ -153,6 +192,55 @@
       </div>
     </section>
 
+    <section class="card" aria-labelledby="launchers-settings">
+      <div class="card-title">
+        <h2 id="launchers-settings">{strings.settings.launchersTitle}</h2>
+      </div>
+      <LauncherSettings />
+    </section>
+
+    <section class="card" aria-labelledby="window-settings">
+      <div class="card-title">
+        <h2 id="window-settings">{strings.settings.windowTitle}</h2>
+      </div>
+      <div class="items">
+        <div class="item">
+          <div class="field">
+            <label for="close-button">{strings.settings.closeButton}</label>
+            <select
+              id="close-button"
+              class="input select narrow"
+              value={closeChoice}
+              aria-describedby="close-button-hint"
+              onchange={(e) => setCloseChoice(e.currentTarget.value)}
+            >
+              {#each CLOSE_CHOICES as choice (choice)}
+                <option value={choice}>{closeLabels[choice]}</option>
+              {/each}
+            </select>
+            <p class="hint" id="close-button-hint">{strings.settings.closeHint}</p>
+          </div>
+        </div>
+
+        <div class="item">
+          <Switch
+            id="phase-popups"
+            label={strings.settings.phasePopups}
+            hint={strings.settings.phasePopupsHint}
+            checked={cfg.phasePopups}
+            onchange={(on) => set((c) => (c.phasePopups = on))}
+          />
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="tint-settings">
+      <div class="card-title">
+        <h2 id="tint-settings">{strings.settings.tintTitle}</h2>
+      </div>
+      <TintSettings />
+    </section>
+
     <section class="card" aria-labelledby="tracking-settings">
       <div class="card-title">
         <h2 id="tracking-settings">{strings.settings.trackingTitle}</h2>
@@ -231,6 +319,26 @@
       </div>
     </section>
 
+    <section class="card" aria-labelledby="language-settings">
+      <div class="card-title">
+        <h2 id="language-settings">{strings.settings.languageTitle}</h2>
+      </div>
+      <div class="field">
+        <label for="language">{strings.settings.language}</label>
+        <select
+          id="language"
+          class="input select narrow"
+          value={cfg.language}
+          onchange={(e) => setLanguage(e.currentTarget.value)}
+        >
+          <option value="system">{strings.settings.languageSystem(systemLanguageName)}</option>
+          {#each LANGUAGES as lang (lang)}
+            <option value={lang} {lang}>{strings.languageNames[lang]}</option>
+          {/each}
+        </select>
+      </div>
+    </section>
+
     <section class="card" aria-labelledby="system-settings">
       <div class="card-title">
         <h2 id="system-settings">{strings.settings.systemTitle}</h2>
@@ -302,5 +410,9 @@
 
   .test-row {
     margin-top: 10px;
+  }
+
+  .narrow {
+    max-width: 340px;
   }
 </style>

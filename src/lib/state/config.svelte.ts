@@ -8,6 +8,10 @@ import { toasts } from "./toasts.svelte";
 const SAVE_DEBOUNCE_MS = 600;
 const FOCUS_MINUTES = { min: 1, max: 240 } as const;
 const BREAK_MINUTES = { min: 1, max: 120 } as const;
+/** Mirrors focus-core `tint.rs`: times are minutes after midnight, strength 0..=100, fade 0..=180 min. */
+const TINT = { minutesPerDay: 1440, maxStrength: 100, maxTransitionMinutes: 180 } as const;
+/** Choices offered for the tint fade (minutes); a different stored value is shown as an extra option. */
+export const TINT_TRANSITION_PRESETS = [0, 15, 30, 60, 90] as const;
 
 function inRange(n: number, min: number, max: number): boolean {
   return Number.isInteger(n) && n >= min && n <= max;
@@ -24,10 +28,23 @@ export function validateConfig(c: Config): Record<string, string> {
   if (!inRange(c.breakMinutes, BREAK_MINUTES.min, BREAK_MINUTES.max)) errors.breakMinutes = strings.timing.rangeBreak;
   if (!isUnit(c.music.volume)) errors["music.volume"] = strings.errors.fieldInvalid(strings.fields["music.volume"] ?? "");
   if (!isUnit(c.chimeVolume)) errors.chimeVolume = strings.errors.fieldInvalid(strings.fields.chimeVolume ?? "");
+  // Validated even when the tint is off, like in focus-core (the shell would reject the whole config).
+  const t = c.tint;
+  if (!inRange(t.startMinutes, 0, TINT.minutesPerDay - 1)) errors["tint.startMinutes"] = strings.settings.tintTimeInvalid;
+  if (!inRange(t.endMinutes, 0, TINT.minutesPerDay - 1)) errors["tint.endMinutes"] = strings.settings.tintTimeInvalid;
+  else if (t.startMinutes === t.endMinutes) errors["tint.endMinutes"] = strings.settings.tintSameTimes;
+  if (!inRange(t.strength, 0, TINT.maxStrength)) errors["tint.strength"] = strings.settings.tintStrengthRange;
+  if (!inRange(t.transitionMinutes, 0, TINT.maxTransitionMinutes)) {
+    errors["tint.transitionMinutes"] = strings.settings.tintTransitionRange;
+  }
   return errors;
 }
 
-export const LIMITS = { focusMinutes: FOCUS_MINUTES, breakMinutes: BREAK_MINUTES } as const;
+export const LIMITS = { focusMinutes: FOCUS_MINUTES, breakMinutes: BREAK_MINUTES, tint: TINT } as const;
+
+function copyField<K extends keyof Config>(target: Config, source: Config, key: K): void {
+  target[key] = source[key];
+}
 
 class ConfigStore {
   value = $state<Config | null>(null);
@@ -75,6 +92,19 @@ class ConfigStore {
     if (immediate) void this.saveNow();
     else this.timer = setTimeout(() => void this.saveNow(), SAVE_DEBOUNCE_MS);
     return true;
+  }
+
+  /**
+   * Takes fields of a config the shell changed and stored by itself (e.g. `resolve_close`). Only `keys` are copied,
+   * so local edits that are not saved yet stay; nothing is saved again (the shell already stored it).
+   */
+  adopt(saved: Config, keys: readonly (keyof Config)[]): void {
+    const current = this.value;
+    if (!current) {
+      this.value = saved;
+      return;
+    }
+    for (const key of keys) copyField(current, saved, key);
   }
 
   /** Saves pending edits right away. Resolves true when the config is valid and stored. */

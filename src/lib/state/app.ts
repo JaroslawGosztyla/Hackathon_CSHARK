@@ -10,6 +10,7 @@ import { session } from "./session.svelte";
 import { shields } from "./shields.svelte";
 import { summary } from "./summary.svelte";
 import { teams } from "./teams.svelte";
+import { tint } from "./tint.svelte";
 import { toasts } from "./toasts.svelte";
 
 /** Starts all subscriptions; returns a cleanup function. */
@@ -42,6 +43,7 @@ export function initAppState(): () => void {
   keep(api.subscribeTeams((s) => teams.apply(s), reportError));
   keep(api.subscribeMediaWindow((s) => mediaWindow.apply(s), reportError));
   keep(api.subscribeBlocklist((b) => blocklist.apply(b), reportError));
+  keep(api.subscribeTint((t) => tint.apply(t), reportError));
   keep(api.onPhaseChanged((change) => session.announce(change)));
   keep(api.onNudge((n) => nudge.show(n)));
   keep(

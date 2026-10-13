@@ -1,9 +1,20 @@
 <script lang="ts">
   import { blocklist } from "$lib/state/blocklist.svelte";
   import { strings } from "$lib/strings";
+  import type { BlocklistIssue } from "$lib/types";
 
   const s = strings.blocklist;
   const info = $derived(blocklist.info);
+
+  /** Polish explanation for the issue code, plus the shell's English detail when it adds something. */
+  function describe(issue: BlocklistIssue): { text: string; detail: string | null } {
+    const detail = issue.message.trim();
+    if (issue.code === "pastedUrl") {
+      // The detail is the domain to suggest.
+      return { text: detail ? s.pastedUrl(detail) : s.issueText.pastedUrl, detail: null };
+    }
+    return { text: s.issueText[issue.code] ?? strings.errors.generic, detail: detail || null };
+  }
 </script>
 
 <section class="blocklist" aria-labelledby="blocklist-title">
@@ -42,10 +53,16 @@
         <p class="issues-title">{s.issuesTitle(info.issues.length)}</p>
         <ul>
           {#each info.issues as issue, i (i)}
+            {@const why = describe(issue)}
             <li>
               <span class="line tabular">{s.issueLine(issue.line)}</span>
               <code class="text">{issue.text}</code>
-              <span class="message">{issue.message}</span>
+              <span class="message">
+                {why.text}
+                {#if why.detail}
+                  <span class="detail" lang="en" title={s.issueDetailLabel}>({why.detail})</span>
+                {/if}
+              </span>
             </li>
           {/each}
         </ul>
@@ -180,6 +197,11 @@
 
   .message {
     color: var(--text-2);
+  }
+
+  .detail {
+    color: var(--text-muted);
+    font-size: 0.8rem;
   }
 
   .help {

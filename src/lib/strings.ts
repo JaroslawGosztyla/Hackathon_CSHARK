@@ -1,6 +1,16 @@
 // All Polish UI texts live here (CLAUDE.md: code in English, UI in Polish).
 // No health promises: the app suggests, it never claims effects.
-import type { AppError, IntegrationState, MusicSourceKind, NoiseColor, Phase } from "./types";
+import type {
+  AppError,
+  BlocklistIssueCode,
+  GameLauncher,
+  IntegrationState,
+  Language,
+  MusicSourceKind,
+  NoiseColor,
+  Phase,
+  PopupKind,
+} from "./types";
 
 /** Polish plural form: 1 minuta, 2–4 minuty, 5+ minut (with the 12–14 exception). */
 export function plural(n: number, one: string, few: string, many: string): string {
@@ -156,6 +166,9 @@ export const strings = {
     sites: "Blokada stron",
     sitesFallback: "Blokada stron (tryb awaryjny)",
     keepAwake: "Ekran nie zaśnie",
+    launchers: "Launchery gier",
+    launchersClosed: (names: string) => `Zamknięto: ${names}`,
+    launchersNothing: "Żaden z zaznaczonych launcherów nie był uruchomiony.",
     state: {
       off: "wyłączone",
       on: "aktywne",
@@ -221,7 +234,8 @@ export const strings = {
       "Włącza tryb „Nie przeszkadzać” w Windows na czas skupienia i wyłącza go w przerwie, po Stop oraz przy zamykaniu aplikacji — także wtedy, gdy był włączony już wcześniej.",
 
     teams: "Microsoft Teams: „Nie przeszkadzać”",
-    teamsHint: "Ustawia Twój status w Teams na czas skupienia i czyści go w przerwie. Wymaga jednorazowego połączenia konta.",
+    teamsHint:
+      "Ustawia Twój status w Teams na czas skupienia i czyści go w przerwie. Gdy w Teams wyświetlasz się jako offline (niewidoczny) albo sam ustawisz „Nie przeszkadzać”, FocusMode nie zmienia Twojego statusu. Wymaga jednorazowego połączenia konta.",
     teamsClientId: "Application (client) ID",
     teamsTenant: "Tenant (ID katalogu albo „organizations”)",
     teamsConnect: "Połącz z Teams",
@@ -275,7 +289,82 @@ export const strings = {
     launchOnLogin: "Uruchamiaj FocusMode przy logowaniu",
     launchOnLoginHint: "Po zalogowaniu do systemu FocusMode uruchamia się zminimalizowany do zasobnika (ikona obok zegara).",
 
+    launchersTitle: "Launchery gier",
+    launchers: "Zamykaj launchery gier na początku skupienia",
+    launchersHint:
+      "Na starcie każdego skupienia FocusMode zamyka zaznaczone launchery. Zamykane są tylko launchery, nie same gry — ale gra uruchomiona przez launcher może przy tym stracić niezapisany postęp, więc najpierw zapisz grę.",
+    launchersPick: "Które launchery zamykać",
+    launchersNone: "Zaznacz co najmniej jeden launcher.",
+    launchersLastClosed: (names: string) => `Przy ostatnim starcie skupienia zamknięto: ${names}.`,
+    launchersLastNone: "Przy ostatnim starcie skupienia żaden z zaznaczonych launcherów nie był uruchomiony.",
+    launchersUnavailable: "Zamykanie launcherów działa tylko w Windows.",
+    launchersError: "Nie udało się zamknąć któregoś z launcherów.",
+
+    windowTitle: "Okno i powiadomienia",
+    closeButton: "Przycisk X (zamknij okno)",
+    closeAsk: "Pytaj przy pierwszym zamknięciu",
+    closeTray: "Chowaj do zasobnika",
+    closeQuit: "Zamykaj aplikację",
+    closeHint: "Schowany do zasobnika FocusMode dalej odmierza czas i gra muzykę. Otworzysz go ikoną obok zegara.",
+    phasePopups: "Okienka FocusMode przy zmianie fazy",
+    phasePopupsHint:
+      "Małe okienko w rogu ekranu, gdy zaczyna się skupienie albo przerwa. Zastępuje powiadomienia Windows.",
+
+    tintTitle: "Ciepłe kolory ekranu",
+    tint: "Ocieplaj kolory ekranu według pory dnia",
+    tintHint:
+      "Wieczorem nakłada na ekran półprzezroczystą, ciepłą warstwę, a rano ją zdejmuje. Nie zmienia ustawień monitora ani karty graficznej.",
+    tintFrom: "Od",
+    tintTo: "Do",
+    tintScheduleHint: "Godziny mogą obejmować północ, np. od 18:00 do 9:00.",
+    tintStrength: "Siła",
+    tintStrengthHint: "Przesuń suwak, aby zobaczyć podgląd na ekranie.",
+    tintTransition: "Płynne przejście",
+    tintTransitionNone: "Bez przejścia",
+    tintTransitionMinutes: (m: number) => `${m} min`,
+    tintStatusOff: "Teraz: wyłączone",
+    tintStatusLevel: (pct: number) => `Teraz: ${pct}%`,
+    tintStatusPreview: (pct: number) => `Podgląd: ${pct}%`,
+    tintStatusError: "Nie udało się nałożyć ciepłej warstwy — spróbuję ponownie za chwilę.",
+    tintTimeInvalid: "Podaj godzinę, np. 18:00.",
+    tintSameTimes: "Godzina „Do” musi być inna niż „Od”.",
+    tintStrengthRange: "Podaj siłę od 0 do 100.",
+    tintTransitionRange: "Płynne przejście może trwać od 0 do 180 minut.",
+
+    languageTitle: "Język",
+    language: "Język aplikacji",
+    languageSystem: (name: string | null) => (name ? `Systemowy (${name})` : "Systemowy"),
+
     demoNote: "Tryb prezentacji: skupienie trwa 40 s, przerwa 20 s.",
+  },
+
+  closePrompt: {
+    title: "Zminimalizować FocusMode do zasobnika?",
+    body: "Minutnik i muzyka będą działać w tle, a FocusMode pokaże małe okienko, gdy zacznie się skupienie albo przerwa.",
+    note: "Możesz to zmienić w Ustawieniach.",
+    toTray: "Tak, do zasobnika",
+    quit: "Nie, zamknij aplikację",
+  },
+
+  popup: {
+    title: {
+      breakStarted: "Czas na przerwę",
+      focusStarted: "Czas na skupienie",
+      interrupted: "Sesja wstrzymana",
+      launchersClosed: "Zamknięto launchery gier",
+    } satisfies Record<PopupKind, string>,
+    breakMessage: (time: string) => `Przerwa: ${time} — wstań, rozciągnij się, muzyka gra dalej.`,
+    breakMessageMusicPaused: (time: string) => `Przerwa: ${time} — wstań, rozciągnij się, muzyka poczeka.`,
+    breakMessageNoMusic: (time: string) => `Przerwa: ${time} — wstań i rozciągnij się.`,
+    focusMessage: (cycle: number, time: string) => `Cykl ${cycle}: ${time} skupienia. Osłony włączone.`,
+    focusMessageNoShields: (cycle: number, time: string) => `Cykl ${cycle}: ${time} skupienia.`,
+    interrupted: "Komputer był uśpiony — wznów, kiedy wrócisz.",
+    launchersClosed: (names: string) => `Zamknięto: ${names}`,
+    showMain: "Pokaż FocusMode",
+    skip: "Pomiń",
+    skipBreak: "Pomiń przerwę",
+    skipFocus: "Pomiń skupienie",
+    dismiss: "Zamknij",
   },
 
   blocklist: {
@@ -293,6 +382,22 @@ export const strings = {
     issuesTitle: (n: number) =>
       `${n} ${plural(n, "linia pominięta", "linie pominięte", "linii pominiętych")} — popraw w pliku albo dopisz # na początku linii:`,
     issueLine: (line: number) => `Linia ${line}`,
+    /** Limits mirror focus-core `blocklist.rs` (MAX_LINE_CHARS, MAX_DOMAINS, MAX_PATTERNS). */
+    issueText: {
+      invalidDomain: "Nieprawidłowa domena",
+      invalidRegex: "Nieprawidłowe wyrażenie regularne",
+      regexTooComplex: "Wyrażenie regularne jest zbyt złożone",
+      matchesEverything: "Wyrażenie pasuje do każdego adresu",
+      pastedUrl:
+        "Adres ze znakiem ? to wyrażenie regularne, które nie pasuje do tego adresu — żeby zablokować tylko ten adres, zamień ? na \\?",
+      lineTooLong: "Linia jest za długa (limit 500 znaków)",
+      tooManyDomains: "Za dużo domen (limit 2000)",
+      tooManyPatterns: "Za dużo wyrażeń regularnych (limit 500)",
+    } satisfies Record<BlocklistIssueCode, string>,
+    /** `pastedUrl` with the suggested domain (the issue's `message`). */
+    pastedUrl: (domain: string) =>
+      `Adres ze znakiem ? to wyrażenie regularne, które nie pasuje do tego adresu — żeby zablokować całą stronę, wpisz ${domain}; żeby tylko ten adres, zamień ? na \\?`,
+    issueDetailLabel: "Szczegóły (po angielsku)",
     readError: "Nie udało się odczytać pliku — działa poprzednia lista:",
     helpTitle: "Jak zapisywać wpisy?",
     helpLines: "Jedna pozycja w linii. Linie zaczynające się od # to komentarze, puste linie są pomijane.",
@@ -353,6 +458,9 @@ export const strings = {
       "extension.open": "Nie udało się otworzyć folderu rozszerzenia.",
       "blocklist.read": "Nie udało się odczytać pliku websiteblacklist.txt — działa poprzednia lista stron.",
       "blocklist.open": "Nie udało się otworzyć websiteblacklist.txt w edytorze tekstu — otwórz plik ręcznie (ścieżka jest w Ustawieniach).",
+      "shields.launchers": "Nie udało się zamknąć któregoś z launcherów gier — sesja trwa dalej.",
+      "tint.overlay": "Nie udało się nałożyć ciepłej warstwy na ekran.",
+      "popup.window": "Nie udało się pokazać okienka FocusMode.",
       autostart: "Nie udało się zmienić uruchamiania przy logowaniu.",
       "session.unavailable": "Sesja nie odpowiada — uruchom aplikację ponownie.",
       "ipc.unavailable": "Ta funkcja działa tylko w aplikacji FocusMode.",
@@ -370,6 +478,10 @@ export const strings = {
       persistence: "Nie udało się zapisać danych.",
       session: "Problem z sesją.",
       tracker: "Problem ze śledzeniem aplikacji.",
+      tint: "Problem z ciepłymi kolorami ekranu.",
+      popup: "Problem z okienkiem FocusMode.",
+      launchers: "Problem z zamykaniem launcherów gier.",
+      window: "Problem z oknem aplikacji.",
     } as Record<string, string>,
   },
 
@@ -383,7 +495,41 @@ export const strings = {
     "music.folder": "folder z muzyką",
     "shields.teamsClientId": "Application (client) ID",
     "shields.teamsTenant": "tenant",
+    "shields.launchers": "launchery gier",
+    "tint.startMinutes": "początek ciepłych kolorów",
+    "tint.endMinutes": "koniec ciepłych kolorów",
+    "tint.strength": "siła ciepłych kolorów",
+    "tint.transitionMinutes": "płynne przejście",
+    language: "język",
   } as Record<string, string>,
+
+  /** Product names; the order is the order of the checkboxes in Settings (focus-core `launchers::ALL`). */
+  launchers: {
+    steam: "Steam",
+    epic: "Epic Games Launcher",
+    gog: "GOG Galaxy",
+    ubisoft: "Ubisoft Connect",
+    ea: "Aplikacja EA",
+    battleNet: "Battle.net",
+    riot: "Riot Client",
+    xbox: "Aplikacja Xbox",
+    amazon: "Amazon Games",
+    itch: "itch",
+  } satisfies Record<GameLauncher, string>,
+
+  /** Native language names (never translated), in the order of the language picker. */
+  languageNames: {
+    en: "English",
+    pl: "Polski",
+    de: "Deutsch",
+    fr: "Français",
+    it: "Italiano",
+    uk: "Українська",
+    ru: "Русский",
+    es: "Español",
+    zh: "中文",
+    ja: "日本語",
+  } satisfies Record<Exclude<Language, "system">, string>,
 
   time: {
     hoursMinutes: (h: number, m: number) => `${h} h ${m} min`,
@@ -402,4 +548,15 @@ export function errorText(error: AppError): string {
   if (exact) return exact;
   const area = error.code.split(".")[0] ?? "";
   return strings.errors.areas[area] ?? strings.errors.generic;
+}
+
+/** Every game launcher, in the order of `strings.launchers` (focus-core `launchers::ALL`). */
+export const GAME_LAUNCHERS = Object.keys(strings.launchers) as GameLauncher[];
+
+/** Every concrete UI language, in the order of `strings.languageNames`. */
+export const LANGUAGES = Object.keys(strings.languageNames) as Exclude<Language, "system">[];
+
+/** `Steam, Epic Games Launcher` */
+export function launcherList(launchers: readonly GameLauncher[]): string {
+  return launchers.map((l) => strings.launchers[l] ?? l).join(", ");
 }

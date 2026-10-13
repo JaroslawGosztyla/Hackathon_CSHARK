@@ -1,8 +1,12 @@
 <script lang="ts">
-  import "../app.css";
+  // Shell of the main window. The overlay windows (/popup, /tint) use the (overlay) group instead, so the
+  // music player, the subscriptions and the toasts run in exactly one window.
+  import "../../app.css";
   import { onMount, type Snippet } from "svelte";
   import { page } from "$app/state";
+  import AppLogo from "$lib/components/AppLogo.svelte";
   import Background from "$lib/components/Background.svelte";
+  import ClosePrompt from "$lib/components/ClosePrompt.svelte";
   import NudgeBanner from "$lib/components/NudgeBanner.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import { formatClock } from "$lib/format";
@@ -32,13 +36,7 @@
 <div class="app" class:with-video={reserveVideo}>
   <header class="top">
     <a class="brand" href="/">
-      <span class="logo" aria-hidden="true">
-        <svg viewBox="0 0 32 32" width="30" height="30">
-          <circle cx="16" cy="16" r="15" fill="rgba(242,166,90,0.16)" />
-          <path d="M21.5 19.5A7.5 7.5 0 1 1 13 9a6 6 0 0 0 8.5 10.5z" fill="#f2a65a" />
-          <circle cx="22.5" cy="10" r="1.2" fill="#ffe2bd" />
-        </svg>
-      </span>
+      <span class="logo" aria-hidden="true"><AppLogo /></span>
       <span class="brand-text">
         <span class="name">{strings.appName}</span>
         <span class="tagline">{strings.tagline}</span>
@@ -75,6 +73,7 @@
 
 <MusicPlayer />
 <Toasts />
+<ClosePrompt />
 <p class="sr-only" aria-live="polite" aria-atomic="true">{session.announcement}</p>
 
 <style>
@@ -89,14 +88,30 @@
     padding-bottom: calc(var(--dock-h) + 250px);
   }
 
+  /* Pinned: logo + navigation stay visible while the page scrolls under them. */
   .top {
+    position: sticky;
+    top: 0;
+    z-index: 20;
     max-width: 1040px;
-    margin: 0 auto;
+    margin: 0 auto 4px;
     display: flex;
     align-items: center;
     gap: 16px;
     flex-wrap: wrap;
-    padding: 16px 0 20px;
+    padding: 16px 0;
+  }
+
+  /* Full-window-width backdrop behind the centred header, so scrolled content never shows through. */
+  .top::before {
+    content: "";
+    position: absolute;
+    inset: 0 calc(50% - 50vw);
+    z-index: -1;
+    background: color-mix(in srgb, var(--bg-1) 86%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
   }
 
   .brand {

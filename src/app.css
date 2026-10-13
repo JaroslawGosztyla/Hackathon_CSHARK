@@ -57,6 +57,12 @@ body {
   min-height: 100%;
 }
 
+html {
+  /* Keeps focused / scrolled-to elements clear of the pinned header and the music dock. */
+  scroll-padding-top: 96px;
+  scroll-padding-bottom: calc(var(--dock-h, 76px) + 24px);
+}
+
 body {
   font-family: var(--font);
   font-size: 15px;
@@ -348,6 +354,30 @@ a {
 .hint {
   color: var(--text-muted);
   font-size: 0.85rem;
+}
+
+/* Use together with .input: <select class="input select">. */
+.select {
+  appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d2c2b0' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 12px 8px;
+  cursor: pointer;
+}
+
+.select option {
+  background: var(--surface-solid);
+  color: var(--text);
+}
+
+input[type="time"].input {
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="time"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
 }
 
 input[type="range"] {
