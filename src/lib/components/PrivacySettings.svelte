@@ -7,6 +7,7 @@
   import * as api from "$lib/api";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { formatSize } from "$lib/format";
+  import { config } from "$lib/state/config.svelte";
   import { privacy } from "$lib/state/privacy.svelte";
   import { session } from "$lib/state/session.svelte";
   import { toasts } from "$lib/state/toasts.svelte";
@@ -26,7 +27,7 @@
   type GroupId = "app" | "connections" | "browser" | "restore";
   /** Display groups; together they cover every `PrivacyItemKind` (focus-core `PrivacyItemKind::ALL`). */
   const GROUPS: readonly { id: GroupId; kinds: readonly PrivacyItemKind[] }[] = [
-    { id: "app", kinds: ["settings", "history", "meetingChoices", "workSeen", "customChimes", "blocklist"] },
+    { id: "app", kinds: ["settings", "history", "rewards", "meetingChoices", "workSeen", "customChimes", "blocklist"] },
     {
       id: "connections",
       kinds: [
@@ -47,6 +48,7 @@
   /** What a count means per kind (`null`: no count shown). */
   const COUNT_UNIT: Partial<Record<PrivacyItemKind, keyof typeof p.counts>> = {
     history: "sessions",
+    rewards: "days",
     meetingChoices: "answers",
     workSeen: "ids",
     icsLinks: "links",
@@ -69,6 +71,23 @@
   let exporting = $state(false);
 
   onMount(() => privacy.watch());
+
+  /**
+   * The export also holds the rewards ledger (beta, ADR-022) while a readable `rewards.json` exists (its days are
+   * counted then; an unreadable copy set aside at load is listed and deleted with the item, but never exported).
+   */
+  const rewardsListed = $derived.by(() => {
+    const item = byKind.get("rewards");
+    return item !== undefined && item.present && item.count !== null;
+  });
+
+  /**
+   * The beta rewards ledger (ADR-022) is listed while it exists or while the beta features are on; with the beta off
+   * and no `rewards.json` the panel looks as before.
+   */
+  function listed(item: PrivacyItem): boolean {
+    return item.kind !== "rewards" || item.present || config.value?.betaFeatures === true;
+  }
 
   function metaText(item: PrivacyItem): string {
     if (!item.present) return p.absent;
@@ -173,7 +192,9 @@
       <span class="small muted" role="status">{p.busy}</span>
     {/if}
   </div>
-  <p class="hint" id="privacy-export-hint">{p.exportHint}</p>
+  <p class="hint" id="privacy-export-hint">
+    {p.exportHint}{#if rewardsListed}{" "}{strings.rewards.privacyExport}{/if}
+  </p>
 
   {#if !report || report.items.length === 0}
     <p class="hint">{p.loading}</p>
@@ -196,7 +217,7 @@
         <ul class="items">
           {#each group.kinds as kind (kind)}
             {@const item = byKind.get(kind)}
-            {#if item}
+            {#if item && listed(item)}
               <li class="item" class:absent={!item.present}>
                 <div class="text">
                   <p class="name">

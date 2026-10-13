@@ -4,6 +4,15 @@
 // such ids as no-ops); links start with `SAMPLE_URL_PREFIX`.
 import type {
   AppUsage,
+  DayCell,
+  DayMark,
+  MicroStep,
+  MomentKind,
+  RewardKind,
+  RewardLine,
+  RewardMoment,
+  RewardsStatus,
+  StickerId,
   CalendarStatus,
   Meeting,
   MeetingConflict,
@@ -454,4 +463,239 @@ export function sampleCalendar(now: number, plan: BreakPlan): CalendarStatus {
     lastSyncMs: now - LAST_SYNC_MINUTES_AGO * MINUTE_MS,
     googlePending: false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Beta rewards (ADR-022): sample statuses and moments. They live in the rewards store's sample layer only (`sample:
+// true`): never acked, never sent to the shell, never written.
+// ---------------------------------------------------------------------------
+
+/** Sample moment ids start here, far from the shell's (which grow from 1 within an app run). */
+const SAMPLE_MOMENT_ID_BASE = 1_000_000;
+let sampleMomentSeq = 0;
+
+export type RewardsStatusSample = "today" | "goalMet" | "waiting" | "first" | "paused" | "allMarks" | "preview";
+
+export type RewardMomentSample =
+  | "start"
+  | "step"
+  | "firstStep"
+  | "allSteps"
+  | "back"
+  | "recap"
+  | "bubble"
+  | "pearl"
+  | "golden"
+  | "dailyGoal"
+  | "comeback"
+  | "streak"
+  | "milestone"
+  | "restUsed"
+  | "restEarned"
+  | "levelUp"
+  | "levelUp2"
+  | "pondFull"
+  | "full"
+  | "sessionEnd"
+  | "earlyStop"
+  | "goalDone"
+  | "sticker";
+
+/** Mirrors focus-core `rewards.rs` (odds, pity, rest bank, level spans), for realistic samples only. */
+const SAMPLE_ODDS = { nonePermille: 500, bubblePermille: 320, pearlPermille: 150, goldenPermille: 30, pityBlocks: 4 };
+const SAMPLE_REST_BANK_MAX = 3;
+const LEVEL_BASE = 60;
+const LEVEL_STEP = 20;
+const LEVEL_SPAN_MAX = 500;
+
+function levelSpan(level: number): number {
+  return Math.min(LEVEL_BASE + LEVEL_STEP * (level - 1), LEVEL_SPAN_MAX);
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** Monday..Sunday of the local week of `now`: earlier days goal / rest / day off, then today, then the future. */
+function sampleWeek(now: number, todayMark: DayMark, every: boolean): DayCell[] {
+  const today = new Date(now);
+  const weekday = (today.getDay() + 6) % 7;
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - weekday);
+  const fixed: DayMark[] = ["goal", "rest", "neutral", "quiet", "today", "future", "future"];
+  const past: DayMark[] = ["goal", "goal", "rest", "goal", "goal", "neutral", "neutral"];
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+    let mark: DayMark;
+    if (every) mark = fixed[i] ?? "future";
+    else if (i < weekday) mark = past[i] ?? "goal";
+    else if (i === weekday) mark = todayMark;
+    else mark = "future";
+    return { date: isoDate(date), mark };
+  });
+}
+
+const rewardLine = (kind: RewardKind, sparks: number, count = 1): RewardLine => ({ kind, sparks, count });
+
+/** A status for the Developer page's "Status samples" (also shown while a sample moment plays). */
+export function sampleRewardsStatus(kind: RewardsStatusSample, now: number): RewardsStatus {
+  const goalMet = kind === "goalMet";
+  const first = kind === "first";
+  const level = first ? 1 : 7;
+  const sparks = goalMet ? 42 : first ? 12 : 18;
+  const streakDays = goalMet ? 7 : 6;
+  return {
+    revision: 0,
+    active: true,
+    preview: kind === "preview",
+    totalSparks: first ? 12 : 1180,
+    level: { level, into: first ? 12 : 95, span: levelSpan(level) },
+    today: { date: isoDate(new Date(now)), sparks, goal: 30, goalMet, pondFull: false },
+    streak: {
+      state: kind === "waiting" ? "waiting" : first ? "first" : kind === "paused" ? "paused" : "alive",
+      days: kind === "waiting" || first ? 0 : streakDays,
+      best: first ? 0 : 12,
+      activeDays: first ? 0 : 41,
+      todayCounted: goalMet,
+      restBank: 2,
+      restBankMax: SAMPLE_REST_BANK_MAX,
+      restReserved: 0,
+      nextRestIn: 3,
+    },
+    week: sampleWeek(now, goalMet ? "goal" : "today", kind === "allMarks"),
+    session: {
+      sessionId: `${SAMPLE_ID_PREFIX}rewards`,
+      sparks: 134,
+      lines: [
+        rewardLine("start", 5),
+        rewardLine("focusTime", 90),
+        rewardLine("fullBlock", 20, 2),
+        rewardLine("step", 9, 3),
+        rewardLine("breakTaken", 5),
+      ],
+    },
+    collection: first ? { bubbles: 0, pearls: 0, golden: 0 } : { bubbles: 12, pearls: 3, golden: 1 },
+    odds: SAMPLE_ODDS,
+    stickers: first ? [] : ["firstStep", "dailyGoal", "comeback"],
+    pending: [],
+  };
+}
+
+/** Small steps of the sample summary (plain sample texts). */
+export function sampleSteps(): MicroStep[] {
+  const ideas = ["Open the file", "Write the title", "Read the first paragraph", "List 3 things"];
+  return ideas.map((text, i) => ({ id: i + 1, text, done: i < 3 }));
+}
+
+function sampleMoment(kind: MomentKind, now: number, patch: Partial<RewardMoment>): RewardMoment {
+  sampleMomentSeq++;
+  const lines = patch.lines ?? [];
+  const sparks = lines.reduce((sum, l) => sum + l.sparks, 0);
+  return {
+    id: SAMPLE_MOMENT_ID_BASE + sampleMomentSeq,
+    kind,
+    atMs: now,
+    sparks,
+    sessionTotal: sparks,
+    lines,
+    surprise: null,
+    dailyGoal: false,
+    comeback: false,
+    streak: null,
+    newStreak: false,
+    milestone: null,
+    restDaysUsed: 0,
+    restDayEarned: false,
+    levelUp: null,
+    levelsGained: 0,
+    pondFull: false,
+    stickers: [],
+    firstStep: false,
+    quiet: false,
+    preview: false,
+    ...patch,
+    sample: true,
+  };
+}
+
+const BLOCK_LINES: readonly RewardLine[] = [rewardLine("focusTime", 45), rewardLine("fullBlock", 10)];
+
+/** One sample moment for the Developer page's "Small moments" and "Bursts" buttons. */
+export function sampleRewardMoment(kind: RewardMomentSample, now: number): RewardMoment {
+  const block = (extra: readonly RewardLine[], patch: Partial<RewardMoment> = {}) =>
+    sampleMoment("breakStart", now, { lines: [...BLOCK_LINES, ...extra], ...patch });
+  const goal = rewardLine("dailyGoal", 10);
+  switch (kind) {
+    case "start":
+      return sampleMoment("start", now, {
+        lines: [rewardLine("start", 5), rewardLine("firstOfDay", 5), rewardLine("plan", 2)],
+      });
+    case "step":
+      return sampleMoment("step", now, { lines: [rewardLine("step", 3)] });
+    case "firstStep":
+      return sampleMoment("step", now, { lines: [rewardLine("step", 3)], firstStep: true });
+    case "allSteps":
+      return sampleMoment("allSteps", now, { lines: [rewardLine("step", 3), rewardLine("allSteps", 5)] });
+    case "back":
+      return sampleMoment("backFromBreak", now, { lines: [rewardLine("breakTaken", 5), rewardLine("backFromBreak", 5)] });
+    case "recap":
+      return block([]);
+    case "bubble":
+      return block([rewardLine("surprise", 5)], { surprise: "bubble" });
+    case "pearl":
+      return block([rewardLine("surprise", 15)], { surprise: "pearl" });
+    case "golden":
+      return block([rewardLine("surprise", 40)], { surprise: "goldenPearl" });
+    case "dailyGoal":
+      return block([goal], { dailyGoal: true });
+    case "comeback":
+      return block([goal, rewardLine("comeback", 10)], { dailyGoal: true, comeback: true, newStreak: true, streak: 1 });
+    case "streak":
+      return block([goal], { dailyGoal: true, streak: 6 });
+    case "milestone":
+      return block([goal], { dailyGoal: true, streak: 7, milestone: 7 });
+    case "restUsed":
+      return block([goal], { dailyGoal: true, streak: 8, restDaysUsed: 1 });
+    case "restEarned":
+      return block([goal], { dailyGoal: true, streak: 10, restDayEarned: true });
+    case "levelUp":
+      return block([], { levelUp: 8, levelsGained: 1 });
+    case "levelUp2":
+      return block([], { levelUp: 9, levelsGained: 2 });
+    case "pondFull":
+      return block([], { pondFull: true });
+    case "full":
+      return block([rewardLine("surprise", 40), goal], {
+        surprise: "goldenPearl",
+        dailyGoal: true,
+        streak: 7,
+        milestone: 7,
+        restDayEarned: true,
+        levelUp: 8,
+        levelsGained: 1,
+        pondFull: true,
+        stickers: ["threeDays", "goldenPearl", "level5"] satisfies StickerId[],
+      });
+    case "sessionEnd": {
+      const lines = [
+        rewardLine("start", 5),
+        rewardLine("focusTime", 90),
+        rewardLine("fullBlock", 20, 2),
+        rewardLine("step", 9, 3),
+        rewardLine("breakTaken", 5),
+        goal,
+      ];
+      const m = sampleMoment("sessionEnd", now, { lines, dailyGoal: true, streak: 6 });
+      return { ...m, sessionTotal: m.sparks };
+    }
+    case "earlyStop": {
+      const m = sampleMoment("sessionEnd", now, { lines: [rewardLine("start", 5), rewardLine("focusTime", 30)] });
+      return { ...m, sessionTotal: m.sparks };
+    }
+    case "goalDone":
+      return sampleMoment("goalDone", now, { lines: [rewardLine("goalDone", 10)] });
+    case "sticker":
+      return block([], { stickers: ["firstStep"] });
+  }
 }

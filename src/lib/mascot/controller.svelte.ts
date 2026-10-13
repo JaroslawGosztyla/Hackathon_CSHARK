@@ -5,6 +5,8 @@ import type { MascotVariant } from "./assets.svelte";
 import {
   BLINK_DELAY_MS,
   blinkSteps,
+  COMPANION_DELAY_MS,
+  COMPANION_GLANCE,
   idleFrame,
   moodFrame,
   MOUTH_HOLD_MS,
@@ -55,6 +57,8 @@ export class MascotController {
   #still = false;
   #blinkTimer: ReturnType<typeof setTimeout> | null = null;
   #smileTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Focus companion (mood `working`): the occasional glance round. */
+  #companionTimer: ReturnType<typeof setTimeout> | null = null;
   /** Called once when the running reaction ends (speech waiting to start). */
   #onFree = new Set<() => void>();
   #disposed = false;
@@ -83,15 +87,23 @@ export class MascotController {
   /** Plays a reaction now; it replaces a running one. Speech that starts meanwhile waits for it (`whenFree`). */
   react(reaction: MascotReaction): void {
     if (this.#disposed) return;
+    this.play(reactionSteps(this.variant, reaction, prefersReducedMotion()));
+  }
+
+  /**
+   * Plays the given frames now, like a reaction (beta rewards: the poses of a celebration, ADR-022): it replaces a
+   * running reaction, and speech that starts meanwhile waits for it (`whenFree`). Empty steps end a running reaction.
+   */
+  play(steps: readonly MascotStep[]): void {
+    if (this.#disposed) return;
     this.#stopAmbient();
     this.#stopTrack(this.#reaction);
-    const steps = reactionSteps(this.variant, reaction, prefersReducedMotion());
     if (steps.length === 0) {
       this.#reaction = null;
       this.#reactionEnded();
       return;
     }
-    this.#reaction = { steps, index: 0, timer: null };
+    this.#reaction = { steps: [...steps], index: 0, timer: null };
     this.#advance(this.#reaction);
   }
 
@@ -160,9 +172,10 @@ export class MascotController {
     this.#ambient = null;
     this.#onFree.clear();
     this.#resetMouth();
-    for (const timer of [this.#blinkTimer, this.#smileTimer]) if (timer !== null) clearTimeout(timer);
+    for (const timer of [this.#blinkTimer, this.#smileTimer, this.#companionTimer]) if (timer !== null) clearTimeout(timer);
     this.#blinkTimer = null;
     this.#smileTimer = null;
+    this.#companionTimer = null;
   }
 
   /** The frame when nothing plays: the mouth while talking, else the mood (a smile while the still bubble shows). */
@@ -243,6 +256,13 @@ export class MascotController {
         if (this.#mood === "neutral" || this.#mood === "calm") this.#playAmbient(blinkSteps(this.variant));
         this.#scheduleAmbient();
       }, randomDelay(BLINK_DELAY_MS));
+    }
+    if (this.#companionTimer === null && this.#mood === "working") {
+      this.#companionTimer = setTimeout(() => {
+        this.#companionTimer = null;
+        if (this.#mood === "working") this.#playAmbient([...COMPANION_GLANCE]);
+        this.#scheduleAmbient();
+      }, randomDelay(COMPANION_DELAY_MS));
     }
     if (this.#smileTimer === null && this.#mood === "calm") {
       this.#smileTimer = setTimeout(() => {

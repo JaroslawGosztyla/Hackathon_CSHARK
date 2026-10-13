@@ -4,7 +4,7 @@
 import { untrack } from "svelte";
 import type { Config, PhaseChange, SessionSnapshot, SessionSummary } from "$lib/types";
 import type { MascotController } from "./controller.svelte";
-import type { MascotMood, MascotReaction } from "./frames";
+import type { MascotMood, MascotReaction, MascotStep } from "./frames";
 
 /** A cue older than this is not played by a mascot that appears later. */
 const FRESH_MS = 4000;
@@ -42,12 +42,14 @@ export function cueForSummary(summary: SessionSummary, focusSecs: number): Masco
 
 /**
  * Makes `controller` react to fresh cues of the given kinds (and calls `onCue`, e.g. to say something about it).
+ * `stepsFor` may play other frames for a reaction instead (beta rewards: a pose at Start); null keeps the reaction.
  * Call while a component initialises.
  */
 export function followCues(
   controller: MascotController,
   accept: readonly MascotReaction[],
   onCue?: (reaction: MascotReaction) => void,
+  stepsFor?: (reaction: MascotReaction) => readonly MascotStep[] | null,
 ): void {
   let seen = 0;
   $effect(() => {
@@ -56,7 +58,9 @@ export function followCues(
     seen = cue.id;
     if (!accept.includes(cue.reaction) || performance.now() - cue.at > FRESH_MS) return;
     untrack(() => {
-      controller.react(cue.reaction);
+      const steps = stepsFor?.(cue.reaction) ?? null;
+      if (steps !== null) controller.play(steps);
+      else controller.react(cue.reaction);
       onCue?.(cue.reaction);
     });
   });
@@ -70,6 +74,47 @@ export function sessionMood(snap: SessionSnapshot): MascotMood {
   if (snap.phase === "idle" || snap.meetingHold !== null) return "neutral";
   if (snap.paused) return "sad";
   return snap.phase === "break" ? "smile" : "calm";
+}
+
+// ---------------------------------------------------------------------------
+// Beta rewards (ADR-022): the poses of a celebration. The reward player (`$lib/rewards/player.svelte`) emits the steps
+// of each beat; the axolotl on screen (Skupienie or the summary card) plays them. A mascot that appears right after
+// (the summary page opening after Stop) still plays a fresh cue, like `mascotCues`.
+// ---------------------------------------------------------------------------
+
+interface RewardCue {
+  id: number;
+  steps: readonly MascotStep[];
+  /** `performance.now()` when it was emitted. */
+  at: number;
+}
+
+class RewardCues {
+  last = $state.raw<RewardCue | null>(null);
+  #seq = 0;
+
+  emit(steps: readonly MascotStep[]): void {
+    if (steps.length === 0) return;
+    this.#seq++;
+    this.last = { id: this.#seq, steps, at: performance.now() };
+  }
+}
+
+export const rewardCues = new RewardCues();
+
+/**
+ * Makes `controller` play fresh reward cues (`enabled` is read inside the effect, e.g. "the mascot is shown").
+ * Call while a component initialises.
+ */
+export function followRewardCues(controller: MascotController, enabled: () => boolean = () => true): void {
+  let seen = 0;
+  $effect(() => {
+    const cue = rewardCues.last;
+    if (cue === null || cue.id === seen) return;
+    seen = cue.id;
+    if (performance.now() - cue.at > FRESH_MS || !untrack(enabled)) return;
+    untrack(() => controller.play(cue.steps));
+  });
 }
 
 /** `Config.showMascot`, on by default (also when talking to a shell build from before the setting). */

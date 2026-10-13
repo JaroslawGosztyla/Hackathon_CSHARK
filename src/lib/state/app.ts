@@ -9,6 +9,7 @@ import { config } from "./config.svelte";
 import { mediaWindow } from "./mediaWindow.svelte";
 import { nudge } from "./nudge.svelte";
 import { privacy } from "./privacy.svelte";
+import { rewards } from "./rewards.svelte";
 import { session } from "./session.svelte";
 import { shields } from "./shields.svelte";
 import { summary } from "./summary.svelte";
@@ -61,6 +62,8 @@ export function initAppState(): () => void {
   // Same for the developer tools (a detail could come from a tool's server); tokens never reach the UI.
   keep(api.subscribeWork((w) => work.apply(w), reportWorkError));
   keep(api.subscribeYoutubeAccount((a) => youtubeAccount.apply(a), reportError));
+  // Beta rewards (ADR-022): decorative view state, so a failing getter is only logged (never a toast).
+  keep(api.subscribeRewards((r) => rewards.apply(r), (e) => rewards.reportError(e)));
   keep(
     api.onPhaseChanged((change) => {
       session.announce(change);

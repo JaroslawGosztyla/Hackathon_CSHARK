@@ -1,5 +1,6 @@
 // Music engine: one playlist, four backends (YouTube iframe, separate YouTube window, <audio>, WebAudio noise).
-// The session decides *whether* music should play (`setPlaying`); the engine decides *what* plays and where: YouTube goes
+// The dock decides *whether* music should play (`setPlaying`: who started it and the session's holds, `MusicIntent` in
+// state/music.svelte.ts); the engine decides *what* plays and where: YouTube goes
 // to the embedded iframe, or to the separate window when embedding is refused or the user is signed in to YouTube (ADR-021).
 import { errorText, strings } from "$lib/strings";
 import type { MediaWindowStatus } from "$lib/types";
@@ -8,7 +9,7 @@ import { HtmlAudioBackend, type AudioFailure } from "./htmlAudio";
 import { MediaWindowBackend } from "./mediaWindow";
 import { NoiseBackend } from "./noise";
 import type { PlayItem } from "./sources";
-import { EMBED_OWNER_REFUSED_CODES, EMBED_REFUSED_CODES, parseHttpUrl, YouTubeBackend } from "./youtube";
+import { EMBED_OWNER_REFUSED_CODES, EMBED_REFUSED_CODES, parseHttpUrl, samePage, YouTubeBackend } from "./youtube";
 
 export type EngineStatus = "stopped" | "loading" | "playing" | "paused" | "error";
 
@@ -57,14 +58,66 @@ function displayUrl(url: string): string {
 const PLAYLIST_ID = /^[A-Za-z0-9_-]{2,80}$/;
 
 /**
- * `/playlist?list=X` (YouTube or YouTube Music) only lists the videos; `www.youtube.com/watch?list=X` plays the playlist
- * from its first video. Any other page is returned unchanged.
+ * `/playlist?list=X` (YouTube or YouTube Music) only lists the videos; `www.youtube.com/playlist?list=X&playnext=1`
+ * plays the playlist from its first video (as `/watch?v=…&list=X`). `/watch?list=X` without a video no longer does:
+ * YouTube answers it with a "YouTube is not currently available on this device" clip. Any other page is unchanged.
  */
 function playlistWatchPage(pageUrl: string): string {
   const url = parseHttpUrl(pageUrl);
   const list = url?.searchParams.get("list") ?? null;
   if (url?.pathname !== "/playlist" || list === null || !PLAYLIST_ID.test(list)) return pageUrl;
-  return `https://www.youtube.com/watch?${new URLSearchParams({ list }).toString()}`;
+  return `https://www.youtube.com/playlist?${new URLSearchParams({ list, playnext: "1" }).toString()}`;
+}
+
+/** Only www.youtube.com pages carry the video in their title (YouTube Music always says "YouTube Music"). */
+function titledPage(pageUrl: string): boolean {
+  return parseHttpUrl(pageUrl)?.hostname === "www.youtube.com";
+}
+
+/**
+ * Queue page of the YouTube window: YouTube answers `watch_videos?video_ids=A,B,…` with a temporary playlist of exactly
+ * those videos in that order (`/watch?v=A&list=TLGG…`) and plays through it by itself.
+ */
+const QUEUE_PAGE = "https://www.youtube.com/watch_videos?video_ids=";
+/** Most videos one queue page takes (YouTube keeps only the first 50 ids). */
+const MAX_QUEUE = 50;
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+/**
+ * A window page that has not reported a real title by then counts as unplayable, like a refused embed: YouTube's error
+ * page ("Video unavailable", also when the first id of a queue page no longer exists) has no title of its own.
+ */
+const WINDOW_TITLE_TIMEOUT_MS = 20_000;
+
+/** A queue page without the fragment that made the window load it again (`openWindow`); other pages unchanged. */
+function unmarked(url: string | null): string | null {
+  return url !== null && url.startsWith(QUEUE_PAGE) ? url.replace(/#.*$/, "") : url;
+}
+
+/** Video id of a YouTube item that is one video (not a playlist, mix or channel page), else null. */
+function singleVideoId(item: PlayItem | undefined): string | null {
+  if (item?.kind !== "youtube") return null;
+  const id = item.target?.videoId ?? null;
+  if (id === null || !VIDEO_ID.test(id)) return null;
+  const page = parseHttpUrl(item.pageUrl);
+  return page !== null && page.pathname === "/watch" && !page.searchParams.has("list") ? id : null;
+}
+
+/**
+ * What the YouTube window plays, followed through its page title (the only thing the window reports besides open and
+ * closed): each new title is the page's next video. The window loops its page by itself (media_window.rs).
+ */
+interface WindowFollow {
+  /** Page the window was asked to open. */
+  url: string;
+  /** Index of the item the page starts with. */
+  start: number;
+  /** Videos of a queue page (the items from `start` on), 0 for any other page. */
+  queue: number;
+  /** First and latest title seen on the page. */
+  first: string | null;
+  last: string | null;
+  /** Title changes since the first title. */
+  steps: number;
 }
 
 export class MusicEngine {
@@ -85,6 +138,14 @@ export class MusicEngine {
    * (and Premium, no ads) applies. The embedded player runs on the app's origin, where youtube.com cookies are third-party.
    */
   private signedIn = false;
+  /** The YouTube window's page and how far it got (null when the window plays nothing for us). */
+  private follow: WindowFollow | null = null;
+  /** Waits for the first title of a newly opened window page (WINDOW_TITLE_TIMEOUT_MS). */
+  private titleWatch: ReturnType<typeof setTimeout> | null = null;
+  /** Latest `media://window` status. */
+  private windowStatus: MediaWindowStatus | null = null;
+  /** Fragments that made the window load a queue page it already showed (`openWindow`). */
+  private reloads = 0;
   private failures = 0;
   private volume = 0.6;
   private view: EngineView = { ...EMPTY_VIEW };
@@ -139,8 +200,13 @@ export class MusicEngine {
       return;
     }
     // Stop (or a source change while idle): the window is only paused while the playlist still uses that page,
-    // so the next session continues without reloading it; otherwise it is closed.
-    if (windowPage !== null && items.some((item) => this.windowPageOf(item) === windowPage)) this.win.pause();
+    // so the next session continues without reloading it; otherwise it is closed. A queue page is always closed:
+    // it has moved on through the list, and the next session starts the (maybe reshuffled) list from its start.
+    const keep =
+      windowPage !== null &&
+      !windowPage.startsWith(QUEUE_PAGE) &&
+      items.some((_, index) => this.windowPageAt(index) === windowPage);
+    if (keep) this.win.pause();
     else this.win.release();
   }
 
@@ -171,6 +237,14 @@ export class MusicEngine {
     this.advance();
   }
 
+  /** User pressed play while the music is wanted but halted (every item failed, autoplay refused): tries this item again. */
+  retry(): void {
+    if (!this.desired || this.items.length === 0) return;
+    this.halted = false;
+    this.failures = 0;
+    this.loadCurrent();
+  }
+
   setVolume(volume: number): void {
     this.volume = Math.min(1, Math.max(0, Number.isFinite(volume) ? volume : 0));
     this.yt.setVolume(this.volume);
@@ -199,14 +273,15 @@ export class MusicEngine {
 
   /** New status of the separate YouTube window (from `media://window`). */
   setWindowStatus(status: MediaWindowStatus): void {
+    this.windowStatus = status;
     this.win.applyStatus(status);
+    this.followWindow(status);
   }
 
   /** "Otwórz ponownie" after the user closed the YouTube window. Call from a click handler. */
   reopenWindow(): void {
-    const item = this.current();
-    if (item?.kind !== "youtube" || !this.isLive("window")) return;
-    this.openWindow(item);
+    if (this.current()?.kind !== "youtube" || !this.isLive("window")) return;
+    this.openWindow();
   }
 
   /** "Pokaż okno": brings the YouTube window to the front. */
@@ -216,6 +291,7 @@ export class MusicEngine {
 
   destroy(): void {
     this.desired = false;
+    this.clearTitleWatch();
     this.yt.destroy();
     this.win.release();
     this.audio.destroy();
@@ -229,27 +305,57 @@ export class MusicEngine {
   }
 
   /**
-   * Page for the separate YouTube window: every YouTube item when signed in to YouTube, otherwise only items that cannot
-   * (or may not) use the embedded player.
+   * Page for the separate YouTube window for the item at `index`: every YouTube item when signed in to YouTube,
+   * otherwise only items that cannot (or may not) use the embedded player. Null = not a window item.
    */
-  private windowPageOf(item: PlayItem): string | null {
-    if (item.kind !== "youtube") return null;
-    if (this.signedIn) return this.windowUrlOf(item);
+  private windowPageAt(index: number): string | null {
+    const item = this.items[index];
+    if (item?.kind !== "youtube") return null;
+    if (this.signedIn) return this.windowUrlAt(index, item);
     return item.target === null || isEmbedBlocked(item.target) ? item.pageUrl : null;
   }
 
   /**
-   * Page the window opens for a YouTube item. Signed in, playlist links (which the embedded player would have played)
-   * open as a playing watch page instead of the playlist overview, which plays nothing (ADR-021).
+   * Page the window opens for the YouTube item at `index`. Signed in (ADR-021), a video followed by more videos opens
+   * as one queue page of them all, so the window plays on through the list by itself; playlist links (which the
+   * embedded player would have played) open as a playing watch page instead of the playlist overview, which plays nothing.
    */
-  private windowUrlOf(item: YouTubeItem): string {
-    return this.signedIn ? playlistWatchPage(item.pageUrl) : item.pageUrl;
+  private windowUrlAt(index: number, item: YouTubeItem): string {
+    if (!this.signedIn) return item.pageUrl;
+    const queue = this.queueAt(index);
+    if (queue.length > 1) return QUEUE_PAGE + queue.join(",");
+    return playlistWatchPage(item.pageUrl);
+  }
+
+  /**
+   * Videos the window plays as one queue from `index` on: that item and the single videos after it (around the end of
+   * the list, never twice), up to the first item of another kind and at most MAX_QUEUE. Empty when the item is not a
+   * single video. A list of videos only is one queue that starts at `index`, so its loop is the list's loop.
+   * The first video comes back later in the queue only in a row right at its start: `followWindow` reads its title
+   * as "the queue started over", so a repeat further on (the same link twice in the list) ends the queue there.
+   */
+  private queueAt(index: number): string[] {
+    const ids: string[] = [];
+    const count = this.items.length;
+    for (let step = 0; step < count && ids.length < MAX_QUEUE; step++) {
+      const id = singleVideoId(this.items[(index + step) % count]);
+      if (id === null) break;
+      const first = ids[0];
+      if (first !== undefined && id === first && ids[ids.length - 1] !== first) break;
+      ids.push(id);
+    }
+    return ids;
   }
 
   private advance(): void {
     if (this.items.length === 0) return;
+    this.advanceTo((this.index + 1) % this.items.length);
+  }
+
+  /** Moves on to the item at `target` (the next one, or the first one after a queue the window went through). */
+  private advanceTo(target: number): void {
     const wasLoaded = this.loaded;
-    this.index = (this.index + 1) % this.items.length;
+    this.index = target;
     const item = this.current();
     // A single-item playlist (or a looping stream) restarts in place without reloading the backend.
     if (wasLoaded === this.index && item && this.desired) {
@@ -263,8 +369,8 @@ export class MusicEngine {
     }
     // Paused: a window page replaces the window's page (still paused) only if the window is ours already,
     // so nothing new pops up while paused. Anything else loads on resume.
-    if (item?.kind === "youtube" && this.windowPageOf(item) !== null && this.win.page !== null) {
-      this.openWindow(item);
+    if (this.windowPageAt(this.index) !== null && this.win.page !== null) {
+      this.openWindow();
       return;
     }
     this.win.release();
@@ -278,9 +384,9 @@ export class MusicEngine {
       return;
     }
     this.unloadEmbedded();
-    if (item.kind === "youtube" && this.windowPageOf(item) !== null) {
-      // Known to refuse embedding (or not embeddable at all): straight to the window, no failing embed first.
-      this.openWindow(item);
+    if (this.windowPageAt(this.index) !== null) {
+      // Signed in, or known to refuse embedding (or not embeddable at all): straight to the window, no failing embed.
+      this.openWindow();
       return;
     }
     this.win.release();
@@ -290,7 +396,7 @@ export class MusicEngine {
     this.applyVolumeAll();
     switch (item.kind) {
       case "youtube":
-        // `windowPageOf` sent every item without an embeddable target to the window above.
+        // `windowPageAt` sent every item without an embeddable target to the window above.
         if (!item.target) return;
         this.yt.load(item.target, true).catch(() => {
           if (this.isLive("youtube")) this.haltWith(strings.errors.youtubeApi);
@@ -305,14 +411,139 @@ export class MusicEngine {
     }
   }
 
-  /** Plays the item in the separate YouTube window (opens it, navigates it, or just resumes it). */
-  private openWindow(item: YouTubeItem): void {
+  /** Plays the current (YouTube) item in the separate YouTube window (opens it, navigates it, or just resumes it). */
+  private openWindow(): void {
+    const item = this.current();
+    if (item?.kind !== "youtube") return;
+    let url = this.windowUrlAt(this.index, item);
+    // The same page in the same window continues where it is (no reload), so it keeps its progress. A page kept
+    // paused over Stop may sit at another index of the next (reshuffled) list: it now stands for this item. A queue
+    // page continues only while it is at this item (Stop closes queue pages anyway).
+    const follow = this.follow;
+    const inWindow = samePage(unmarked(this.win.page), url);
+    const continues =
+      follow !== null &&
+      inWindow &&
+      samePage(unmarked(follow.url), url) &&
+      (follow.queue === 0 || this.queueIndex(follow) === this.index);
+    if (continues) {
+      if (follow.queue === 0) follow.start = this.index;
+      url = follow.url;
+    } else {
+      // A queue page the window shows at another of its videos (Next from the last video wraps to the first): the
+      // same address would only resume it, so a fragment (never sent to YouTube) makes the window load it again.
+      const reload = inWindow && url.startsWith(QUEUE_PAGE);
+      if (reload) url = `${url}#${++this.reloads}`;
+      const queue = url.startsWith(QUEUE_PAGE) ? this.queueAt(this.index).length : 0;
+      // A page the window already shows is not reloaded, so its title will not come again: start from the current one.
+      const shown = this.windowStatus;
+      const title = !reload && inWindow && shown?.open === true && samePage(shown.url, url) ? shown.title : null;
+      const fresh: WindowFollow = { url, start: this.index, queue, first: title, last: title, steps: 0 };
+      this.follow = fresh;
+      if (title === null && titledPage(url)) this.watchTitle(fresh);
+      else this.clearTitleWatch();
+    }
     this.loaded = this.index;
     this.via = "window";
     this.windowClosed = false;
     this.emit({ status: "loading" });
     this.win.setVolume(this.volume);
-    this.win.load(this.windowUrlOf(item), this.desired);
+    this.win.load(url, this.desired);
+  }
+
+  /**
+   * Follows the YouTube window through its page by the page title (ADR-021): the window loops its page by itself and
+   * reports nothing but open/closed and the title. In a queue page every new title is the next video, so the dock shows
+   * the right "n of m" and Next continues from there; a queue that is only part of the list (videos mixed with other
+   * links, or more than MAX_QUEUE videos) moves on to the next item once the window went around it, and so does a
+   * playlist page or a lone video. "Went around" is the first title coming back, or the moment without a title the page
+   * shows when it starts over (the only sign for a page whose title never changes).
+   */
+  private followWindow(status: MediaWindowStatus): void {
+    const follow = this.follow;
+    if (follow === null || !status.open || this.windowClosed || !this.isLive("window")) return;
+    if (!samePage(status.url, follow.url)) return;
+    const title = status.title;
+    if (title === null) {
+      // A page that had a title loses it only for a moment when it starts over (media_window.rs END_TITLE): the
+      // only sign of the end of a page whose title never changes (a lone video, a playlist of one video).
+      if (follow.last !== null) this.wentAround(follow);
+      return;
+    }
+    if (follow.last === null) {
+      // A real title: the page plays (an error page has none, see `watchTitle`).
+      follow.first = title;
+      follow.last = title;
+      this.failures = 0;
+      return;
+    }
+    if (title === follow.last) return;
+    follow.last = title;
+    follow.steps++;
+    if (title === follow.first) {
+      // The first video again: the page started over (also after it went back to its address), whatever came between.
+      this.wentAround(follow);
+      return;
+    }
+    if (follow.queue > 1) {
+      if (follow.queue < this.items.length && follow.steps >= follow.queue) {
+        this.advanceTo((follow.start + follow.queue) % this.items.length);
+        return;
+      }
+      this.showQueueIndex(follow);
+    }
+  }
+
+  /**
+   * The window's page played through and starts over (both signs may come for the same end, so this is idempotent):
+   * a page that is only part of the list moves on to the item after it, a queue of the whole list just starts over.
+   */
+  private wentAround(follow: WindowFollow): void {
+    const count = this.items.length;
+    if (follow.queue > 1) {
+      follow.steps = Math.max(1, Math.ceil(follow.steps / follow.queue)) * follow.queue;
+      if (follow.queue < count) this.advanceTo((follow.start + follow.queue) % count);
+      else this.showQueueIndex(follow);
+      return;
+    }
+    if (count > 1) this.advanceTo((follow.start + 1) % count);
+  }
+
+  /** Item a queue page is at (by the title changes since its first video). */
+  private queueIndex(follow: WindowFollow): number {
+    return (follow.start + (follow.steps % Math.max(1, follow.queue))) % Math.max(1, this.items.length);
+  }
+
+  private showQueueIndex(follow: WindowFollow): void {
+    const index = this.queueIndex(follow);
+    this.index = index;
+    this.loaded = index;
+    this.emit({});
+  }
+
+  /**
+   * The window reports no playback events, but every playable YouTube page has a title. A page that shows none within
+   * WINDOW_TITLE_TIMEOUT_MS (YouTube's "Video unavailable" page, e.g. a deleted video or the first id of a queue page
+   * that no longer exists) counts as unplayable and moves on, as the embedded player does on an error. While the
+   * music is paused it waits; a window the user closed is left alone.
+   */
+  private watchTitle(follow: WindowFollow): void {
+    this.clearTitleWatch();
+    this.titleWatch = setTimeout(() => {
+      this.titleWatch = null;
+      if (this.follow !== follow || follow.last !== null) return;
+      if (!this.isLive("window") || this.windowClosed || this.win.page === null) return;
+      if (!this.desired) {
+        this.watchTitle(follow);
+        return;
+      }
+      this.handleFailure("window", strings.errors.unplayable);
+    }, WINDOW_TITLE_TIMEOUT_MS);
+  }
+
+  private clearTitleWatch(): void {
+    if (this.titleWatch !== null) clearTimeout(this.titleWatch);
+    this.titleWatch = null;
   }
 
   private resumeCurrent(item: PlayItem): void {
@@ -353,7 +584,7 @@ export class MusicEngine {
   }
 
   private restartCurrent(item: PlayItem): void {
-    if (this.via === "window" && item.kind === "youtube") this.openWindow(item);
+    if (this.via === "window" && item.kind === "youtube") this.openWindow();
     else if (item.kind === "youtube") this.yt.restart();
     else if (item.kind === "audio") this.audio.restart();
     else this.noise.play();
@@ -397,7 +628,7 @@ export class MusicEngine {
       // the owner's decision (not our embed's referrer, 153), next time it goes there directly.
       if (EMBED_OWNER_REFUSED_CODES.has(code)) rememberEmbedBlocked(item.target);
       this.yt.unload();
-      this.openWindow(item);
+      this.openWindow();
       return;
     }
     this.handleFailure("youtube", strings.errors.unplayable);
@@ -405,7 +636,9 @@ export class MusicEngine {
 
   private handleWindowOpened(): void {
     if (!this.isLive("window") || this.windowClosed) return;
-    this.failures = 0;
+    // On www.youtube.com `failures` is reset by the page's first title (`followWindow`), not here: the window also
+    // opens YouTube's "Video unavailable" page, and a list of those must end in "nothing playable", not skip forever.
+    if (this.follow !== null && !titledPage(this.follow.url)) this.failures = 0;
     this.emit({ status: this.desired ? "playing" : "paused" });
   }
 

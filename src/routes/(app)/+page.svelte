@@ -6,6 +6,14 @@
   import MeetingHoldBanner from "$lib/components/MeetingHoldBanner.svelte";
   import MusicSourcePicker from "$lib/components/MusicSourcePicker.svelte";
   import NextUp from "$lib/components/NextUp.svelte";
+  import FloatSpark from "$lib/components/rewards/FloatSpark.svelte";
+  import NextStep from "$lib/components/rewards/NextStep.svelte";
+  import RecapChip from "$lib/components/rewards/RecapChip.svelte";
+  import RewardBurst from "$lib/components/rewards/RewardBurst.svelte";
+  import RewardsIntro from "$lib/components/rewards/RewardsIntro.svelte";
+  import SparkChip from "$lib/components/rewards/SparkChip.svelte";
+  import StepsCard from "$lib/components/rewards/StepsCard.svelte";
+  import TodayStrip from "$lib/components/rewards/TodayStrip.svelte";
   import SessionGoalLine from "$lib/components/SessionGoalLine.svelte";
   import ShieldChips from "$lib/components/ShieldChips.svelte";
   import TimerRing from "$lib/components/TimerRing.svelte";
@@ -14,7 +22,9 @@
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
   import FocusMascot, { MASCOT_WIDTH } from "$lib/mascot/FocusMascot.svelte";
   import { calendar, calendarEnabled } from "$lib/state/calendar.svelte";
+  import { useRewardPlayer } from "$lib/rewards/player.svelte";
   import { config } from "$lib/state/config.svelte";
+  import { rewards, sessionSteps } from "$lib/state/rewards.svelte";
   import { session } from "$lib/state/session.svelte";
   import { work, workEnabled } from "$lib/state/work.svelte";
   import { strings } from "$lib/strings";
@@ -42,6 +52,21 @@
   );
   /** The axolotl stands at the hero's bottom-left: the centred content under the ring keeps clear of it. */
   const mascotOn = $derived(mascotEnabled(config.value));
+
+  // Beta rewards (ADR-022): this page plays the Start / step / back-from-break moments and the break recap. With the
+  // beta features off none of it renders.
+  const player = useRewardPlayer("focus");
+  const steps = $derived(rewards.stepsActive ? sessionSteps() : []);
+  const rewardsView = $derived(rewards.active ? rewards.view : null);
+  const showIntro = $derived((rewards.configActive || rewards.sampling) && !rewards.introSeen);
+  /** Focus with small steps: the "Teraz:" line comes first under the buttons (it must stay above the music dock). */
+  const stepsInFocus = $derived(snap.phase === "focus" && steps.length > 0);
+  /** Break: the recap in one line under the buttons, in view at any window size (the card below has the details). */
+  const recapMoment = $derived.by(() => {
+    if (!rewardsView || snap.phase !== "break") return null;
+    const m = player.burst?.moment;
+    return m && (m.kind === "breakStart" || m.kind === "update") ? m : null;
+  });
 
   let hero = $state<HTMLElement | null>(null);
   let controls = $state<HTMLElement | null>(null);
@@ -76,8 +101,15 @@
 
 <h1 class="sr-only">{strings.nav.focus}</h1>
 
-<section class="hero" class:with-mascot={mascotOn} style:--mascot-w="{MASCOT_WIDTH}px" bind:this={hero}>
+<section
+  class="hero"
+  class:with-mascot={mascotOn}
+  class:steps-focus={stepsInFocus}
+  style:--mascot-w="{MASCOT_WIDTH}px"
+  bind:this={hero}
+>
   <div class="ring-wrap">
+    <FloatSpark {player} />
     {#key `${snap.phase}-${snap.cycle}`}
       <TimerRing
         remainingSecs={remaining}
@@ -150,7 +182,15 @@
   {#if session.isIdle}
     <p class="hint">{strings.timer.idleHint}</p>
   {:else}
-    <p class="secondary small tabular">{strings.timer.focusedSoFar(formatDuration(snap.focusedSecs))}</p>
+    <p class="secondary small tabular">
+      {strings.timer.focusedSoFar(formatDuration(snap.focusedSecs))}
+      {#if rewardsView && snap.phase === "focus"}<SparkChip sparks={rewardsView.today.sparks} />{/if}
+      {#if recapMoment}<RecapChip moment={recapMoment} />{/if}
+    </p>
+  {/if}
+
+  {#if stepsInFocus}
+    <NextStep {player} />
   {/if}
 
   <SessionGoalLine />
@@ -163,7 +203,26 @@
 
 <MeetingHoldBanner />
 
+<!-- One sentence per reward moment (beta); empty while nothing plays. -->
+<p class="sr-only" role="status" aria-live="polite">{player.announcement}</p>
+
 {#if session.isIdle}
+  {#if showIntro}
+    <div class="above">
+      <RewardsIntro />
+    </div>
+  {/if}
+  <RewardBurst {player} />
+  {#if rewardsView}
+    <div class="above">
+      <TodayStrip status={rewardsView} />
+    </div>
+  {/if}
+  {#if rewards.stepsActive}
+    <div class="above">
+      <StepsCard mode="idle" />
+    </div>
+  {/if}
   {#if calendarOn}
     <div class="above">
       <MeetingConflicts />
@@ -192,6 +251,7 @@
     {/if}
   </div>
 {:else if snap.phase === "focus"}
+  <RewardBurst {player} />
   <div class="grid">
     <LiveUsage />
     <ShieldChips />
@@ -207,7 +267,13 @@
     </div>
   {/if}
 {:else}
+  <RewardBurst {player} />
   <BreakCard />
+  {#if steps.length > 0}
+    <div class="below">
+      <StepsCard mode="break" />
+    </div>
+  {/if}
   {#if workOn}
     <div class="below">
       <NextUp />
@@ -235,6 +301,11 @@
     text-align: center;
   }
 
+  /* Focus with small steps (beta): a little tighter, so the "Teraz:" line clears the music dock at 960 × 640. */
+  .hero.steps-focus {
+    gap: 12px;
+  }
+
   /*
    * The axolotl's column (FocusMascot's width + a gap) on both sides, so the session buttons, the hint and the goal
    * line under the ring stay centred and never reach under the axolotl; a long row wraps instead.
@@ -257,6 +328,11 @@
     left: 0;
     width: min(300px, calc(50% - var(--ring-half) - 20px));
     pointer-events: none;
+  }
+
+  /* The "+12 ✦" float of a reward moment is placed over the ring. */
+  .ring-wrap {
+    position: relative;
   }
 
   .controls {

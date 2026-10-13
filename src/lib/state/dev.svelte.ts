@@ -1,7 +1,8 @@
 // Developer mode (ADR-019): the state of the Developer page and the actions of its buttons. Everything here lives in
 // memory only: the "Clean screenshots" flag, the held mascot mood, the queue of main-window requests and the sample
 // layers it puts into the stores (summary, "Co dalej?", calendar, goal, meeting hold). No sample is saved, sent to the
-// shell as data or sent over the network; the shell only gets `dev_trigger` (sample popups, toasts, a shorter phase).
+// shell as data or sent over the network; the shell only gets `dev_trigger` (sample popups, toasts, a shorter phase,
+// presentation mode for this run, and the factory reset, which deletes the app's data and restarts it).
 // The "Look & feel" and "Window & app" buttons are shortcuts to real settings: they save `config.json` like the
 // Settings page, and the chime test switches `chimeSound` for one play and saves the user's choice back (ADR-019).
 //
@@ -12,13 +13,14 @@ import { goto } from "$app/navigation";
 import { page } from "$app/state";
 import { untrack } from "svelte";
 import * as api from "$lib/api";
-import { DEV, POPUP_SAMPLES, type PopupSample } from "$lib/i18n/dev";
+import { DEV, DEV_REWARDS, POPUP_SAMPLES, type PopupSample } from "$lib/i18n/dev";
 import type { MascotMood, MascotReaction } from "$lib/mascot/frames";
 import { errorText, strings } from "$lib/strings";
 import type { ChimeKind, ChimeSound, DevAction, Language, MeetingChoice, Phase, Theme } from "$lib/types";
 import { calendar } from "./calendar.svelte";
 import { config } from "./config.svelte";
 import { nudge } from "./nudge.svelte";
+import { rewards } from "./rewards.svelte";
 import { sampleCalendar, sampleGoal, sampleHold, sampleNudge, sampleSummaries, sampleWork, type BreakPlan } from "./samples";
 import { session } from "./session.svelte";
 import { summary } from "./summary.svelte";
@@ -35,6 +37,12 @@ export const SEQUENCE_STEP_MS = 5000;
 /** Used for the sample calendar plan when neither the session nor the config knows the lengths (focus-core defaults). */
 const FALLBACK_FOCUS_MINUTES = 45;
 const FALLBACK_BREAK_MINUTES = 15;
+/**
+ * `TimingProfile::demo()` (focus-core `timing.rs`), for the "Presentation mode" label only; once the snapshot is in
+ * the demo profile the label shows the snapshot's own lengths.
+ */
+const DEMO_FOCUS_SECS = 40;
+const DEMO_BREAK_SECS = 20;
 const SECOND_MS = 1000;
 const MINUTE_SECS = 60;
 
@@ -97,6 +105,28 @@ class DevStore {
   sequence = $state.raw<{ step: number; total: number } | null>(null);
   /** A chime test (which briefly switches the chime sound) is running. */
   chimeBusy = $state(false);
+  /**
+   * "Presentation mode" switched while a session ran (the shell applies it at the next Start): the wanted value and
+   * the session it was switched in. Ignored once that session is over (the snapshot then shows the real state).
+   */
+  presentationPending = $state.raw<{ on: boolean; sessionId: string | null } | null>(null);
+
+  /** Presentation mode as the next Start uses it: a switch made during the running session, else the snapshot's. */
+  presentationOn = $derived.by((): boolean => {
+    const snap = session.snapshot;
+    const pending = this.presentationPending;
+    if (!session.isIdle && pending !== null && pending.sessionId === snap.sessionId) return pending.on;
+    return snap.demo;
+  });
+  /** The running session uses the other profile than the next Start will. */
+  presentationDiffers = $derived(!session.isIdle && this.presentationOn !== session.snapshot.demo);
+  /** Focus and break length of presentation mode (seconds), for its label. */
+  presentationLengths = $derived.by((): { focusSecs: number; breakSecs: number } => {
+    const snap = session.snapshot;
+    return snap.demo && snap.focusSecs > 0 && snap.breakSecs > 0
+      ? { focusSecs: snap.focusSecs, breakSecs: snap.breakSecs }
+      : { focusSecs: DEMO_FOCUS_SECS, breakSecs: DEMO_BREAK_SECS };
+  });
 
   /** `Config.developerMode` (off until the config arrives, and with a shell from before the setting). */
   enabled = $derived(config.value?.developerMode === true);
@@ -113,6 +143,7 @@ class DevStore {
     if (session.sampleGoal !== null) out.push(names.goal);
     if (session.sampleHold !== null) out.push(names.hold);
     if (this.mascotMood !== null) out.push(names.mood);
+    if (rewards.sampling) out.push(DEV_REWARDS.sampleName);
     return out;
   });
 
@@ -234,6 +265,38 @@ class DevStore {
     if (ok && route !== null) await this.go(route);
   }
 
+  /**
+   * Presentation mode (the demo timing of `--demo`) on or off for this run. Idle: at once (the snapshot's `demo`
+   * follows); a running session keeps its lengths and the next Start uses the new timing. Nothing is saved.
+   */
+  async setPresentation(on: boolean): Promise<void> {
+    const running = !session.isIdle;
+    const sessionId = session.snapshot.sessionId;
+    const { focusSecs, breakSecs } = this.presentationLengths;
+    const ok = await this.#trigger(DEV.presentationMode(focusSecs, breakSecs), { type: "presentationMode", on });
+    if (!ok) return;
+    this.presentationPending = running ? { on, sessionId } : null;
+    this.ok(running ? DEV.presentationNextStart(on) : DEV.presentationNow(on));
+  }
+
+  /**
+   * Factory reset: the shell deletes everything the app keeps (like "Delete everything", plus the settings file) and
+   * restarts it. Throws, so the confirmation dialog shows the error and stays open. A failed delete (`privacy.delete`)
+   * also gets a global toast: the defaults are stored by then (developer mode off), so this page is closing.
+   */
+  async factoryReset(): Promise<void> {
+    try {
+      // The shell checks the stored `developerMode`.
+      await config.flush();
+      await api.devTrigger({ type: "factoryReset" });
+      this.ok(DEV.factoryResetRestarting);
+    } catch (e) {
+      this.fail(DEV.factoryResetName, e);
+      if (api.toAppError(e).code === "privacy.delete") toasts.error(e);
+      throw e;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Mascot (Skupienie page)
   // ---------------------------------------------------------------------------
@@ -317,6 +380,7 @@ class DevStore {
     session.sampleGoal = null;
     session.sampleHold = null;
     this.mascotMood = null;
+    rewards.clearSamples();
     this.queue = [];
     if (nudge.current?.matched === sampleNudge().matched) nudge.dismiss();
     if (report) this.ok(DEV.samplesCleared);

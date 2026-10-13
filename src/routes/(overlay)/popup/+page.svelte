@@ -6,6 +6,7 @@
   import { onMount, untrack } from "svelte";
   import * as api from "$lib/api";
   import AppLogo from "$lib/components/AppLogo.svelte";
+  import SparkIcon from "$lib/components/rewards/SparkIcon.svelte";
   import { FRAME_GEOMETRY } from "$lib/mascot/assets.svelte";
   import Axolotl from "$lib/mascot/Axolotl.svelte";
   import { useMascot } from "$lib/mascot/controller.svelte";
@@ -205,8 +206,39 @@
   /** The message is still appearing: the line clamp's "…" stays hidden until the last letter is shown. */
   const messageRevealing = $derived(mascotOn && (speechPending || (speech.line !== null && !speech.complete)));
 
+  /**
+   * Beta rewards (ADR-022): the reward line at the end of the title row ("+72 ✦ · Cel dnia ✓ · Seria 5 · Poz. 8", only
+   * the parts present; the streak only while it is shown). The shell fills it only while the rewards are active.
+   */
+  const rewardParts = $derived.by((): { sparks: number; rest: string } | null => {
+    const r = info?.rewards;
+    if (!r) return null;
+    const rs = strings.rewards;
+    const parts: string[] = [];
+    if (r.dailyGoal) parts.push(rs.popupDailyGoal);
+    if (r.streak !== null && cfg?.rewards?.showStreak !== false) parts.push(rs.popupStreak(r.streak));
+    if (r.levelUp !== null) parts.push(rs.popupLevel(r.levelUp));
+    return { sparks: r.sparks, rest: parts.join(" · ") };
+  });
+  /** Focus after a break with small steps on: the next step replaces the tip line ("Teraz: …"). */
+  const nextStep = $derived(info?.kind === "focusStarted" ? (info.nextStep?.trim() ?? "") || null : null);
+  /** A focus popup gets one extra line (reward line and / or next step); its message then keeps to one line. */
+  const focusExtra = $derived(info?.kind === "focusStarted" && (nextStep !== null || rewardParts !== null));
+  /** The reward line as plain text (tooltip). */
+  const rewardText = $derived(
+    rewardParts ? [`+${rewardParts.sparks} ✦`, rewardParts.rest].filter((part) => part !== "").join(" · ") : "",
+  );
+
+  /** A big reward moment (daily goal, level, streak, a pearl) makes the peeking axolotl happy instead of smiling. */
+  function bigReward(popup: PopupInfo): boolean {
+    const r = popup.rewards;
+    if (!r) return false;
+    return r.dailyGoal || r.levelUp !== null || r.streak !== null || r.surprise === "pearl" || r.surprise === "goldenPearl";
+  }
+
   function reactionFor(popup: PopupInfo): MascotReaction | null {
     if (!popup.kind) return null;
+    if (popup.kind === "breakStarted" && bigReward(popup)) return "cycle";
     if (popup.kind === "focusStarted") return popup.cycle > 1 ? "cycle" : "start";
     return KIND_REACTION[popup.kind];
   }
@@ -496,6 +528,12 @@
   <title>{strings.appName}</title>
 </svelte:head>
 
+{#snippet rewardChip(parts: { sparks: number; rest: string })}
+  <span class="reward-sparks">+{parts.sparks}<SparkIcon size={11} /></span>{#if parts.rest}<span class="reward-rest"
+      >{" · "}{parts.rest}</span
+    >{/if}
+{/snippet}
+
 {#if visible && info && kind}
   {#key info.revision}
     <div
@@ -528,7 +566,7 @@
         <p
           class="message"
           class:reminder
-          class:single={kind === "breakStarted" || heldReminder !== null}
+          class:single={kind === "breakStarted" || heldReminder !== null || focusExtra}
           class:failed={choiceFailed}
           class:revealing={messageRevealing}
           title={message}
@@ -539,12 +577,21 @@
             waiting={speechPending}
           />
         </p>
-        {#if kind === "breakStarted"}
+        {#if kind === "breakStarted" && rewardParts}
+          <!-- Beta rewards: the reward line takes the tip line's place (same window size; the tip is on the break card). -->
+          <p class="tip reward-line" title={rewardText}>{@render rewardChip(rewardParts)}</p>
+        {:else if kind === "breakStarted"}
           <p class="tip" title={tip ? breakTipText(tip) : undefined}>
             {#if tip}
               <span class="tip-icon" aria-hidden="true">{CATEGORY_ICON[tip.category]}</span>
               <span class="sr-only">{p.tipPrefix(strings.breakView.categories[tip.category])} </span>{breakTipText(tip)}
             {/if}
+          </p>
+        {/if}
+        {#if focusExtra}
+          <!-- Beta: back from a break, the reward line and the next small step ("Teraz: …") share one line. -->
+          <p class="tip next-step" title={[rewardText, nextStep ? strings.rewards.popupNext(nextStep) : null].filter(Boolean).join(" · ")}>
+            {#if rewardParts}<span class="reward-line">{@render rewardChip(rewardParts)}</span>{#if nextStep}{" · "}{/if}{/if}{#if nextStep}{strings.rewards.popupNext(nextStep)}{/if}
           </p>
         {/if}
         {#if heldReminder}
@@ -797,6 +844,25 @@
 
   .title-icon {
     margin-right: 6px;
+  }
+
+  /* Beta rewards: the reward line ("+72 ✦ · Cel dnia ✓ · Seria 5 · Poz. 8"), one line like the tip it replaces. */
+  .reward-line,
+  .tip.reward-line {
+    color: var(--reward-ink);
+    font-weight: 700;
+  }
+
+  .reward-sparks {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    vertical-align: -1px;
+  }
+
+  .tip.next-step {
+    color: var(--text-2);
+    font-weight: 600;
   }
 
   .content {

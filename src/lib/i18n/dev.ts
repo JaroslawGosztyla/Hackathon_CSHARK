@@ -4,6 +4,7 @@
 // shows outside the Developer page (meetings, the break reminder, the sample-link toast) follows the UI language
 // (`sampleTexts`).
 import type { MascotMood, MascotReaction } from "$lib/mascot/frames";
+import type { RewardMomentSample, RewardsStatusSample } from "$lib/state/samples";
 import type { Phase, PopupKind } from "$lib/types";
 import { de } from "./de";
 import { en } from "./en";
@@ -103,7 +104,8 @@ export const DEV = {
   dismissPopup: "Dismiss popup",
 
   toastsTitle: "Windows toasts",
-  toastsHint: "The same Windows notification a real phase change shows. Do not disturb may silence it.",
+  toastsHint:
+    "The Windows notification a real phase change shows when FocusMode popups are off (or a popup cannot be shown). Do not disturb may silence it.",
 
   sessionTitle: "Session",
   sessionHint: "A real session: what you do here ends up in the history like any other session.",
@@ -187,11 +189,45 @@ export const DEV = {
     custom: "Custom file",
   },
 
+  presentationMode: (focusSecs: number, breakSecs: number) =>
+    `Presentation mode (${focusSecs} s focus / ${breakSecs} s break)`,
+  presentationHint:
+    "The short timing of --demo, for quick demos. This run only (nothing is saved): a restart is back to your own times unless started with --demo. Presentation sessions are marked “demo”.",
+  presentationNow: (on: boolean) => `Presentation mode ${on ? "on" : "off"}.`,
+  presentationNextStart: (on: boolean) =>
+    `Presentation mode ${on ? "on" : "off"} from the next Start: the running session keeps its lengths.`,
+  presentationPending: "Takes effect at the next Start; the running session keeps its lengths.",
+
   appTitle: "Window & app",
   appHint: "Housekeeping for repeated takes.",
   resetClose: "Reset first-close choice",
   resetCloseDone: "The next X on the main window asks again.",
   reloadUi: "Reload UI",
+  factoryReset: "Factory reset…",
+  factoryResetHint: "Deletes everything FocusMode keeps on this computer and restarts it like a fresh install.",
+  factoryResetTitle: "Factory reset?",
+  factoryResetBody:
+    "FocusMode deletes all its data, then restarts like a fresh install (Developer mode is off again). This cannot be undone. The installed app, the browser extension folder and your music folders stay.",
+  factoryResetSessionStops: "The running session stops first; shields and Windows settings come back before anything goes.",
+  /** What goes (the same as Settings → “Delete everything”, plus the settings file itself). */
+  factoryResetList: [
+    "Settings (config.json): every setting back to the default",
+    "Session history and the last summary",
+    "Sparks, streak and surprises (beta), when there are any",
+    "Meeting answers and seen “What's next?” items",
+    "Sign-ins: Microsoft (Teams and calendar), Google Calendar, ICS links and work tool tokens",
+    "Imported chime sounds",
+    "Your site list (back to the bundled one)",
+    "Browser data of the app: YouTube sign-in, cookies and cache",
+    "Logs and the launch-on-login entry",
+  ],
+  factoryResetConfirm: "Reset and restart",
+  factoryResetRestarting: "Factory reset done: restarting…",
+  /** `tauri dev` only: the restarted app has no dev server. */
+  factoryResetDevNote: "Under “npm run tauri dev” the restarted app has no dev server: start it again.",
+  /** The action's name in the status line. */
+  factoryResetName: "Factory reset",
+  cancel: "Cancel",
 
   // Status lines
   sent: (what: string) => `${what}: done.`,
@@ -295,3 +331,87 @@ const SAMPLE_TEXTS: Record<UiLanguage, SampleTexts> = {
 export function sampleTexts(): SampleTexts {
   return SAMPLE_TEXTS[language()];
 }
+
+/** The pose gallery (`$lib/mascot/PoseGallery.svelte`): atlas QA for the beta poses (ADR-022). */
+export const POSE_GALLERY = {
+  title: "Pose gallery (beta)",
+  hint: "Atlas QA: the 11 poses next to blink-1 in boxes of the same size, feet on the dashed line. Shown whatever the beta switches say; check Midnight, Light and 8-bit.",
+  open: "Show the pose gallery",
+  close: "Hide the pose gallery",
+  overlay: "Lay blink-1 over each pose",
+  size: (px: number) => `${px} px`,
+  sizeLabel: "Box height",
+  idle: "blink-1 (main atlas)",
+  loading: "Loading the poses atlas…",
+  failed: "The poses atlas did not load (see the console).",
+};
+
+/**
+ * Developer page → "Rewards (beta)" (ADR-022). Every button builds a frontend sample (`sample: true`, memory only:
+ * never acknowledged, sent or saved) and opens the page where it shows, except the popups (`dev_trigger`, memory only
+ * in the shell) and the sounds (`play_reward_sound`).
+ */
+export const DEV_REWARDS = {
+  title: "Rewards (beta)",
+  hint: "Samples of the sparks, streak and small-steps surfaces, in memory only. They show even while the beta features are off; the poses need the beta features on (fallback frames otherwise).",
+  sampleName: "rewards",
+  smallLabel: "Small moments",
+  small: [
+    { kind: "start", label: "Start (+12, first of day)" },
+    { kind: "step", label: "Step ticked" },
+    { kind: "firstStep", label: "First step (01)" },
+    { kind: "allSteps", label: "All steps done" },
+    { kind: "back", label: "Back from break" },
+  ] as const satisfies readonly { kind: RewardMomentSample; label: string }[],
+  burstsLabel: "Bursts",
+  bursts: [
+    { kind: "recap", label: "Break recap (plain)" },
+    { kind: "bubble", label: "+ bubble" },
+    { kind: "pearl", label: "+ pearl" },
+    { kind: "golden", label: "+ golden pearl" },
+    { kind: "dailyGoal", label: "Daily goal" },
+    { kind: "comeback", label: "Comeback" },
+    { kind: "streak", label: "Streak +1" },
+    { kind: "milestone", label: "Streak milestone 7" },
+    { kind: "restUsed", label: "Rest day used" },
+    { kind: "restEarned", label: "Rest day earned" },
+    { kind: "levelUp", label: "Level up" },
+    { kind: "levelUp2", label: "Level up ×2" },
+    { kind: "pondFull", label: "Pond full" },
+    { kind: "full", label: "Full burst (everything)" },
+    { kind: "sessionEnd", label: "Session end" },
+    { kind: "earlyStop", label: "Early stop" },
+    { kind: "goalDone", label: "Goal done “Tak”" },
+    { kind: "sticker", label: "Sticker unlocked" },
+  ] as const satisfies readonly { kind: RewardMomentSample; label: string }[],
+  statusLabel: "Status samples",
+  statuses: [
+    { kind: "today", label: "Today 18/30, streak 6, level 7" },
+    { kind: "goalMet", label: "Goal met today" },
+    { kind: "waiting", label: "Streak waiting (best 12)" },
+    { kind: "first", label: "First day ever" },
+    { kind: "paused", label: "Streak paused" },
+    { kind: "allMarks", label: "Week strip: every mark" },
+    { kind: "preview", label: "Demo preview badge" },
+  ] as const satisfies readonly { kind: RewardsStatusSample; label: string }[],
+  clear: "Clear reward samples",
+  cleared: "Reward samples cleared: the real state shows again.",
+  popupsLabel: "Popups",
+  popupsHint: "The shell adds the reward line and the next step only while the beta features are on.",
+  popupBreak: "Break popup with sparks",
+  popupFocus: "Focus popup with next step",
+  posesLabel: "Poses",
+  posesHint: "Each button holds the pose for 5 s on the Skupienie axolotl. The pose gallery (Mascot section) checks the atlas.",
+  pose: (name: string) => `Pose ${name}`,
+  moodThinking: "Mood: thinking",
+  moodWorking: "Mood: working",
+  soundsLabel: "Sounds",
+  soundsHint: "Played by the shell: they need the beta features (sparks) and the reward sounds on.",
+  sounds: { pop: "Pop", sparkle: "Sparkle", fanfare: "Fanfare" },
+  lookLabel: "Look",
+  levelsHint: "Overrides the celebration level for this run (memory only).",
+  levels: { full: "Full", calm: "Calm", numbersOnly: "Numbers only" },
+  levelAuto: "Use the setting",
+  reduced: "Simulate reduced motion",
+  intro: "Show intro card again",
+};

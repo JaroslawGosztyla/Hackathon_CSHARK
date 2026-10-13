@@ -31,9 +31,138 @@ export type MascotReaction =
 
 /**
  * The face the mascot rests on between animations: `neutral` (no session, a meeting hold) and `calm` (focus running)
- * both rest on the idle frame with random blinks; `calm` also smiles now and then.
+ * both rest on the idle frame with random blinks; `calm` also smiles now and then. Beta rewards (ADR-022) add
+ * `thinking` (planning the small steps) and `working` (P1 focus companion): held poses, never blinked.
  */
-export type MascotMood = "neutral" | "calm" | "smile" | "sad" | "angry" | "happy";
+export type MascotMood = "neutral" | "calm" | "smile" | "sad" | "angry" | "happy" | "thinking" | "working";
+
+// ---------------------------------------------------------------------------
+// Poses (beta rewards, ADR-022): the owner's 11 poses in their own atlas (`poses-atlas.webp`). A frame name
+// `poses:<name>` selects that atlas (Axolotl.svelte); every other name is a frame of the variant's own atlas.
+// ---------------------------------------------------------------------------
+
+/** The 11 pose drawings of the owner (art/mascot/poses), by their file names. Only displayed, never redrawn. */
+export const POSE_NAMES = [
+  "01-point-excited",
+  "02-clasped-hands-heart",
+  "03-thinking",
+  "04-lying-awake",
+  "05-look-up",
+  "06-amazed-sparkles",
+  "07-sleeping",
+  "08-back-view",
+  "09-lying-look-up",
+  "10-holding-heart",
+  "11-point-happy",
+] as const;
+
+export type PoseName = (typeof POSE_NAMES)[number];
+
+/** Prefix of a frame name that lives in the poses atlas. */
+export const POSE_PREFIX = "poses:";
+
+/** The frame name of a pose (`poses:05-look-up`). */
+export function poseFrame(name: PoseName): string {
+  return `${POSE_PREFIX}${name}`;
+}
+
+/** The pose of a `poses:<name>` frame, or null for a frame of the main / peek atlas. */
+export function poseOf(frame: string): PoseName | null {
+  if (!frame.startsWith(POSE_PREFIX)) return null;
+  const name = frame.slice(POSE_PREFIX.length);
+  return (POSE_NAMES as readonly string[]).includes(name) ? (name as PoseName) : null;
+}
+
+/**
+ * The main-atlas frame shown for a pose while the poses atlas loads (or when it failed): a face of the same mood, so a
+ * celebration never shows a sad or angry frame in between.
+ */
+export const POSE_FALLBACK: Record<PoseName, string> = {
+  "01-point-excited": "happy-1",
+  "02-clasped-hands-heart": "happy-1",
+  "03-thinking": "blink-1",
+  "04-lying-awake": "smile-1",
+  "05-look-up": "blink-1",
+  "06-amazed-sparkles": "happy-1",
+  "07-sleeping": "smile-1",
+  "08-back-view": "blink-1",
+  "09-lying-look-up": "smile-1",
+  "10-holding-heart": "smile-1",
+  "11-point-happy": "happy-1",
+};
+
+/** The beats of a reward moment the axolotl plays a pose for (spec ADR-022 §9.5). */
+export type RewardBeat =
+  | "start"
+  | "step"
+  | "firstStep"
+  | "allSteps"
+  | "back"
+  | "recap"
+  | "surpriseBubble"
+  | "surprisePearl"
+  | "surpriseGolden"
+  | "dailyGoal"
+  | "comeback"
+  | "streak"
+  | "milestone"
+  | "restUsed"
+  | "restEarned"
+  | "levelUp"
+  | "pondFull"
+  | "earlyStop"
+  | "goalDone"
+  | "intro";
+
+const pose = (name: PoseName, ms: number): MascotStep => ({ frame: poseFrame(name), ms });
+
+/** Steps per reward beat (main atlas size; the poses are anchored on the main frame's box by Axolotl). */
+export const REWARD_STEPS: Record<RewardBeat, readonly MascotStep[]> = {
+  start: [pose("11-point-happy", 1200)],
+  step: [pose("11-point-happy", 1000)],
+  firstStep: [pose("01-point-excited", 1000)],
+  allSteps: [pose("02-clasped-hands-heart", 1600)],
+  back: [pose("05-look-up", 600), pose("01-point-excited", 1000)],
+  recap: [pose("05-look-up", 1000)],
+  surpriseBubble: [pose("11-point-happy", 1100)],
+  surprisePearl: [pose("06-amazed-sparkles", 1100)],
+  surpriseGolden: [pose("10-holding-heart", 1100)],
+  dailyGoal: [pose("02-clasped-hands-heart", 1300)],
+  comeback: [pose("05-look-up", 500), pose("02-clasped-hands-heart", 800)],
+  streak: [pose("10-holding-heart", 1200)],
+  milestone: [pose("10-holding-heart", 1500)],
+  restUsed: [pose("07-sleeping", 1200)],
+  restEarned: [pose("04-lying-awake", 1200)],
+  levelUp: [pose("06-amazed-sparkles", 1600)],
+  pondFull: [pose("09-lying-look-up", 1500)],
+  earlyStop: [pose("10-holding-heart", 2000)],
+  goalDone: [pose("02-clasped-hands-heart", 1600)],
+  intro: [pose("05-look-up", 800), pose("02-clasped-hands-heart", 4000)],
+};
+
+/**
+ * Steps of a reward beat, at most `maxMs` long (a beat of a celebration holds its pose for the beat's time). With
+ * reduced motion the first frame is held for the whole time (one still pose per beat, like `reactionSteps`).
+ */
+export function rewardSteps(beat: RewardBeat, reducedMotion: boolean, maxMs = Number.POSITIVE_INFINITY): MascotStep[] {
+  const steps = REWARD_STEPS[beat];
+  const total = Math.min(
+    maxMs,
+    steps.reduce((sum, s) => sum + s.ms, 0),
+  );
+  const first = steps[0];
+  if (!first || total <= 0) return [];
+  if (reducedMotion) return [step(first.frame, total)];
+  const out: MascotStep[] = [];
+  let left = total;
+  for (const s of steps) {
+    const ms = Math.min(s.ms, left);
+    if (ms <= 0) break;
+    out.push(step(s.frame, ms));
+    left -= ms;
+  }
+  return out;
+}
 
 export type Mouth = "a" | "e" | "i" | "o" | "u" | "y";
 
@@ -41,6 +170,14 @@ export type Mouth = "a" | "e" | "i" | "o" | "u" | "y";
 export const BLINK_DELAY_MS = { min: 3000, max: 7000 } as const;
 /** A short smile every 20–40 s while the mascot rests with a calm face. */
 export const SMILE_DELAY_MS = { min: 20_000, max: 40_000 } as const;
+/** Focus companion (beta, P1): every 3–5 min it turns round for a blink and a smile, then sits back. */
+export const COMPANION_DELAY_MS = { min: 180_000, max: 300_000 } as const;
+export const COMPANION_GLANCE: readonly MascotStep[] = [
+  { frame: "blink-1", ms: 400 },
+  { frame: "smile-1", ms: 300 },
+  { frame: "smile-2", ms: 300 },
+  { frame: "smile-3", ms: 300 },
+];
 /**
  * While talking, a mouth frame stays at least this long before the next one shows (the text keeps its pace). The frames
  * are cut from separate drawings and differ slightly beyond the mouth, so switching them per letter looks jittery.
@@ -84,7 +221,17 @@ const FRAME_SETS: Record<MascotVariant, FrameSet> = {
     idle: "blink-1",
     blink: [step("blink-3", 120)],
     mouth: { a: "mouth-a", e: "mouth-e", i: "mouth-i", o: "mouth-o", u: "mouth-u", y: "mouth-y" },
-    mood: { neutral: "blink-1", calm: "blink-1", smile: "smile-1", sad: "sad-1", angry: "angry-1", happy: "happy-1" },
+    mood: {
+      neutral: "blink-1",
+      calm: "blink-1",
+      smile: "smile-1",
+      sad: "sad-1",
+      angry: "angry-1",
+      happy: "happy-1",
+      // Beta rewards (ADR-022): held poses from the poses atlas.
+      thinking: "poses:03-thinking",
+      working: "poses:08-back-view",
+    },
     reactions: {
       // wink-1 and wink-3 have both eyes open; wink-2 is the wink itself, so that one is held.
       start: {
@@ -112,7 +259,17 @@ const FRAME_SETS: Record<MascotVariant, FrameSet> = {
     idle: "idle",
     blink: [step("blink-2", 60), step("blink-3", 90), step("blink-2", 60)],
     mouth: { a: "mouth-a", e: "mouth-e", i: "mouth-i", o: "mouth-a", u: "mouth-u", y: "mouth-y" },
-    mood: { neutral: "idle", calm: "idle", smile: "smile", sad: "sad", angry: "angry", happy: "happy" },
+    mood: {
+      neutral: "idle",
+      calm: "idle",
+      smile: "smile",
+      sad: "sad",
+      angry: "angry",
+      happy: "happy",
+      // The peeking axolotl has no poses (the popup shows only its own frames).
+      thinking: "idle",
+      working: "idle",
+    },
     reactions: {
       start: { steps: [step("blink-2", 80), step("blink-3", 140), step("blink-2", 80), step("smile", 1200)], still: "smile" },
       break: PEEK_SMILE,

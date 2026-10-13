@@ -1,7 +1,8 @@
 // What a mascot says: one message at a time, revealed letter by letter (each letter fades in, see RevealText) while
 // the mouth shows the letter just revealed. A message waits for a running reaction (wink, cheer, …) to end, stays a
 // while after its last letter and then fades out, unless a newer one replaces it. Messages that are not urgent keep
-// a minimum gap after the previous one (the newest waiting one wins), so the mascot never chatters.
+// a minimum gap after the previous one (the newest waiting one wins), so the mascot never chatters, and never cut off
+// a message whose letters are still being revealed (they replace it once its last letter is shown).
 // With reduced motion the whole text appears at once and the mascot smiles while it is shown.
 import type { MascotController } from "./controller.svelte";
 import { prefersReducedMotion } from "./controller.svelte";
@@ -21,6 +22,8 @@ const HOLD_PER_LETTER_MS = 60;
 export const FADE_MS = 300;
 /** Minimum time between the starts of two messages that are not urgent. */
 export const MIN_GAP_MS = 8000;
+/** A message that is not urgent and waits only for the one on screen to be fully revealed looks again this often. */
+const REVEAL_WAIT_MS = 250;
 
 export interface MascotLine {
   text: string;
@@ -113,7 +116,8 @@ export class MascotSpeech {
   say(line: MascotLine): void {
     if (this.#disposed || line.text.trim() === "") return;
     if (!line.urgent) {
-      const wait = this.#lastAt + MIN_GAP_MS - performance.now();
+      const gap = this.#lastAt + MIN_GAP_MS - performance.now();
+      const wait = Math.max(gap, this.#revealing() ? REVEAL_WAIT_MS : 0);
       if (wait > 0) {
         this.#pending = line;
         this.#schedulePending(wait);
@@ -257,10 +261,20 @@ export class MascotSpeech {
     if (this.#pendingTimer !== null) clearTimeout(this.#pendingTimer);
     this.#pendingTimer = setTimeout(() => {
       this.#pendingTimer = null;
+      // Waiting messages are never urgent: the one on screen first shows its last letter.
+      if (this.#pending !== null && this.#revealing()) {
+        this.#schedulePending(REVEAL_WAIT_MS);
+        return;
+      }
       const next = this.#pending;
       this.#pending = null;
       if (next) this.#start(next);
     }, wait);
+  }
+
+  /** Letters of the message on screen are still being revealed (not yet complete, not fading out). */
+  #revealing(): boolean {
+    return this.line !== null && !this.leaving && this.revealed < this.line.units.length;
   }
 
   #dropPending(): void {

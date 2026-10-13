@@ -9,6 +9,8 @@
   import HistorySettings from "$lib/components/HistorySettings.svelte";
   import LauncherSettings from "$lib/components/LauncherSettings.svelte";
   import PrivacySettings from "$lib/components/PrivacySettings.svelte";
+  import BetaBadge from "$lib/components/rewards/BetaBadge.svelte";
+  import BetaSettings from "$lib/components/rewards/BetaSettings.svelte";
   import Switch from "$lib/components/Switch.svelte";
   import TeamsSettings from "$lib/components/TeamsSettings.svelte";
   import ThemeSettings from "$lib/components/ThemeSettings.svelte";
@@ -370,6 +372,15 @@
       <PrivacySettings onreset={loadAutostart} />
     </section>
 
+    <!-- Beta features (ADR-022): off by default; the card right before the developer one. -->
+    <section class="card" aria-labelledby="beta-settings">
+      <div class="card-title beta-title">
+        <h2 id="beta-settings">{strings.rewards.settings.title}</h2>
+        <BetaBadge />
+      </div>
+      <BetaSettings />
+    </section>
+
     <!-- Last on purpose: a tool for tests and screenshots (ADR-019); its page itself is English only. -->
     <section class="card" aria-labelledby="developer-settings">
       <div class="card-title">
@@ -447,6 +458,11 @@
 
   .narrow {
     max-width: 340px;
+  }
+
+  .beta-title {
+    justify-content: flex-start;
+    align-items: center;
   }
 
   /* Linked from the Skupienie page (#calendar-settings, #work-settings): keep the heading clear of the sticky header. */

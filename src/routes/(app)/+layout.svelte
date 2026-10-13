@@ -10,6 +10,7 @@
   import Background from "$lib/components/Background.svelte";
   import ClosePrompt from "$lib/components/ClosePrompt.svelte";
   import NudgeBanner from "$lib/components/NudgeBanner.svelte";
+  import RewardsPill from "$lib/components/rewards/RewardsPill.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import { formatClock } from "$lib/format";
   import { followLanguage } from "$lib/i18n/index.svelte";
@@ -18,6 +19,7 @@
   import { config } from "$lib/state/config.svelte";
   import { dev, useDevRequests } from "$lib/state/dev.svelte";
   import { music } from "$lib/state/music.svelte";
+  import { rewards } from "$lib/state/rewards.svelte";
   import { session } from "$lib/state/session.svelte";
   import { strings } from "$lib/strings";
   import { applyTheme, DEFAULT_THEME, isTheme, readCachedTheme, type Theme } from "$lib/themes";
@@ -289,6 +291,9 @@
           </svg>
         {/if}
       </a>
+    {:else if rewards.active && rewards.view}
+      <!-- Beta rewards (P1, ADR-022): level and streak at a glance (the phase pill has the place during a session). -->
+      <RewardsPill status={rewards.view} />
     {/if}
   </header>
 
@@ -309,6 +314,10 @@
     z-index: 1;
     min-height: 100vh;
     padding: 0 var(--gutter) calc(var(--dock-h) + 32px);
+    /* The header's full-width backdrop (`.top::before`) is sized with vw, which counts the vertical scrollbar, so it
+       sticks out on the right by about half a scrollbar and the page could scroll sideways. `clip` cuts that off at
+       the window edge without making a scroll container, so the sticky header keeps working. */
+    overflow-x: clip;
   }
 
   .app.with-video {

@@ -1,13 +1,16 @@
 <script lang="ts">
-  // Idle Skupienie page: one good working practice per day, plus the Polish screen-work note in the Polish UI only.
+  // Idle Skupienie page: the good working practice of the day ("Inna porada" shows another one; the axolotl says it
+  // too, `workingTip`), plus the Polish screen-work note in the Polish UI only.
   import SourceLink from "$lib/components/SourceLink.svelte";
+  import { workingTip } from "$lib/state/workingTip.svelte";
   import { strings } from "$lib/strings";
-  import { PL_LEGAL_NOTE, showsPolishLegalNote, workingTipOfDay, workingTipText } from "$lib/tips";
+  import { PL_LEGAL_NOTE, showsPolishLegalNote, workingTipText } from "$lib/tips";
 
   const t = strings.idleTips;
 
-  // Read once per mount: the page is shown again after every session, which is often enough to roll over at midnight.
-  const tip = workingTipOfDay(new Date());
+  // Checked once per mount: the page is shown again after every session, which is often enough to roll over at midnight.
+  workingTip.refreshDay(new Date());
+  const tip = $derived(workingTip.current);
   const showLegal = $derived(showsPolishLegalNote());
 </script>
 
@@ -27,8 +30,13 @@
         </svg>
         {t.practiceTitle}
       </h2>
-      <p class="text">{workingTipText(tip)}</p>
-      <SourceLink url={tip.source} label={t.source} aria={t.sourceAria} />
+      <p class="text" aria-live="polite">{workingTipText(tip)}</p>
+      <div class="row actions">
+        {#if workingTip.canChange}
+          <button type="button" class="btn btn-sm" onclick={() => workingTip.another()}>{t.anotherTip}</button>
+        {/if}
+        <SourceLink url={tip.source} label={t.source} aria={t.sourceAria} />
+      </div>
     </div>
 
     {#if showLegal}
@@ -83,5 +91,9 @@
 
   .small-text {
     font-size: 0.9rem;
+  }
+
+  .actions {
+    gap: 14px;
   }
 </style>

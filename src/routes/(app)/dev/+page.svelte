@@ -2,6 +2,7 @@
   // Developer page (ADR-019): only in developer mode (the layout leaves it when the mode is switched off). Buttons that
   // trigger popups, toasts, mascot reactions, banners and samples for screenshots. English only (`$lib/i18n/dev`);
   // every button does one thing and reports in the status line. Samples stay in memory (`$lib/state/dev.svelte`).
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import Switch from "$lib/components/Switch.svelte";
   import { formatClock } from "$lib/format";
   import {
@@ -9,6 +10,7 @@
     MASCOT_MOODS,
     MASCOT_REACTIONS,
     POPUP_SAMPLES,
+    POSE_GALLERY,
     REMAINING_SAMPLES,
     RING_SAMPLE_SECS,
     sampleTexts,
@@ -18,6 +20,8 @@
   } from "$lib/i18n/dev";
   import { LANGUAGE_NAMES, LANGUAGES, strings } from "$lib/i18n/index.svelte";
   import { mascotEnabled } from "$lib/mascot/cues.svelte";
+  import PoseGallery from "$lib/mascot/PoseGallery.svelte";
+  import DevRewards from "$lib/components/rewards/DevRewards.svelte";
   import { config, reminderForBreak } from "$lib/state/config.svelte";
   import { dev, SEQUENCE_STEP_MS } from "$lib/state/dev.svelte";
   import { session } from "$lib/state/session.svelte";
@@ -89,6 +93,17 @@
   function showMascot(): void {
     config.update((c) => (c.showMascot = true), true);
   }
+
+  /** The pose gallery (beta poses, atlas QA): mounted only on request, so the poses atlas loads only then. */
+  let poseGalleryOpen = $state(false);
+
+  /** The factory reset confirmation (lists what goes; the shell restarts the app when it is done). */
+  let resetOpen = $state(false);
+  const resetBody = $derived(
+    [running ? DEV.factoryResetSessionStops : null, DEV.factoryResetBody, import.meta.env.DEV ? DEV.factoryResetDevNote : null]
+      .filter((part) => part !== null)
+      .join(" "),
+  );
 
   // "Play all popups" belongs to this page: leaving it stops the sequence (its Stop button lives here).
   $effect(() => () => dev.stopSequence());
@@ -176,6 +191,13 @@
               <p class="hint">{DEV.sessionHint}</p>
             </div>
           </div>
+          <Switch
+            id="dev-presentation"
+            label={DEV.presentationMode(dev.presentationLengths.focusSecs, dev.presentationLengths.breakSecs)}
+            hint={dev.presentationDiffers ? DEV.presentationPending : DEV.presentationHint}
+            checked={dev.presentationOn}
+            onchange={(on) => dev.setPresentation(on)}
+          />
           <p class="readout tabular" class:break={snap.phase === "break"} aria-live="polite">{sessionLine}</p>
           <div class="buttons">
             <button
@@ -318,6 +340,17 @@
             </button>
             <button type="button" class="btn btn-sm" onclick={() => dev.reloadUi()}>{DEV.reloadUi}</button>
           </div>
+          <div class="danger-row">
+            <p class="hint" id="dev-factory-reset-hint">{DEV.factoryResetHint}</p>
+            <button
+              type="button"
+              class="btn btn-sm btn-danger"
+              aria-describedby="dev-factory-reset-hint"
+              onclick={() => (resetOpen = true)}
+            >
+              {DEV.factoryReset}
+            </button>
+          </div>
         </section>
       </div>
 
@@ -406,6 +439,24 @@
               <button type="button" class="btn btn-sm" onclick={() => dev.pixelLook()}>{DEV.pixelLook}</button>
             </div>
           </fieldset>
+          <fieldset class="set" disabled={!mascotOn}>
+            <legend>{POSE_GALLERY.title}</legend>
+            <p class="hint">{POSE_GALLERY.hint}</p>
+            <div class="buttons">
+              <button
+                type="button"
+                class="btn btn-sm"
+                class:btn-primary={poseGalleryOpen}
+                aria-pressed={poseGalleryOpen}
+                onclick={() => (poseGalleryOpen = !poseGalleryOpen)}
+              >
+                {poseGalleryOpen ? POSE_GALLERY.close : POSE_GALLERY.open}
+              </button>
+            </div>
+            {#if poseGalleryOpen && mascotOn}
+              <PoseGallery />
+            {/if}
+          </fieldset>
         </section>
 
         <!-- Look & feel -->
@@ -485,8 +536,22 @@
             </ul>
           </fieldset>
         </section>
+
+        <!-- Rewards (beta, ADR-022) -->
+        <DevRewards />
       </div>
     </div>
+
+    <ConfirmDialog
+      bind:open={resetOpen}
+      title={DEV.factoryResetTitle}
+      body={resetBody}
+      list={DEV.factoryResetList}
+      confirmLabel={DEV.factoryResetConfirm}
+      cancelLabel={DEV.cancel}
+      danger
+      onconfirm={() => dev.factoryReset()}
+    />
   {/if}
 </div>
 
@@ -595,6 +660,22 @@
   .sub-switch {
     padding-top: 12px;
     border-top: 1px solid var(--border);
+  }
+
+  /* Factory reset: apart from the everyday buttons, with what it does next to it. */
+  .danger-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .danger-row .hint {
+    flex: 1 1 220px;
+    min-width: 0;
   }
 
   .readout {

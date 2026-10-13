@@ -21,6 +21,7 @@ const IDLE_SNAPSHOT: SessionSnapshot = {
   musicMuted: false,
   meetingHold: null,
   goal: null,
+  steps: [],
 };
 
 class SessionStore {

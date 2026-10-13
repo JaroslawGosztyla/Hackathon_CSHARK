@@ -553,8 +553,35 @@ export function pickBreakTip(sessionId: string | null, cycle: number, breakSecs:
 
 /** One working tip per calendar day (local date), the same all day. */
 export function workingTipOfDay(date: Date = new Date()): WorkingTip | null {
-  const day = Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY);
+  const day = workingTipDay(date);
   return WORKING_TIPS[((day % WORKING_TIPS.length) + WORKING_TIPS.length) % WORKING_TIPS.length] ?? null;
+}
+
+/** The local calendar day of `date` (a new day brings the tip of that day back). */
+export function workingTipDay(date: Date = new Date()): number {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY);
+}
+
+/**
+ * "Inna porada": a random working tip that is neither `current` nor one of `seen` (the tips shown in this round).
+ * When every tip has been shown, a new round starts (only `current` is left out), so a tip never comes twice in a row
+ * and all of them come before one repeats. Returns the tip and the round after it; null when there is no other tip.
+ */
+export function nextWorkingTip(
+  current: WorkingTipId | null,
+  seen: ReadonlySet<WorkingTipId>,
+  random: () => number = Math.random,
+): { tip: WorkingTip; seen: Set<WorkingTipId> } | null {
+  let round = new Set(seen);
+  let pool = WORKING_TIPS.filter((t) => t.id !== current && !round.has(t.id));
+  if (pool.length === 0) {
+    round = new Set(current === null ? [] : [current]);
+    pool = WORKING_TIPS.filter((t) => t.id !== current);
+  }
+  const tip = pool[Math.min(pool.length - 1, Math.floor(random() * pool.length))];
+  if (!tip) return null;
+  round.add(tip.id);
+  return { tip, seen: round };
 }
 
 /** `https://www.nhs.uk/…` → `nhs.uk` (for the "Źródło" link). */

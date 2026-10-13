@@ -469,6 +469,101 @@
   --header-line: var(--border);
 }
 
+/*
+ * ---------- beta rewards (ADR-022): sparks, streak bubbles and confetti, per theme ----------
+ * --reward: spark fill (≥ 3:1 against --surface) · --reward-ink: reward text (≥ 4.5:1) · --bubble: streak glyph
+ * (≥ 3:1) · --confetti-1..4: particles (≥ 3:1) · --quiet-mark: the grey marks of quiet / coming days and open steps
+ * (≥ 3:1 against --surface-solid, WCAG 1.4.11; --muted-mark is lighter). Never red for days or the streak.
+ */
+
+:root,
+[data-theme] {
+  --reward-soft: color-mix(in srgb, var(--reward) 16%, transparent);
+  --reward-line: color-mix(in srgb, var(--reward) 45%, transparent);
+  --bubble-soft: color-mix(in srgb, var(--bubble) 16%, transparent);
+}
+
+:root:not([data-theme]),
+[data-theme="midnight"] {
+  --quiet-mark: #786c80;
+  --reward: #ffd27a;
+  --reward-ink: #ffd27a;
+  --bubble: #8fd8ff;
+  --confetti-1: #ffd27a;
+  --confetti-2: #8fd8ff;
+  --confetti-3: #f2a65a;
+  --confetti-4: #c9a7ff;
+}
+
+[data-theme="vaporwave"] {
+  --quiet-mark: #8263a0;
+  --reward: #fff07a;
+  --reward-ink: #fff07a;
+  --bubble: #7ee8ff;
+  --confetti-1: #fff07a;
+  --confetti-2: #7ee8ff;
+  --confetti-3: #ff71ce;
+  --confetti-4: #05ffa1;
+}
+
+[data-theme="lunar"] {
+  --quiet-mark: #687197;
+  --reward: #ffe9a8;
+  --reward-ink: #ffe9a8;
+  --bubble: #a8d8ff;
+  --confetti-1: #ffe9a8;
+  --confetti-2: #a8d8ff;
+  --confetti-3: #b8c4ff;
+  --confetti-4: #93dcc8;
+}
+
+[data-theme="autumn"] {
+  --quiet-mark: #836f5c;
+  --reward: #ffc857;
+  --reward-ink: #ffd98a;
+  --bubble: #9fd3c7;
+  --confetti-1: #ffc857;
+  --confetti-2: #9fd3c7;
+  --confetti-3: #e98a3c;
+  --confetti-4: #f6e3a1;
+}
+
+[data-theme="dark"] {
+  --quiet-mark: #6f7177;
+  --reward: #ffd27a;
+  --reward-ink: #ffd27a;
+  --bubble: #8fd8ff;
+  --confetti-1: #ffd27a;
+  --confetti-2: #8fd8ff;
+  --confetti-3: #f2a65a;
+  --confetti-4: #c9a7ff;
+}
+
+/* Light: every reward colour keeps ≥ 4.5:1 on white (sparks 5.0, text 7.1, bubble 5.9, confetti ≥ 5). */
+[data-theme="light"] {
+  --quiet-mark: #868c96;
+  --reward: #b45309;
+  --reward-ink: #92400e;
+  --bubble: #0369a1;
+  --confetti-1: #b45309;
+  --confetti-2: #0369a1;
+  --confetti-3: #be185d;
+  --confetti-4: #15803d;
+  --reward-soft: rgba(180, 83, 9, 0.1);
+  --bubble-soft: rgba(3, 105, 161, 0.1);
+}
+
+[data-theme="pixel"] {
+  --quiet-mark: #6e69ab;
+  --reward: #ffe14d;
+  --reward-ink: #ffe14d;
+  --bubble: #4dd2ff;
+  --confetti-1: #ffe14d;
+  --confetti-2: #4dd2ff;
+  --confetti-3: #ff7eb6;
+  --confetti-4: #5ce65c;
+}
+
 /* ---------- base ---------- */
 
 *,

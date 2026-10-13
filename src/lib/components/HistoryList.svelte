@@ -3,6 +3,8 @@
   // the 7 apps with the most focus time across the listed history get fixed categorical slots,
   // everything else folds into "Inne"; idle/unknown share one muted gray. A legend names every color.
   import { formatDate, formatDuration, formatShortDate, formatTimeOfDay, processLabel } from "$lib/format";
+  import SparkIcon from "$lib/components/rewards/SparkIcon.svelte";
+  import { rewards } from "$lib/state/rewards.svelte";
   import { strings } from "$lib/strings";
   import type { SessionSummary } from "$lib/types";
 
@@ -64,8 +66,12 @@
   /** Some session had a goal: every row gets the goal column, so the columns stay aligned. */
   const hasGoals = $derived(history.some((s) => s.goal != null));
 
+  /** Beta rewards: some listed session has its sparks (the stats column gets wider). */
+  const hasSparks = $derived(rewards.active && history.some((s) => (s.sparks ?? 0) > 0));
+
   function entryLabel(s: SessionSummary): string {
-    const label = strings.summary.showSession(`${formatDate(s.startedAtMs)}, ${formatTimeOfDay(s.startedAtMs)}`);
+    let label = strings.summary.showSession(`${formatDate(s.startedAtMs)}, ${formatTimeOfDay(s.startedAtMs)}`);
+    if (rewards.active && (s.sparks ?? 0) > 0) label = `${label}, ${strings.rewards.historySparksAria(s.sparks ?? 0)}`;
     return s.goal ? `${label}, ${strings.summary.goalAria(s.goalDone ?? null)}` : label;
   }
 </script>
@@ -94,6 +100,7 @@
           type="button"
           class="entry"
           class:with-goal={hasGoals}
+          class:with-sparks={hasSparks}
           aria-current={s.sessionId === selectedId ? "true" : undefined}
           aria-label={entryLabel(s)}
           onclick={() => onselect(s.sessionId)}
@@ -106,6 +113,11 @@
             <span class="focus tabular">{formatDuration(s.focusedSecs)}</span>
             <span class="cycles">{strings.summary.cyclesCount(s.cyclesCompleted)}</span>
             {#if s.demo}<span class="badge">{strings.summary.demo}</span>{/if}
+            {#if rewards.active && (s.sparks ?? 0) > 0}
+              <span class="sparks tabular" title={strings.rewards.historySparksAria(s.sparks ?? 0)}>
+                <SparkIcon size={11} />+{s.sparks}
+              </span>
+            {/if}
           </span>
           {#if hasGoals}
             <span class="goal-cell" class:none={!s.goal}>
@@ -190,6 +202,14 @@
     grid-template-columns: 7.5rem 10rem 4.5rem 1fr;
   }
 
+  .entry.with-sparks {
+    grid-template-columns: 7.5rem 13rem 1fr;
+  }
+
+  .entry.with-goal.with-sparks {
+    grid-template-columns: 7.5rem 13rem 4.5rem 1fr;
+  }
+
   .entry:hover {
     border-color: var(--border-strong);
   }
@@ -244,6 +264,16 @@
 
   .focus {
     font-weight: 600;
+  }
+
+  /* Beta rewards: the sparks of the session. */
+  .sparks {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--reward-ink);
+    font-size: 0.82rem;
+    font-weight: 650;
   }
 
   .mini {

@@ -1,8 +1,9 @@
 // Backend for the separate YouTube window: the shell opens a small Tauri window that loads the YouTube page
 // top-level (like a normal browser tab), for links whose owner refuses embedding or that cannot be embedded.
 // We only send commands; the window reports open/closed/title through `media://window` (applyStatus).
-// TODO(hackathon): the window sends no playback events, so "playing" is optimistic and a finished video
-// does not advance the playlist (only "Następny" does).
+// The window sends no playback events, so "playing" is optimistic. Instead the page loops what it was opened with
+// (media_window.rs) and the engine follows it by its title: signed in, a list of videos is one queue page that YouTube
+// plays through by itself (engine.ts, ADR-021).
 import { controlMediaWindow, openMediaWindow, toAppError } from "$lib/api";
 import type { AppError, MediaAction, MediaWindowStatus } from "$lib/types";
 import { samePage } from "./youtube";

@@ -11,7 +11,8 @@
   // Skupienie page: the axolotl at the bottom-left of the hero, in every phase. Its face follows the session
   // (`sessionMood`) and it reacts to what happens: a wink at Start, a smile when a break starts, a cheer for a
   // completed cycle, an angry look at a blocked site. What it says appears in its bubble letter by letter (MascotSpeech):
-  //   idle   — a meeting that would fall into a break, else the top "Co dalej?" item, else the good practice of the day;
+  //   idle   — a meeting that would fall into a break, else the top "Co dalej?" item, else the good practice of the day
+  //            (and the new one after "Inna porada" on the card);
   //   events — a short line at Start, when a break starts and when a cycle is completed (urgent, at once);
   //   break  — the user's reminder for this break and the break tip (again after "Inna propozycja");
   //   tickle — a click on the axolotl while it says nothing: a boing, a giggle and one funny line.
@@ -25,14 +26,16 @@
   import { config } from "$lib/state/config.svelte";
   import { dev, useDevRequests } from "$lib/state/dev.svelte";
   import { nudge } from "$lib/state/nudge.svelte";
+  import { rewards } from "$lib/state/rewards.svelte";
   import { session } from "$lib/state/session.svelte";
   import { work, workEnabled } from "$lib/state/work.svelte";
+  import { workingTip } from "$lib/state/workingTip.svelte";
   import { strings } from "$lib/strings";
-  import { breakTipText, workingTipOfDay, workingTipText } from "$lib/tips";
+  import { breakTipText, workingTipText } from "$lib/tips";
   import Axolotl from "./Axolotl.svelte";
   import { prefersReducedMotion, useMascot } from "./controller.svelte";
-  import { followCues, mascotEnabled, sessionMood } from "./cues.svelte";
-  import type { MascotReaction } from "./frames";
+  import { followCues, followRewardCues, mascotEnabled, sessionMood } from "./cues.svelte";
+  import { rewardSteps, type MascotMood, type MascotReaction, type MascotStep } from "./frames";
   import { useSpeech, type MascotLine } from "./speech.svelte";
   import SpeechBubble from "./SpeechBubble.svelte";
 
@@ -62,8 +65,9 @@
   const mascot = useMascot("main");
   const speech = useSpeech(mascot);
 
-  // Read once per mount, like the "Dobra praktyka" card below.
-  const tip = workingTipOfDay(new Date());
+  // The "Dobra praktyka" card's tip: the tip of the day (checked once per mount, like the card) until "Inna porada".
+  workingTip.refreshDay(new Date());
+  const tip = $derived(workingTip.current);
 
   const show = $derived(mascotEnabled(config.value));
 
@@ -75,8 +79,23 @@
   // Face: the session decides the mood; events play a reaction on top of it.
   // ---------------------------------------------------------------------------
 
+  /**
+   * Beta rewards (ADR-022): while the first small step is being planned the axolotl thinks along; with the focus
+   * companion on it sits with its back to the user while focus runs (P1).
+   */
+  const rewardMood = $derived.by((): MascotMood | null => {
+    if (rewards.celebration === "numbersOnly") return null;
+    const snap = session.snapshot;
+    if (rewards.stepsActive && rewards.planning && snap.phase === "idle") return "thinking";
+    const companion = config.value?.rewards?.focusCompanion === true;
+    if (rewards.configActive && companion && !rewards.reduced && sessionMood(snap) === "calm") return "working";
+    return null;
+  });
+
   /** A mood held from the Developer page (ADR-019) wins over the session's. */
-  const mood = $derived(dev.mascotMood ?? sessionMood(session.snapshot));
+  const mood = $derived(dev.mascotMood ?? rewardMood ?? sessionMood(session.snapshot));
+  /** A Developer pose or pose mood sample shows its pose even with the beta off (otherwise: `posesAllowed`). */
+  const devPoses = $derived(rewards.posePreview || dev.mascotMood === "thinking" || dev.mascotMood === "working");
   $effect(() => {
     const next = mood;
     untrack(() => mascot.setMood(next));
@@ -88,10 +107,31 @@
     cycle: () => strings.mascot.cycleLines,
   };
 
-  followCues(mascot, ["start", "break", "cycle"], (reaction) => {
-    const lines = EVENT_LINES[reaction]?.();
-    if (show && lines) speech.say({ text: pick(lines), urgent: true, tag: "event" });
-  });
+  /**
+   * Beta rewards: while they are active, Start and the way back from a break play the poses instead of the wink and the
+   * cheer (numbers only keeps the old reactions: no pose changes).
+   */
+  function rewardStepsFor(reaction: MascotReaction): readonly MascotStep[] | null {
+    if (!rewards.configActive || rewards.celebration === "numbersOnly") return null;
+    // Calm (and reduced motion, which caps it at calm): one still pose per beat.
+    const still = rewards.celebration !== "full";
+    if (reaction === "start") return rewardSteps("start", still);
+    if (reaction === "cycle") return rewardSteps("back", still);
+    return null;
+  }
+
+  followCues(
+    mascot,
+    ["start", "break", "cycle"],
+    (reaction) => {
+      const lines = EVENT_LINES[reaction]?.();
+      if (show && lines) speech.say({ text: pick(lines), urgent: true, tag: "event" });
+    },
+    rewardStepsFor,
+  );
+
+  // The poses of a celebration (steps ticked, the break recap, Developer samples).
+  followRewardCues(mascot, () => show);
 
   // Every nudge (a new object, also while the banner is already shown) gets an angry look.
   $effect(() => {
@@ -160,6 +200,23 @@
 
   sayWhenChanged("idle", () => idleLine);
   sayWhenChanged("break", () => breakLine);
+
+  // "Inna porada" on the card: the axolotl says the new tip as a state message (not urgent: it waits for the gap after
+  // the message before, like the others). When its idle line is the tip, `sayWhenChanged` above says it; when that
+  // line is about a meeting or a work item, the tip is said here.
+  let tipRevision = workingTip.revision;
+  $effect(() => {
+    const revision = workingTip.revision;
+    if (revision === tipRevision) return;
+    tipRevision = revision;
+    untrack(() => {
+      const current = workingTip.current;
+      if (!show || !session.isIdle || current === null) return;
+      const text = workingTipText(current);
+      if (idleLine?.text === text) return;
+      speech.say({ label: strings.mascot.practiceLabel, text, tag: "idle" });
+    });
+  });
 
   // Hidden in Settings: no bubble either.
   $effect(() => {
@@ -273,7 +330,7 @@
           bind:this={hop}
           onanimationend={boingEnded}
         >
-          <Axolotl size={MASCOT_SIZE} frame={mascot.frame} sit />
+          <Axolotl size={MASCOT_SIZE} frame={mascot.frame} sit poses={devPoses || undefined} />
         </span>
       </span>
     </button>

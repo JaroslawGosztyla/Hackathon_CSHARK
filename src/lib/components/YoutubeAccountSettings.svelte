@@ -10,6 +10,8 @@
   const signInOpen = $derived(status?.signInOpen === true);
   /** Google's refusal stays explained until the next sign-in attempt (or a successful one). */
   const rejected = $derived(status?.browserRejected === true && !youtubeAccount.signedIn);
+  /** The cookies could not be read: treated as signed out, said in one line, with "Check again". */
+  const unknown = $derived(!youtubeAccount.known && youtubeAccount.checkFailed);
 </script>
 
 <div class="youtube stack" role="group" aria-labelledby="youtube-account-title">
@@ -29,23 +31,36 @@
         <span class="dot" aria-hidden="true"></span>
         {s.signInOpen}
       </span>
+      <!-- After Google's refusal the click starts over on Google's sign-in page in that window (youtube_sign_in). -->
       <button type="button" class="btn btn-sm" disabled={youtubeAccount.busy} onclick={() => youtubeAccount.signIn()}>
-        {s.showSignIn}
+        {rejected ? s.restartSignIn : s.showSignIn}
       </button>
     {:else}
       <!-- Until the shell has read the cookies (normally a moment after start) signing in is already possible. -->
       <span class="state">
         <span class="dot" aria-hidden="true"></span>
-        {youtubeAccount.known ? s.notSignedIn : s.checking}
+        {youtubeAccount.known ? s.notSignedIn : unknown ? s.statusUnknown : s.checking}
       </span>
-      <button
-        type="button"
-        class="btn btn-sm btn-primary"
-        disabled={youtubeAccount.busy}
-        onclick={() => youtubeAccount.signIn()}
-      >
-        {s.signIn}
-      </button>
+      <span class="actions">
+        {#if unknown}
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost"
+            disabled={youtubeAccount.busy}
+            onclick={() => youtubeAccount.recheck()}
+          >
+            {s.checkAgain}
+          </button>
+        {/if}
+        <button
+          type="button"
+          class="btn btn-sm btn-primary"
+          disabled={youtubeAccount.busy}
+          onclick={() => youtubeAccount.signIn()}
+        >
+          {s.signIn}
+        </button>
+      </span>
     {/if}
   </div>
 
@@ -77,11 +92,19 @@
     color: var(--text-2);
   }
 
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* Round in every theme but 8-bit, where --radius-pill is 0 and the dot is a square pixel. */
   .dot {
     flex: none;
     width: 8px;
     height: 8px;
-    border-radius: 50%;
+    border-radius: var(--radius-pill);
     background: var(--muted-mark);
   }
 
