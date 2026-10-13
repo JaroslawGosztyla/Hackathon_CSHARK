@@ -318,6 +318,9 @@ pub fn summarize(totals: &SessionTotals, usage: UsageReport) -> SessionSummary {
         demo: totals.demo,
         goal: totals.goal.clone(),
         goal_done: None,
+        // The small steps with their ticks (beta, ADR-022); the shell fills `sparks` while the rewards are on.
+        steps: totals.steps.clone(),
+        sparks: None,
     }
 }
 
@@ -349,7 +352,7 @@ fn ms_to_rounded_secs(ms: u64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{SessionGoal, WorkSource};
+    use crate::api::{MicroStep, SessionGoal, WorkSource};
 
     fn usage(process: &str, secs: u32) -> AppUsage {
         AppUsage {
@@ -768,6 +771,11 @@ mod tests {
             cycles_completed: 1,
             demo: true,
             goal: Some(goal.clone()),
+            steps: vec![MicroStep {
+                id: 2,
+                text: "Napisz test".to_owned(),
+                done: true,
+            }],
         };
         let mut acc = UsageAccumulator::new();
         acc.add_sample(Some("Code.exe"), None, false, 5000);
@@ -786,6 +794,8 @@ mod tests {
                 demo: true,
                 goal: Some(goal),
                 goal_done: None,
+                steps: totals.steps.clone(),
+                sparks: None,
             }
         );
     }

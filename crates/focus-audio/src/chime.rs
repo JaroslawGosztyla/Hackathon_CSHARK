@@ -3,6 +3,11 @@
 //! Pure sample generation without any device access, so it is fully unit-tested. Every pack has a
 //! [`Chime::BreakStart`] variant that moves down in pitch and a [`Chime::FocusStart`] variant that moves up.
 //! Each lasts 1 to 2.5 s, starts and ends silently, and is scaled to the same peak ([`PEAK_LEVEL`]).
+//!
+//! The beta rewards (ADR-022) add three short sounds per pack ([`Chime::REWARDS`]), synthesized with the pack's own
+//! instrument (no licensed audio): [`Chime::Pop`] (a soft high blip, a step ticked), [`Chime::Sparkle`] (a rising
+//! triad and a high note) and [`Chime::Fanfare`] (a rising arpeggio and a held chord). They rise in pitch, last
+//! 0.12 to 1.4 s, start and end silently and have the same peak.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -18,11 +23,19 @@ pub enum Chime {
     BreakStart,
     /// Break ended or the session started, focus begins: the pitch moves up.
     FocusStart,
+    /// Beta reward (ADR-022), ~0.15 s: one soft high blip (a step ticked).
+    Pop,
+    /// Beta reward, ~0.7 s: a rising triad and a high note (daily goal, milestone, comeback, pearl).
+    Sparkle,
+    /// Beta reward, ~1.2 s: a rising arpeggio and a held chord (level up, golden pearl).
+    Fanfare,
 }
 
 impl Chime {
-    /// Every chime kind.
+    /// Every phase chime (the ones played at phase changes).
     pub const ALL: [Chime; 2] = [Chime::BreakStart, Chime::FocusStart];
+    /// The beta reward sounds (ADR-022).
+    pub const REWARDS: [Chime; 3] = [Chime::Pop, Chime::Sparkle, Chime::Fanfare];
 }
 
 /// Synthesized chime sounds. Midnight, Vaporwave, Lunar and Autumn match the themes of the same name and
@@ -58,7 +71,7 @@ impl SoundPack {
         SoundPack::Chiptune,
     ];
 
-    /// Length of `chime` in this pack (1 to 2.5 s).
+    /// Length of `chime` in this pack (phase chimes 1 to 2.5 s, reward sounds 0.12 to 1.4 s).
     pub fn duration(self, chime: Chime) -> Duration {
         Duration::from_millis(score(self, chime).len_ms)
     }
@@ -116,13 +129,19 @@ const E4: f64 = 329.6276;
 const F4: f64 = 349.2282;
 const A4: f64 = 440.0;
 const C5: f64 = 523.2511;
+const CS5: f64 = 554.3653;
+const D5: f64 = 587.3295;
 const E5: f64 = 659.2551;
 const F5: f64 = 698.4565;
+const FS5: f64 = 739.9888;
 const G5: f64 = 783.9909;
 const A5: f64 = 880.0;
 const B5: f64 = 987.7666;
 const C6: f64 = 1_046.502;
+const D6: f64 = 1_174.659;
 const E6: f64 = 1_318.510;
+const F6: f64 = 1_396.913;
+const G6: f64 = 1_567.982;
 
 /// A struck note (rings until the end of the chime).
 const fn hit(at_s: f64, freq_hz: f64, gain: f64) -> Note {
@@ -307,11 +326,205 @@ const CHIPTUNE_FOCUS: &[Note] = &[
     held(0.255, C6, 1.0, 0.65),
 ];
 
+// Beta reward sounds (ADR-022), every one rising: a two-note blip, a triad with a high note, and a three-note
+// arpeggio into a held chord, in the key and with the instrument of the pack.
+const POP_MS: u64 = 160;
+const POP_RELEASE_S: f64 = 0.12;
+const SPARKLE_MS: u64 = 700;
+const SPARKLE_RELEASE_S: f64 = 0.25;
+const FANFARE_MS: u64 = 1_200;
+const FANFARE_RELEASE_S: f64 = 0.35;
+
+// Midnight: C major bell.
+const MIDNIGHT_POP: &[Note] = &[hit(0.0, G5, 0.55), hit(0.035, C6, 1.0)];
+const MIDNIGHT_SPARKLE: &[Note] = &[
+    hit(0.0, C5, 0.8),
+    hit(0.09, E5, 0.85),
+    hit(0.18, G5, 0.9),
+    hit(0.3, E6, 0.6),
+];
+const MIDNIGHT_FANFARE: &[Note] = &[
+    hit(0.0, C5, 0.85),
+    hit(0.14, E5, 0.9),
+    hit(0.28, G5, 0.95),
+    hit(0.46, C5, 0.55),
+    hit(0.46, E5, 0.55),
+    hit(0.46, G5, 0.65),
+    hit(0.46, C6, 1.0),
+];
+
+// Vaporwave: Fmaj7 pad.
+const VAPORWAVE_POP: &[Note] = &[held(0.0, C6, 0.6, 0.03), held(0.04, E6, 1.0, 0.05)];
+const VAPORWAVE_SPARKLE: &[Note] = &[
+    held(0.0, F5, 0.8, 0.5),
+    held(0.1, A5, 0.85, 0.4),
+    held(0.2, C6, 0.9, 0.3),
+    held(0.3, E6, 0.7, 0.2),
+];
+const VAPORWAVE_FANFARE: &[Note] = &[
+    held(0.0, F5, 0.8, 0.25),
+    held(0.15, A5, 0.85, 0.25),
+    held(0.3, C6, 0.9, 0.25),
+    held(0.48, F5, 0.55, 0.35),
+    held(0.48, A5, 0.55, 0.35),
+    held(0.48, C6, 0.65, 0.35),
+    held(0.48, E6, 1.0, 0.35),
+];
+
+// Lunar: E minor glass.
+const LUNAR_POP: &[Note] = &[hit(0.0, B5, 0.55), hit(0.035, E6, 1.0)];
+const LUNAR_SPARKLE: &[Note] = &[
+    hit(0.0, E5, 0.8),
+    hit(0.09, G5, 0.85),
+    hit(0.18, B5, 0.9),
+    hit(0.3, G6, 0.55),
+];
+const LUNAR_FANFARE: &[Note] = &[
+    hit(0.0, E5, 0.85),
+    hit(0.14, G5, 0.9),
+    hit(0.28, B5, 0.95),
+    hit(0.46, E5, 0.5),
+    hit(0.46, G5, 0.5),
+    hit(0.46, B5, 0.6),
+    hit(0.46, E6, 1.0),
+];
+
+// Autumn: F major marimba.
+const AUTUMN_POP: &[Note] = &[hit(0.0, C6, 0.6), hit(0.035, F6, 1.0)];
+const AUTUMN_SPARKLE: &[Note] = &[
+    hit(0.0, F5, 0.85),
+    hit(0.09, A5, 0.9),
+    hit(0.18, C6, 0.95),
+    hit(0.3, F6, 0.7),
+];
+const AUTUMN_FANFARE: &[Note] = &[
+    hit(0.0, F5, 0.85),
+    hit(0.13, A5, 0.9),
+    hit(0.26, C6, 0.95),
+    hit(0.44, F5, 0.6),
+    hit(0.44, A5, 0.6),
+    hit(0.44, C6, 0.7),
+    hit(0.44, F6, 1.0),
+];
+
+// Classic: A major door chime.
+const CLASSIC_POP: &[Note] = &[hit(0.0, E5, 0.6), hit(0.035, A5, 1.0)];
+const CLASSIC_SPARKLE: &[Note] = &[
+    hit(0.0, A4, 0.8),
+    hit(0.09, CS5, 0.85),
+    hit(0.18, E5, 0.9),
+    hit(0.3, A5, 0.7),
+];
+const CLASSIC_FANFARE: &[Note] = &[
+    hit(0.0, A4, 0.85),
+    hit(0.14, CS5, 0.9),
+    hit(0.28, E5, 0.95),
+    hit(0.46, A4, 0.55),
+    hit(0.46, CS5, 0.55),
+    hit(0.46, E5, 0.65),
+    hit(0.46, A5, 1.0),
+];
+
+// Soft: D major sine tones.
+const SOFT_POP: &[Note] = &[hit(0.0, A5, 0.6), hit(0.035, D6, 1.0)];
+const SOFT_SPARKLE: &[Note] = &[
+    hit(0.0, D5, 0.8),
+    hit(0.1, FS5, 0.85),
+    hit(0.2, A5, 0.9),
+    hit(0.32, D6, 0.7),
+];
+const SOFT_FANFARE: &[Note] = &[
+    hit(0.0, D5, 0.85),
+    hit(0.15, FS5, 0.9),
+    hit(0.3, A5, 0.95),
+    hit(0.48, D5, 0.55),
+    hit(0.48, FS5, 0.55),
+    hit(0.48, A5, 0.65),
+    hit(0.48, D6, 1.0),
+];
+
+// Chiptune: C major square-wave arpeggios.
+const CHIPTUNE_POP: &[Note] = &[held(0.0, C6, 0.7, 0.03), held(0.04, G6, 1.0, 0.06)];
+const CHIPTUNE_SPARKLE: &[Note] = &[
+    held(0.0, C5, 0.85, 0.07),
+    held(0.08, E5, 0.9, 0.07),
+    held(0.16, G5, 0.95, 0.07),
+    held(0.24, C6, 1.0, 0.3),
+];
+const CHIPTUNE_FANFARE: &[Note] = &[
+    held(0.0, C5, 0.85, 0.1),
+    held(0.12, E5, 0.9, 0.1),
+    held(0.24, G5, 0.95, 0.1),
+    held(0.4, C5, 0.5, 0.5),
+    held(0.4, E5, 0.5, 0.5),
+    held(0.4, G5, 0.6, 0.5),
+    held(0.4, C6, 1.0, 0.5),
+];
+
 /// The score of `chime` in `pack`.
 pub(crate) fn score(pack: SoundPack, chime: Chime) -> Score {
-    let pick = |break_notes, focus_notes| match chime {
-        Chime::BreakStart => break_notes,
-        Chime::FocusStart => focus_notes,
+    match chime {
+        Chime::BreakStart | Chime::FocusStart => phase_score(pack, chime),
+        Chime::Pop | Chime::Sparkle | Chime::Fanfare => reward_score(pack, chime),
+    }
+}
+
+/// The notes of one pack's reward sounds: pop, sparkle, fanfare.
+type RewardNotes = (&'static [Note], &'static [Note], &'static [Note]);
+
+/// The score of a beta reward sound (ADR-022) in `pack`, played with the pack's instrument.
+fn reward_score(pack: SoundPack, chime: Chime) -> Score {
+    let (instrument, (pop, sparkle, fanfare)): (Instrument, RewardNotes) = match pack {
+        SoundPack::Midnight => (
+            Instrument::Struck(&BELL),
+            (MIDNIGHT_POP, MIDNIGHT_SPARKLE, MIDNIGHT_FANFARE),
+        ),
+        SoundPack::Vaporwave => (
+            Instrument::Pad(&SYNTH_PAD),
+            (VAPORWAVE_POP, VAPORWAVE_SPARKLE, VAPORWAVE_FANFARE),
+        ),
+        SoundPack::Lunar => (
+            Instrument::Struck(&GLASS),
+            (LUNAR_POP, LUNAR_SPARKLE, LUNAR_FANFARE),
+        ),
+        SoundPack::Autumn => (
+            Instrument::Struck(&MARIMBA),
+            (AUTUMN_POP, AUTUMN_SPARKLE, AUTUMN_FANFARE),
+        ),
+        SoundPack::Classic => (
+            Instrument::Struck(&DOOR_CHIME),
+            (CLASSIC_POP, CLASSIC_SPARKLE, CLASSIC_FANFARE),
+        ),
+        SoundPack::Soft => (
+            Instrument::Struck(&SINE),
+            (SOFT_POP, SOFT_SPARKLE, SOFT_FANFARE),
+        ),
+        SoundPack::Chiptune => (
+            Instrument::Pulse(&SQUARE),
+            (CHIPTUNE_POP, CHIPTUNE_SPARKLE, CHIPTUNE_FANFARE),
+        ),
+    };
+    let (len_ms, release_s, notes) = match chime {
+        Chime::Pop => (POP_MS, POP_RELEASE_S, pop),
+        Chime::Sparkle => (SPARKLE_MS, SPARKLE_RELEASE_S, sparkle),
+        _ => (FANFARE_MS, FANFARE_RELEASE_S, fanfare),
+    };
+    Score {
+        len_ms,
+        release_s,
+        instrument,
+        notes,
+    }
+}
+
+/// The score of a phase chime in `pack`.
+fn phase_score(pack: SoundPack, chime: Chime) -> Score {
+    let pick = |break_notes, focus_notes| {
+        if chime == Chime::BreakStart {
+            break_notes
+        } else {
+            focus_notes
+        }
     };
     let (len_ms, release_s, instrument, notes) = match pack {
         SoundPack::Midnight => (
@@ -549,7 +762,7 @@ mod tests {
                 let (from, to) = (pair[0].1, pair[1].1);
                 match chime {
                     Chime::BreakStart => assert!(to < from, "{pack:?} {chime:?}: {steps:?}"),
-                    Chime::FocusStart => assert!(to > from, "{pack:?} {chime:?}: {steps:?}"),
+                    _ => assert!(to > from, "{pack:?} {chime:?}: {steps:?}"),
                 }
             }
         }
@@ -591,7 +804,7 @@ mod tests {
                     end < start - 1.0,
                     "{pack:?} {chime:?} does not fall: {start:.2} -> {end:.2}"
                 ),
-                Chime::FocusStart => assert!(
+                _ => assert!(
                     end > start + 1.0,
                     "{pack:?} {chime:?} does not rise: {start:.2} -> {end:.2}"
                 ),
@@ -637,6 +850,138 @@ mod tests {
                     .iter()
                     .all(|s| s.is_finite() && (-1.0..=1.0).contains(s)),
                 "{pack:?} {chime:?}"
+            );
+        }
+    }
+
+    // --- Beta reward sounds (ADR-022) ---
+
+    fn reward_variants() -> impl Iterator<Item = (SoundPack, Chime)> {
+        SoundPack::ALL
+            .into_iter()
+            .flat_map(|pack| Chime::REWARDS.map(|chime| (pack, chime)))
+    }
+
+    /// Every pack's reward sounds, rendered once.
+    fn rendered_reward(pack: SoundPack, chime: Chime) -> &'static [Sample] {
+        static ALL: OnceLock<Vec<(SoundPack, Chime, Vec<Sample>)>> = OnceLock::new();
+        let all = ALL.get_or_init(|| {
+            reward_variants()
+                .map(|(pack, chime)| (pack, chime, render(chime, pack)))
+                .collect()
+        });
+        all.iter()
+            .find(|(p, c, _)| *p == pack && *c == chime)
+            .map(|(_, _, samples)| samples.as_slice())
+            .unwrap_or(&[])
+    }
+
+    #[test]
+    fn phase_chimes_and_reward_sounds_are_separate() {
+        assert_eq!(Chime::ALL, [Chime::BreakStart, Chime::FocusStart]);
+        assert_eq!(Chime::REWARDS, [Chime::Pop, Chime::Sparkle, Chime::Fanfare]);
+    }
+
+    #[test]
+    fn reward_sounds_are_short_and_ordered_by_length() {
+        for pack in SoundPack::ALL {
+            let [pop, sparkle, fanfare] = Chime::REWARDS.map(|chime| pack.duration(chime));
+            for (chime, duration) in [
+                (Chime::Pop, pop),
+                (Chime::Sparkle, sparkle),
+                (Chime::Fanfare, fanfare),
+            ] {
+                assert!(
+                    (Duration::from_millis(120)..=Duration::from_millis(1_400)).contains(&duration),
+                    "{pack:?} {chime:?}: {duration:?}"
+                );
+                let expected = synth::sample_count(score(pack, chime).len_ms, SAMPLE_RATE_HZ);
+                assert_eq!(
+                    rendered_reward(pack, chime).len(),
+                    expected,
+                    "{pack:?} {chime:?}"
+                );
+            }
+            assert!(pop < sparkle && sparkle < fanfare, "{pack:?}");
+        }
+    }
+
+    #[test]
+    fn reward_sounds_start_and_end_silently_at_the_common_peak() {
+        let tail = index(0.005);
+        for (pack, chime) in reward_variants() {
+            let samples = rendered_reward(pack, chime);
+            assert!(
+                samples
+                    .iter()
+                    .all(|s| s.is_finite() && (-1.0..=1.0).contains(s))
+            );
+            let p = peak(samples);
+            assert!(
+                (p - f64::from(PEAK_LEVEL)).abs() < 1e-6,
+                "{pack:?} {chime:?}: peak {p}"
+            );
+            assert!(
+                f64::from(samples[0]).abs() < 1e-9,
+                "{pack:?} {chime:?} starts with a click"
+            );
+            let end = peak(&samples[samples.len() - tail..]);
+            assert!(end < 0.01, "{pack:?} {chime:?} ends with a click: {end}");
+            for note in score(pack, chime).notes {
+                let at = index(note.at_s);
+                if at > 0 {
+                    let jump = (f64::from(samples[at]) - f64::from(samples[at - 1])).abs();
+                    assert!(jump < 0.2, "{pack:?} {chime:?}: jump at {}s", note.at_s);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reward_sounds_rise() {
+        for (pack, chime) in reward_variants() {
+            let steps = melody(&score(pack, chime));
+            assert!(steps.len() >= 2, "{pack:?} {chime:?}");
+            assert!(
+                steps.windows(2).all(|pair| pair[1].1 > pair[0].1),
+                "{pack:?} {chime:?}: {steps:?}"
+            );
+        }
+        // Rendered: the end sounds higher than the first note (long enough to measure: sparkle and fanfare).
+        for pack in SoundPack::ALL {
+            for chime in [Chime::Sparkle, Chime::Fanfare] {
+                let score = score(pack, chime);
+                let samples = rendered_reward(pack, chime);
+                let steps = melody(&score);
+                let (first, second) = (steps[0].0, steps[1].0);
+                let lo = score
+                    .notes
+                    .iter()
+                    .map(|n| n.freq_hz)
+                    .fold(f64::MAX, f64::min)
+                    / 1.06;
+                let hi = score.notes.iter().map(|n| n.freq_hz).fold(0.0, f64::max) * 1.06;
+                let start = pitch_centroid(samples, first + 0.005, second - 0.005, lo, hi);
+                let end_at = score.len_s() - score.release_s;
+                let end = pitch_centroid(samples, end_at - 0.2, end_at, lo, hi);
+                assert!(
+                    end > start + 1.0,
+                    "{pack:?} {chime:?} does not rise: {start:.2} -> {end:.2}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reward_sounds_differ_by_kind() {
+        for pack in SoundPack::ALL {
+            assert_ne!(
+                rendered_reward(pack, Chime::Pop),
+                rendered_reward(pack, Chime::Sparkle)
+            );
+            assert_ne!(
+                rendered_reward(pack, Chime::Sparkle),
+                rendered_reward(pack, Chime::Fanfare)
             );
         }
     }

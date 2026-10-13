@@ -68,11 +68,11 @@ pub fn includes_titles(summary: &SessionSummary) -> bool {
     summary.usage.apps.iter().any(|app| !app.titles.is_empty())
 }
 
-/// The export document (one JSON file, ARCHITECTURE §6.12). `H` is one stored session, `C` and `S` the contents of
-/// `meeting-choices.json` and `work-seen.json` as stored (`None` when there is no such file).
+/// The export document (one JSON file, ARCHITECTURE §6.12). `H` is one stored session, `C`, `S` and `R` the contents
+/// of `meeting-choices.json`, `work-seen.json` and `rewards.json` as stored (`None` when there is no such file).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Export<H, C, S> {
+pub struct Export<H, C, S, R> {
     pub format: &'static str,
     pub version: u32,
     pub exported_at_ms: i64,
@@ -83,9 +83,13 @@ pub struct Export<H, C, S> {
     pub history: Vec<H>,
     pub meeting_choices: Option<C>,
     pub work_seen: Option<S>,
+    /// The rewards ledger (beta, ADR-022): numbers, day numbers and session ids only. Left out when there is none,
+    /// so an export without the beta looks as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rewards: Option<R>,
 }
 
-impl<H, C, S> Export<H, C, S> {
+impl<H, C, S, R> Export<H, C, S, R> {
     /// A document with the current header fields; the config is made exportable here, so a caller cannot forget it.
     pub fn new(
         exported_at_ms: i64,
@@ -94,6 +98,7 @@ impl<H, C, S> Export<H, C, S> {
         history: Vec<H>,
         meeting_choices: Option<C>,
         work_seen: Option<S>,
+        rewards: Option<R>,
     ) -> Self {
         Self {
             format: EXPORT_FORMAT,
@@ -104,6 +109,7 @@ impl<H, C, S> Export<H, C, S> {
             history,
             meeting_choices,
             work_seen,
+            rewards,
         }
     }
 }
@@ -167,7 +173,8 @@ mod tests {
         config.calendar.google_client_id = "123-abc.apps.googleusercontent.com".into();
         config.calendar.google_client_secret = "GOCSPX-secret".into();
         config.focus_minutes = 30;
-        let export: Export<u8, u8, u8> = Export::new(5, "0.1.0", &config, vec![1], None, Some(2));
+        let export: Export<u8, u8, u8, u8> =
+            Export::new(5, "0.1.0", &config, vec![1], None, Some(2), None);
         assert_eq!(export.config.calendar.google_client_secret, "");
         assert_eq!(
             export.config.calendar.google_client_id,
@@ -185,6 +192,13 @@ mod tests {
         assert_eq!(json["appVersion"], "0.1.0");
         assert_eq!(json["meetingChoices"], serde_json::Value::Null);
         assert_eq!(json["workSeen"], 2);
+        assert!(json.get("rewards").is_none());
+        let with_rewards: Export<u8, u8, u8, u8> =
+            Export::new(5, "0.1.0", &config, Vec::new(), None, None, Some(3));
+        assert_eq!(
+            serde_json::to_value(&with_rewards).expect("serialize")["rewards"],
+            3
+        );
         assert_eq!(json["config"]["calendar"]["googleClientSecret"], "");
         assert!(!json.to_string().contains("GOCSPX-secret"));
     }
@@ -209,6 +223,8 @@ mod tests {
             demo: false,
             goal: None,
             goal_done: None,
+            steps: Vec::new(),
+            sparks: None,
         };
         assert!(!includes_titles(&summary));
         summary.usage.apps[0].titles.push(TitleUsage {

@@ -23,6 +23,22 @@ pub const MEETING_REMINDER_LEAD_MINUTES: [u32; 3] = [30, 20, 10];
 /// A meeting longer than this never extends a focus or holds a break (`Extend` / `PauseAtBreak` are ignored):
 /// a day-long "meeting" (a conference, a blocked afternoon) must not stop the breaks for hours. 4 hours.
 pub const MAX_MEETING_HOLD_MS: u64 = 4 * 60 * 60 * MS_PER_SEC;
+/// Beta rewards (ADR-022), an exception like [`MEETING_REMINDER_LEAD_MINUTES`]: a reward day starts at 04:00 local
+/// time (minute of the day), so a late evening still counts for the day it began.
+pub const REWARD_DAY_START_MINUTE: u32 = 240;
+/// Beta rewards (ADR-022): a focus block is "full" when it ran at least this share (percent) of the profile's focus
+/// length (and at least [`TimingProfile::reward_min_block_secs`]).
+pub const FULL_BLOCK_PERCENT: u32 = 80;
+/// Beta rewards (ADR-022): a break counts as "taken" when it ran at least this share (percent) of its length.
+pub const BREAK_TAKEN_PERCENT: u32 = 50;
+/// Normal profile: one focus-time spark per this many seconds of running focus (ADR-022).
+pub const SPARK_UNIT_SECS: u32 = 60;
+/// Normal profile: a block shorter than this never counts as a real or full block (ADR-022), 10 minutes.
+pub const REWARD_MIN_BLOCK_SECS: u32 = 600;
+/// Demo profile: one focus-time spark per second.
+pub const DEMO_SPARK_UNIT_SECS: u32 = 1;
+/// Demo profile: the shortest real block in seconds (half the demo focus).
+pub const DEMO_REWARD_MIN_BLOCK_SECS: u32 = 20;
 
 const SECS_PER_MINUTE: u32 = 60;
 const MS_PER_SEC: u64 = 1000;
@@ -40,6 +56,10 @@ pub struct TimingProfile {
     pub idle_after_secs: u32,
     /// Shortened demo profile.
     pub demo: bool,
+    /// Beta rewards (ADR-022): one focus-time spark per this many seconds of running focus (never 0 in use).
+    pub spark_unit_secs: u32,
+    /// Beta rewards (ADR-022): a block that ran shorter than this is no real block (no full-block or back bonus).
+    pub reward_min_block_secs: u32,
 }
 
 impl TimingProfile {
@@ -51,6 +71,8 @@ impl TimingProfile {
             interruption_gap_secs: INTERRUPTION_GAP_SECS,
             idle_after_secs: IDLE_AFTER_SECS,
             demo: false,
+            spark_unit_secs: SPARK_UNIT_SECS,
+            reward_min_block_secs: REWARD_MIN_BLOCK_SECS,
         }
     }
 
@@ -62,6 +84,8 @@ impl TimingProfile {
             interruption_gap_secs: INTERRUPTION_GAP_SECS,
             idle_after_secs: DEMO_IDLE_AFTER_SECS,
             demo: true,
+            spark_unit_secs: DEMO_SPARK_UNIT_SECS,
+            reward_min_block_secs: DEMO_REWARD_MIN_BLOCK_SECS,
         }
     }
 
@@ -120,6 +144,7 @@ mod tests {
         assert_eq!(p.interruption_gap_secs, 90);
         assert_eq!(p.idle_after_secs, 120);
         assert!(!p.demo);
+        assert_eq!((p.spark_unit_secs, p.reward_min_block_secs), (60, 600));
         assert_eq!(TimingProfile::default(), p);
     }
 
@@ -132,6 +157,16 @@ mod tests {
         assert_eq!(p.focus_ms(), 40_000);
         assert_eq!(p.break_ms(), 20_000);
         assert_eq!(p.interruption_gap_ms(), 90_000);
+        assert_eq!((p.spark_unit_secs, p.reward_min_block_secs), (1, 20));
+    }
+
+    #[test]
+    fn reward_thresholds_are_named_exceptions() {
+        assert_eq!(REWARD_DAY_START_MINUTE, 4 * 60);
+        assert_eq!((FULL_BLOCK_PERCENT, BREAK_TAKEN_PERCENT), (80, 50));
+        // The demo minimum is a real share of the demo focus, so a full demo block can be earned.
+        let demo = TimingProfile::demo();
+        assert!(demo.reward_min_block_secs * 100 <= demo.focus_secs * FULL_BLOCK_PERCENT);
     }
 
     #[test]
@@ -155,6 +190,7 @@ mod tests {
         assert_eq!((p.focus_secs, p.break_secs), (1500, 300));
         assert!(!p.demo);
         assert_eq!(p.interruption_gap_secs, INTERRUPTION_GAP_SECS);
+        assert_eq!((p.spark_unit_secs, p.reward_min_block_secs), (60, 600));
     }
 
     #[test]

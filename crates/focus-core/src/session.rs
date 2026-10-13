@@ -26,10 +26,16 @@
 //!
 //! Developer mode (ADR-019) can shorten the current phase ([`Input::DevSetRemaining`]): only its deadline
 //! moves (monotonic clock, the profile stays), so the phase still ends on a Tick with the usual effects.
+//!
+//! Beta (ADR-022): the session keeps a plan of small steps ([`Input::SetSteps`], [`Input::SetStepDone`]), shown
+//! by every snapshot. It survives Start; at Stop all steps go into [`SessionTotals::steps`] and the open ones stay
+//! as the next plan (same ids). Every phase start and end, and every tick of a step, is reported as an
+//! [`Effect::Progress`] fact (numbers and ids only, never texts) inserted into the ADR-013 effect order; the
+//! other effects keep their relative order. Steps never change phases or other effects.
 
 use crate::api::{
-    AppError, ChimeKind, Meeting, MeetingChoice, MeetingHoldView, Phase, PhaseChange, SessionGoal,
-    SessionSnapshot,
+    AppError, ChimeKind, Meeting, MeetingChoice, MeetingHoldView, MicroStep, Phase, PhaseChange,
+    SessionGoal, SessionSnapshot, StepDraft,
 };
 use crate::calendar::meeting_hold_allowed;
 use crate::timing::{MAX_MEETING_HOLD_MS, TimingProfile};
@@ -39,6 +45,50 @@ const MS_PER_SEC: u64 = 1000;
 
 /// `AppError.code` of [`Session::check_dev_set_remaining`]: no session runs (ADR-019).
 pub const ERR_NOT_RUNNING: &str = "notRunning";
+/// Most small steps in one session plan (beta, ADR-022).
+pub const MAX_STEPS: usize = 5;
+/// Longest step text in characters; a longer one is cut with `…` as its last character.
+pub const MAX_STEP_CHARS: usize = 80;
+/// `AppError.code` of [`normalize_steps`]: more than [`MAX_STEPS`] steps (field `steps`).
+pub const ERR_TOO_MANY_STEPS: &str = "tooManySteps";
+
+/// Cleans the steps the UI sends (`set_session_steps`, ADR-022): every text is trimmed, control characters become
+/// spaces, empty texts are dropped and a text longer than [`MAX_STEP_CHARS`] is cut with `…` as its last character.
+/// More than [`MAX_STEPS`] non-empty steps return [`ERR_TOO_MANY_STEPS`] with field `steps`. The texts are the
+/// user's own: the error never echoes them.
+pub fn normalize_steps(drafts: Vec<StepDraft>) -> Result<Vec<StepDraft>, AppError> {
+    let steps: Vec<StepDraft> = drafts
+        .into_iter()
+        .filter_map(|draft| {
+            let text = clean_step_text(&draft.text);
+            (!text.is_empty()).then_some(StepDraft { id: draft.id, text })
+        })
+        .collect();
+    if steps.len() > MAX_STEPS {
+        return Err(AppError {
+            code: ERR_TOO_MANY_STEPS.to_owned(),
+            message: format!("at most {MAX_STEPS} steps, got {}", steps.len()),
+            field: Some("steps".to_owned()),
+        });
+    }
+    Ok(steps)
+}
+
+/// One step text: control characters → spaces, trimmed, cut at [`MAX_STEP_CHARS`] with `…`.
+fn clean_step_text(raw: &str) -> String {
+    let spaced: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = spaced.trim();
+    if trimmed.chars().count() <= MAX_STEP_CHARS {
+        return trimmed.to_owned();
+    }
+    let mut cut: String = trimmed.chars().take(MAX_STEP_CHARS - 1).collect();
+    cut.truncate(cut.trim_end().len());
+    cut.push('…');
+    cut
+}
 
 /// A point in time supplied by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +130,87 @@ pub enum Input {
     /// effects: the phase ends on a later Tick exactly as at its own deadline. No-op while idle (the
     /// shell asks [`Session::check_dev_set_remaining`] first).
     DevSetRemaining { secs: u32 },
+    /// Beta (ADR-022): replaces the small steps of the coming or running session (any phase) with drafts cleaned by
+    /// [`normalize_steps`] (at most [`MAX_STEPS`] are kept, empty texts are dropped). A draft with the id of an
+    /// existing step keeps that step's id and tick; any other draft becomes a new step with a fresh id (one above
+    /// every id given out before). An empty list clears the plan. Returns no effects; only the snapshot changes.
+    SetSteps(Vec<StepDraft>),
+    /// Beta (ADR-022): ticks (`done`) or unticks a step in Focus or Break (also paused). Idle, an unknown id or no
+    /// change: no-op. A tick returns `[Progress(StepDone)]` (`first_time` = never ticked before in this session);
+    /// an untick returns nothing.
+    SetStepDone { id: u32, done: bool },
+}
+
+/// How a phase ended (beta rewards, ADR-022).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseEnd {
+    /// Its deadline was reached on a Tick.
+    Deadline,
+    /// Skipped (`SkipPhase`).
+    Skipped,
+    /// The session was stopped.
+    Stopped,
+}
+
+/// What happened in the session, for the beta rewards (ADR-022, `Effect::Progress`). Numbers and ids only, never
+/// texts. `ran_secs` is the running time of that phase alone (no pauses or sleep gaps; a meeting extension counts).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgressFact {
+    /// Idle → Focus; `steps` = the steps planned at Start.
+    Started {
+        session_id: String,
+        steps: u32,
+        profile: TimingProfile,
+    },
+    /// A focus phase ended; `held` = the break that follows starts paused for a meeting (`PauseAtBreak`).
+    FocusEnded {
+        session_id: String,
+        cycle: u32,
+        ran_secs: u32,
+        how: PhaseEnd,
+        held: bool,
+        profile: TimingProfile,
+    },
+    /// A break ended (into the next focus, or by Stop); `cycle` = the cycle of the focus before it.
+    BreakEnded {
+        session_id: String,
+        cycle: u32,
+        ran_secs: u32,
+        how: PhaseEnd,
+        profile: TimingProfile,
+    },
+    /// A step was ticked: `done` of `total` steps are ticked now; `phase` = Focus or Break.
+    StepDone {
+        session_id: String,
+        step_id: u32,
+        first_time: bool,
+        done: u32,
+        total: u32,
+        phase: Phase,
+        profile: TimingProfile,
+    },
+}
+
+impl ProgressFact {
+    /// The session the fact belongs to.
+    pub fn session_id(&self) -> &str {
+        match self {
+            ProgressFact::Started { session_id, .. }
+            | ProgressFact::FocusEnded { session_id, .. }
+            | ProgressFact::BreakEnded { session_id, .. }
+            | ProgressFact::StepDone { session_id, .. } => session_id,
+        }
+    }
+
+    /// The profile of that session (`demo` tells a demo session).
+    pub fn profile(&self) -> &TimingProfile {
+        match self {
+            ProgressFact::Started { profile, .. }
+            | ProgressFact::FocusEnded { profile, .. }
+            | ProgressFact::BreakEnded { profile, .. }
+            | ProgressFact::StepDone { profile, .. } => profile,
+        }
+    }
 }
 
 /// A meeting the user chose to handle with `Extend` or `PauseAtBreak` (see the module docs).
@@ -181,6 +312,8 @@ pub struct SessionTotals {
     pub demo: bool,
     /// The goal the session had when it ended ([`Input::SetGoal`]).
     pub goal: Option<SessionGoal>,
+    /// Every small step of the session with its tick (beta, ADR-022); empty without a plan.
+    pub steps: Vec<MicroStep>,
 }
 
 /// Side effects the shell executes, in the order given.
@@ -199,6 +332,9 @@ pub enum Effect {
     PhaseChanged(PhaseChange),
     /// The session ended (exactly once per session).
     SessionEnded(SessionTotals),
+    /// Beta rewards (ADR-022): a fact for the rewards service. Emitted whatever the config says (the shell drops it
+    /// while the rewards are off); it never changes the other effects or their order.
+    Progress(ProgressFact),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +388,10 @@ struct Active {
     hold: Option<MeetingHold>,
     /// Ids of the holds already applied in this session (each applies at most once).
     used_holds: Vec<String>,
+    /// `focused_ms` when the current focus phase began (its own running time = the difference).
+    phase_focused_start_ms: u64,
+    /// `break_ms` when the current break began.
+    phase_break_start_ms: u64,
 }
 
 impl Active {
@@ -366,20 +506,58 @@ impl Active {
         }
     }
 
+    /// Running time of the current focus phase alone, in whole seconds (call [`Active::advance`] first).
+    fn focus_ran_secs(&self) -> u32 {
+        ms_to_secs_floor(self.focused_ms.saturating_sub(self.phase_focused_start_ms))
+    }
+
+    /// Running time of the current break alone, in whole seconds (call [`Active::advance`] first).
+    fn break_ran_secs(&self) -> u32 {
+        ms_to_secs_floor(self.break_ms.saturating_sub(self.phase_break_start_ms))
+    }
+
+    /// The `FocusEnded` fact of the focus phase that ends now.
+    fn focus_ended(&self, how: PhaseEnd, held: bool) -> Effect {
+        Effect::Progress(ProgressFact::FocusEnded {
+            session_id: self.session_id.clone(),
+            cycle: self.cycle,
+            ran_secs: self.focus_ran_secs(),
+            how,
+            held,
+            profile: self.profile,
+        })
+    }
+
+    /// The `BreakEnded` fact of the break that ends now.
+    fn break_ended(&self, how: PhaseEnd) -> Effect {
+        Effect::Progress(ProgressFact::BreakEnded {
+            session_id: self.session_id.clone(),
+            cycle: self.cycle,
+            ran_secs: self.break_ran_secs(),
+            how,
+            profile: self.profile,
+        })
+    }
+
     /// Focus → Break (deadline reached or skipped). Shields go down before the toast.
-    fn enter_break(&mut self, now: Now) -> Vec<Effect> {
+    fn enter_break(&mut self, now: Now, how: PhaseEnd) -> Vec<Effect> {
+        let progress = self.focus_ended(how, false);
         let clock = Clock::Running {
             deadline_ms: now.mono_ms.saturating_add(self.profile.break_ms()),
         };
         self.begin_break(now, clock);
-        self.break_effects(NotifyKind::BreakStarted {
-            break_secs: self.profile.break_secs,
-        })
+        self.break_effects(
+            progress,
+            NotifyKind::BreakStarted {
+                break_secs: self.profile.break_secs,
+            },
+        )
     }
 
     /// Focus → Break during a `PauseAtBreak` meeting: the break starts paused with its full length.
     /// Same effects as [`Active::enter_break`], with `BreakHeld` instead of `BreakStarted`.
     fn enter_held_break(&mut self, now: Now, hold: MeetingHold) -> Vec<Effect> {
+        let progress = self.focus_ended(PhaseEnd::Deadline, true);
         let clock = Clock::Paused {
             remaining_ms: self.profile.break_ms(),
         };
@@ -389,7 +567,7 @@ impl Active {
             .map(str::to_owned);
         self.used_holds.push(hold.id.clone());
         self.hold = Some(hold);
-        self.break_effects(NotifyKind::BreakHeld { subject })
+        self.break_effects(progress, NotifyKind::BreakHeld { subject })
     }
 
     fn begin_break(&mut self, now: Now, clock: Clock) {
@@ -399,9 +577,11 @@ impl Active {
         self.last_seen = now;
         self.extra_ms = 0;
         self.hold = None;
+        self.phase_break_start_ms = self.break_ms;
     }
 
-    fn break_effects(&self, notify: NotifyKind) -> Vec<Effect> {
+    /// ADR-013 order with the `FocusEnded` fact (ADR-022) right before the toast.
+    fn break_effects(&self, progress: Effect, notify: NotifyKind) -> Vec<Effect> {
         vec![
             Effect::PhaseChanged(PhaseChange {
                 from: Phase::Focus,
@@ -411,6 +591,7 @@ impl Active {
             Effect::Tracking(false),
             Effect::Shields(false),
             Effect::Chime(ChimeKind::BreakStart),
+            progress,
             Effect::Notify(notify),
         ]
     }
@@ -429,8 +610,10 @@ impl Active {
         self.hold = Some(hold);
     }
 
-    /// Break → next Focus (deadline reached or skipped). The toast comes before shields go up.
-    fn enter_focus(&mut self, now: Now) -> Vec<Effect> {
+    /// Break → next Focus (deadline reached or skipped). The toast comes before shields go up; the `BreakEnded`
+    /// fact (ADR-022) right before the toast.
+    fn enter_focus(&mut self, now: Now, how: PhaseEnd) -> Vec<Effect> {
+        let progress = self.break_ended(how);
         self.cycle = self.cycle.saturating_add(1);
         self.stage = Stage::Focus;
         self.clock = Clock::Running {
@@ -439,6 +622,7 @@ impl Active {
         self.last_seen = now;
         self.extra_ms = 0;
         self.hold = None;
+        self.phase_focused_start_ms = self.focused_ms;
         vec![
             Effect::PhaseChanged(PhaseChange {
                 from: Phase::Break,
@@ -446,6 +630,7 @@ impl Active {
                 cycle: self.cycle,
             }),
             Effect::Chime(ChimeKind::FocusStart),
+            progress,
             Effect::Notify(NotifyKind::FocusStarted {
                 focus_secs: self.profile.focus_secs,
                 cycle: self.cycle,
@@ -455,14 +640,19 @@ impl Active {
         ]
     }
 
-    fn next_phase(&mut self, now: Now) -> Vec<Effect> {
+    fn next_phase(&mut self, now: Now, how: PhaseEnd) -> Vec<Effect> {
         match self.stage {
-            Stage::Focus => self.enter_break(now),
-            Stage::Break => self.enter_focus(now),
+            Stage::Focus => self.enter_break(now, how),
+            Stage::Break => self.enter_focus(now, how),
         }
     }
 
-    fn into_totals(self, now: Now, goal: Option<SessionGoal>) -> SessionTotals {
+    fn into_totals(
+        self,
+        now: Now,
+        goal: Option<SessionGoal>,
+        steps: Vec<MicroStep>,
+    ) -> SessionTotals {
         SessionTotals {
             session_id: self.session_id,
             started_at_ms: self.started_at_ms,
@@ -472,6 +662,7 @@ impl Active {
             cycles_completed: self.cycles_completed,
             demo: self.profile.demo,
             goal,
+            steps,
         }
     }
 }
@@ -486,6 +677,12 @@ pub struct Session {
     holds: Vec<MeetingHold>,
     /// Goal of the coming (idle) or running session; moved into the totals on Stop.
     goal: Option<SessionGoal>,
+    /// Small steps of the coming (idle) or running session (beta, ADR-022).
+    steps: Vec<MicroStep>,
+    /// Ids ticked at least once in the running session (a second tick is not a first one).
+    ever_done: Vec<u32>,
+    /// The highest step id given out so far (new ids are always above it).
+    last_step_id: u32,
 }
 
 impl Default for Session {
@@ -502,6 +699,9 @@ impl Session {
             idle_profile: TimingProfile::normal(),
             holds: Vec::new(),
             goal: None,
+            steps: Vec::new(),
+            ever_done: Vec::new(),
+            last_step_id: 0,
         }
     }
 
@@ -537,7 +737,87 @@ impl Session {
                 }
                 Vec::new()
             }
+            Input::SetSteps(drafts) => {
+                self.set_steps(drafts);
+                Vec::new()
+            }
+            Input::SetStepDone { id, done } => self.set_step_done(id, done),
         }
+    }
+
+    /// [`Input::SetSteps`]: kept ids keep their tick (and "ticked before"), the others get fresh ids.
+    fn set_steps(&mut self, drafts: Vec<StepDraft>) {
+        let mut next_id = self
+            .steps
+            .iter()
+            .map(|step| step.id)
+            .fold(self.last_step_id, u32::max);
+        let mut plan: Vec<MicroStep> = Vec::new();
+        for draft in drafts {
+            if plan.len() >= MAX_STEPS {
+                break;
+            }
+            // Cleaned again: the input is meant to be clean already, but the core never trusts it.
+            let text = clean_step_text(&draft.text);
+            if text.is_empty() {
+                continue;
+            }
+            let existing = draft
+                .id
+                .filter(|id| !plan.iter().any(|step| step.id == *id))
+                .and_then(|id| self.steps.iter().find(|step| step.id == id));
+            let step = match existing {
+                Some(step) => MicroStep {
+                    id: step.id,
+                    text,
+                    done: step.done,
+                },
+                None => {
+                    next_id = next_id.saturating_add(1);
+                    MicroStep {
+                        id: next_id,
+                        text,
+                        done: false,
+                    }
+                }
+            };
+            plan.push(step);
+        }
+        self.last_step_id = next_id;
+        self.ever_done
+            .retain(|id| plan.iter().any(|step| step.id == *id));
+        self.steps = plan;
+    }
+
+    /// [`Input::SetStepDone`]: a tick in a running (or paused) session reports `StepDone`.
+    fn set_step_done(&mut self, id: u32, done: bool) -> Vec<Effect> {
+        let Some(active) = self.active.as_ref() else {
+            return Vec::new();
+        };
+        let Some(step) = self.steps.iter_mut().find(|step| step.id == id) else {
+            return Vec::new();
+        };
+        if step.done == done {
+            return Vec::new();
+        }
+        step.done = done;
+        if !done {
+            return Vec::new();
+        }
+        let first_time = !self.ever_done.contains(&id);
+        if first_time {
+            self.ever_done.push(id);
+        }
+        let ticked = self.steps.iter().filter(|step| step.done).count();
+        vec![Effect::Progress(ProgressFact::StepDone {
+            session_id: active.session_id.clone(),
+            step_id: id,
+            first_time,
+            done: u32::try_from(ticked).unwrap_or(u32::MAX),
+            total: u32::try_from(self.steps.len()).unwrap_or(u32::MAX),
+            phase: active.stage.phase(),
+            profile: active.profile,
+        })]
     }
 
     /// Developer mode (ADR-019): `Ok` when [`Input::DevSetRemaining`] applies now (a session runs, paused or
@@ -568,6 +848,7 @@ impl Session {
                 music_muted: false,
                 meeting_hold: None,
                 goal: self.goal.clone(),
+                steps: self.steps.clone(),
             },
             Some(active) => SessionSnapshot {
                 revision: 0,
@@ -584,6 +865,7 @@ impl Session {
                 music_muted: active.music_muted(&self.holds, now),
                 meeting_hold: active.hold.as_ref().map(MeetingHold::view),
                 goal: self.goal.clone(),
+                steps: self.steps.clone(),
             },
         }
     }
@@ -591,6 +873,11 @@ impl Session {
     /// The goal of the coming or running session ([`Input::SetGoal`]).
     pub fn goal(&self) -> Option<&SessionGoal> {
         self.goal.as_ref()
+    }
+
+    /// The small steps of the coming or running session (beta, ADR-022).
+    pub fn steps(&self) -> &[MicroStep] {
+        &self.steps
     }
 
     /// Exact time left in the current phase at `now` (frozen while paused); `None` when idle.
@@ -642,6 +929,11 @@ impl Session {
             return Vec::new();
         }
         let profile = sanitize(profile);
+        let started = ProgressFact::Started {
+            session_id: session_id.clone(),
+            steps: u32::try_from(self.steps.len()).unwrap_or(u32::MAX),
+            profile,
+        };
         self.active = Some(Active {
             session_id,
             profile,
@@ -658,7 +950,10 @@ impl Session {
             extra_ms: 0,
             hold: None,
             used_holds: Vec::new(),
+            phase_focused_start_ms: 0,
+            phase_break_start_ms: 0,
         });
+        self.ever_done.clear();
         vec![
             Effect::PhaseChanged(PhaseChange {
                 from: Phase::Idle,
@@ -668,6 +963,7 @@ impl Session {
             Effect::Shields(true),
             Effect::Tracking(true),
             Effect::Chime(ChimeKind::FocusStart),
+            Effect::Progress(started),
         ]
     }
 
@@ -720,11 +1016,20 @@ impl Session {
             to: Phase::Idle,
             cycle: active.cycle,
         };
+        let progress = match active.stage {
+            Stage::Focus => active.focus_ended(PhaseEnd::Stopped, false),
+            Stage::Break => active.break_ended(PhaseEnd::Stopped),
+        };
+        // Every step goes into the totals; the open ones stay as the next plan (same ids).
+        let steps = self.steps.clone();
+        self.steps.retain(|step| !step.done);
+        self.ever_done.clear();
         vec![
             Effect::Tracking(false),
             Effect::Shields(false),
             Effect::PhaseChanged(change),
-            Effect::SessionEnded(active.into_totals(now, self.goal.take())),
+            progress,
+            Effect::SessionEnded(active.into_totals(now, self.goal.take(), steps)),
         ]
     }
 
@@ -733,7 +1038,7 @@ impl Session {
             return Vec::new();
         };
         active.advance(now);
-        active.next_phase(now)
+        active.next_phase(now, PhaseEnd::Skipped)
     }
 
     fn tick(&mut self, now: Now) -> Vec<Effect> {
@@ -753,7 +1058,7 @@ impl Session {
             return Vec::new();
         }
         if active.stage == Stage::Break {
-            return active.enter_focus(now);
+            return active.enter_focus(now, PhaseEnd::Deadline);
         }
         // The break that would start now: [now, now + break). `Extend` wins over `PauseAtBreak`.
         let window_end = now.mono_ms.saturating_add(active.profile.break_ms());
@@ -773,7 +1078,7 @@ impl Session {
         if let Some(hold) = pick(MeetingChoice::PauseAtBreak).cloned() {
             return active.enter_held_break(now, hold);
         }
-        active.enter_break(now)
+        active.enter_break(now, PhaseEnd::Deadline)
     }
 }
 
@@ -890,6 +1195,17 @@ mod tests {
         all.remove(0)
     }
 
+    /// The effects without the ADR-022 `Progress` facts: what the session emitted before ADR-022. The helpers
+    /// below build those vectors, so every test comparing `legacy(..)` with them checks that the old effects keep
+    /// their exact order; the facts themselves have their own exact-order tests (ADR-022 section).
+    fn legacy(effects: &[Effect]) -> Vec<Effect> {
+        effects
+            .iter()
+            .filter(|effect| !matches!(effect, Effect::Progress(_)))
+            .cloned()
+            .collect()
+    }
+
     fn break_transition(cycle: u32, break_secs: u32) -> Vec<Effect> {
         vec![
             Effect::PhaseChanged(PhaseChange {
@@ -952,6 +1268,7 @@ mod tests {
                 music_muted: false,
                 meeting_hold: None,
                 goal: None,
+                steps: Vec::new(),
             }
         );
         assert_eq!(session.phase(), Phase::Idle);
@@ -967,6 +1284,27 @@ mod tests {
             (40, 20, true)
         );
         assert_eq!(Session::default().snapshot(at(0)).focus_secs, 2700);
+    }
+
+    #[test]
+    fn idle_profile_switched_during_a_session_waits_for_the_next_start() {
+        // "Presentation mode" switched on the Developer page while a normal session runs (ADR-019).
+        let mut session = started(TimingProfile::normal());
+        session.set_idle_profile(TimingProfile::demo());
+        let snap = session.snapshot(at(10));
+        assert_eq!(
+            (snap.focus_secs, snap.break_secs, snap.demo),
+            (2700, 900, false)
+        );
+        assert_eq!(snap.remaining_secs, 2690);
+        assert_eq!(session.profile(), Some(TimingProfile::normal()));
+
+        session.handle(at(20), Input::Stop);
+        let idle = session.snapshot(at(21));
+        assert_eq!(
+            (idle.focus_secs, idle.break_secs, idle.demo),
+            (40, 20, true)
+        );
     }
 
     #[test]
@@ -999,6 +1337,11 @@ mod tests {
                 Effect::Shields(true),
                 Effect::Tracking(true),
                 Effect::Chime(ChimeKind::FocusStart),
+                Effect::Progress(ProgressFact::Started {
+                    session_id: "s1".to_owned(),
+                    steps: 0,
+                    profile: TimingProfile::demo(),
+                }),
             ]
         );
         let snap = session.snapshot(at(0));
@@ -1038,7 +1381,10 @@ mod tests {
         assert_eq!(session.snapshot(at(39)).remaining_secs, 1);
         assert_eq!(session.snapshot(at(39)).focused_secs, 39);
 
-        assert_eq!(session.handle(at(40), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(40), Input::Tick)),
+            break_transition(1, 20)
+        );
         let snap = session.snapshot(at(40));
         assert_eq!(snap.phase, Phase::Break);
         assert_eq!(snap.cycle, 1);
@@ -1049,7 +1395,10 @@ mod tests {
 
         assert!(tick_through(&mut session, 40, 59).is_empty());
         assert_eq!(session.snapshot(at(59)).remaining_secs, 1);
-        assert_eq!(session.handle(at(60), Input::Tick), focus_transition(2, 40));
+        assert_eq!(
+            legacy(&session.handle(at(60), Input::Tick)),
+            focus_transition(2, 40)
+        );
         let snap = session.snapshot(at(60));
         assert_eq!(
             (snap.phase, snap.cycle, snap.remaining_secs),
@@ -1058,7 +1407,7 @@ mod tests {
 
         assert!(tick_through(&mut session, 60, 99).is_empty());
         assert_eq!(
-            session.handle(at(100), Input::Tick),
+            legacy(&session.handle(at(100), Input::Tick)),
             break_transition(2, 20)
         );
         assert!(tick_through(&mut session, 100, 110).is_empty());
@@ -1073,8 +1422,9 @@ mod tests {
             cycles_completed: 2,
             demo: true,
             goal: None,
+            steps: Vec::new(),
         };
-        assert_eq!(effects, stop_effects(Phase::Break, 2, expected));
+        assert_eq!(legacy(&effects), stop_effects(Phase::Break, 2, expected));
         assert_eq!(session.phase(), Phase::Idle);
     }
 
@@ -1084,14 +1434,14 @@ mod tests {
         tick_through(&mut session, 0, 38);
         // The tick for second 39 and 40 got merged into one late tick.
         assert_eq!(
-            session.handle(at_ms(41_500), Input::Tick),
+            legacy(&session.handle(at_ms(41_500), Input::Tick)),
             break_transition(1, 20)
         );
         // The break is measured from the transition.
         assert_eq!(session.snapshot(at_ms(41_500)).remaining_secs, 20);
         assert!(session.handle(at_ms(61_499), Input::Tick).is_empty());
         assert_eq!(
-            session.handle(at_ms(61_500), Input::Tick),
+            legacy(&session.handle(at_ms(61_500), Input::Tick)),
             focus_transition(2, 40)
         );
     }
@@ -1140,7 +1490,7 @@ mod tests {
         assert_eq!(session.snapshot(at(229)).remaining_secs, 1);
         assert!(session.handle(at_ms(229_499), Input::Tick).is_empty());
         assert_eq!(
-            session.handle(at_ms(229_500), Input::Tick),
+            legacy(&session.handle(at_ms(229_500), Input::Tick)),
             break_transition(1, 20)
         );
         assert_eq!(session.snapshot(at_ms(229_500)).focused_secs, 40);
@@ -1160,7 +1510,10 @@ mod tests {
         assert!(session.handle(at(60), Input::Resume).is_empty());
         assert!(!session.is_paused());
         assert!(tick_through(&mut session, 60, 75).is_empty());
-        assert_eq!(session.handle(at(76), Input::Tick), focus_transition(2, 40));
+        assert_eq!(
+            legacy(&session.handle(at(76), Input::Tick)),
+            focus_transition(2, 40)
+        );
     }
 
     #[test]
@@ -1192,8 +1545,9 @@ mod tests {
             cycles_completed: 0,
             demo: true,
             goal: None,
+            steps: Vec::new(),
         };
-        assert_eq!(effects, stop_effects(Phase::Focus, 1, expected));
+        assert_eq!(legacy(&effects), stop_effects(Phase::Focus, 1, expected));
         assert_eq!(session.phase(), Phase::Idle);
         assert!(!session.wants_shields());
         assert_eq!(session.snapshot(at(13)).phase, Phase::Idle);
@@ -1208,7 +1562,7 @@ mod tests {
         let totals = only_totals(&effects);
         assert_eq!(totals.focused_secs, 5);
         assert_eq!(totals.ended_at_ms, WALL0 + 80_000);
-        assert_eq!(effects, stop_effects(Phase::Focus, 1, totals));
+        assert_eq!(legacy(&effects), stop_effects(Phase::Focus, 1, totals));
     }
 
     #[test]
@@ -1225,7 +1579,7 @@ mod tests {
             ),
             (40, 5, 1)
         );
-        assert_eq!(effects, stop_effects(Phase::Break, 1, totals));
+        assert_eq!(legacy(&effects), stop_effects(Phase::Break, 1, totals));
 
         let mut paused = started(TimingProfile::demo());
         tick_through(&mut paused, 0, 45);
@@ -1233,7 +1587,7 @@ mod tests {
         let effects = paused.handle(at(70), Input::Stop);
         let totals = only_totals(&effects);
         assert_eq!((totals.focused_secs, totals.break_secs), (40, 5));
-        assert_eq!(effects, stop_effects(Phase::Break, 1, totals));
+        assert_eq!(legacy(&effects), stop_effects(Phase::Break, 1, totals));
     }
 
     #[test]
@@ -1243,7 +1597,9 @@ mod tests {
         effects.extend(session.handle(at(4), Input::Stop));
         effects.extend(session.handle(at(5), Input::Stop));
         assert_eq!(ended_totals(&effects).len(), 1);
-        assert_eq!(effects.len(), 4);
+        // Tracking, Shields, PhaseChanged, Progress(FocusEnded), SessionEnded: the later Stops emit nothing.
+        assert_eq!(effects.len(), 5);
+        assert_eq!(progress_of(&effects).len(), 1);
     }
 
     #[test]
@@ -1251,7 +1607,7 @@ mod tests {
         let mut session = started(TimingProfile::demo());
         tick_through(&mut session, 0, 5);
         assert_eq!(
-            session.handle(at(5), Input::SkipPhase),
+            legacy(&session.handle(at(5), Input::SkipPhase)),
             break_transition(1, 20)
         );
         let snap = session.snapshot(at(5));
@@ -1271,7 +1627,7 @@ mod tests {
         let mut session = started(TimingProfile::demo());
         session.handle(at(2), Input::SkipPhase);
         assert_eq!(
-            session.handle(at(4), Input::SkipPhase),
+            legacy(&session.handle(at(4), Input::SkipPhase)),
             focus_transition(2, 40)
         );
         let snap = session.snapshot(at(4));
@@ -1287,7 +1643,7 @@ mod tests {
         let mut session = started(TimingProfile::demo());
         session.handle(at(3), Input::Pause);
         assert_eq!(
-            session.handle(at(30), Input::SkipPhase),
+            legacy(&session.handle(at(30), Input::SkipPhase)),
             break_transition(1, 20)
         );
         assert!(!session.is_paused());
@@ -1297,7 +1653,7 @@ mod tests {
 
         session.handle(at(31), Input::Pause);
         assert_eq!(
-            session.handle(at(90), Input::SkipPhase),
+            legacy(&session.handle(at(90), Input::SkipPhase)),
             focus_transition(2, 40)
         );
         assert!(!session.is_paused());
@@ -1328,7 +1684,7 @@ mod tests {
         );
         assert!(tick_through(&mut session, 150, 179).is_empty());
         assert_eq!(
-            session.handle(at(180), Input::Tick),
+            legacy(&session.handle(at(180), Input::Tick)),
             break_transition(1, 20)
         );
     }
@@ -1434,8 +1790,14 @@ mod tests {
         };
         let mut session = started(profile);
         assert_eq!(session.snapshot(at(0)).phase_total_secs, 1);
-        assert_eq!(session.handle(at(1), Input::Tick), break_transition(1, 1));
-        assert_eq!(session.handle(at(2), Input::Tick), focus_transition(2, 1));
+        assert_eq!(
+            legacy(&session.handle(at(1), Input::Tick)),
+            break_transition(1, 1)
+        );
+        assert_eq!(
+            legacy(&session.handle(at(2), Input::Tick)),
+            focus_transition(2, 1)
+        );
     }
 
     #[test]
@@ -1589,7 +1951,10 @@ mod tests {
         }
         assert_eq!(session.snapshot(at(69)).remaining_secs, 1);
 
-        assert_eq!(session.handle(at(70), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(70), Input::Tick)),
+            break_transition(1, 20)
+        );
         let snap = session.snapshot(at(70));
         assert_eq!(snap.meeting_hold, None);
         assert!(!snap.music_muted);
@@ -1620,18 +1985,24 @@ mod tests {
         assert!(session.snapshot(at(10)).music_muted);
         assert!(session.snapshot(at(39)).music_muted);
         assert!(tick_through(&mut session, 0, 39).is_empty());
-        assert_eq!(session.handle(at(40), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(40), Input::Tick)),
+            break_transition(1, 20)
+        );
         assert!(!session.snapshot(at(40)).music_muted);
 
         // Music is muted only in Focus: not in the break, again in the next focus.
         assert!(tick_through(&mut session, 40, 59).is_empty());
-        assert_eq!(session.handle(at(60), Input::Tick), focus_transition(2, 40));
+        assert_eq!(
+            legacy(&session.handle(at(60), Input::Tick)),
+            focus_transition(2, 40)
+        );
         assert!(session.snapshot(at(65)).music_muted);
         assert!(!session.snapshot(at(80)).music_muted);
         // The break due at 100 s is [100, 120): after both meetings.
         assert!(tick_through(&mut session, 60, 99).is_empty());
         assert_eq!(
-            session.handle(at(100), Input::Tick),
+            legacy(&session.handle(at(100), Input::Tick)),
             break_transition(2, 20)
         );
     }
@@ -1645,7 +2016,7 @@ mod tests {
 
         // Skip during the extension starts the break at once.
         assert_eq!(
-            session.handle(at(100), Input::SkipPhase),
+            legacy(&session.handle(at(100), Input::SkipPhase)),
             break_transition(1, 20)
         );
         let snap = session.snapshot(at(100));
@@ -1654,7 +2025,7 @@ mod tests {
 
         assert!(tick_through(&mut session, 100, 119).is_empty());
         assert_eq!(
-            session.handle(at(120), Input::Tick),
+            legacy(&session.handle(at(120), Input::Tick)),
             focus_transition(2, 40)
         );
         assert!(
@@ -1665,7 +2036,7 @@ mod tests {
         // The break due at 160 s overlaps the meeting again, but the hold was used.
         assert!(tick_through(&mut session, 120, 159).is_empty());
         assert_eq!(
-            session.handle(at(160), Input::Tick),
+            legacy(&session.handle(at(160), Input::Tick)),
             break_transition(2, 20)
         );
     }
@@ -1677,7 +2048,7 @@ mod tests {
             hold("ext", Extend, 0, 100),
         ]);
         assert_eq!(
-            session.handle(at(10), Input::SkipPhase),
+            legacy(&session.handle(at(10), Input::SkipPhase)),
             break_transition(1, 20)
         );
         assert!(!session.is_paused());
@@ -1705,7 +2076,10 @@ mod tests {
         assert!(session.snapshot(at(80)).music_muted);
 
         assert!(tick_through(&mut session, 70, 89).is_empty());
-        assert_eq!(session.handle(at(90), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(90), Input::Tick)),
+            break_transition(1, 20)
+        );
     }
 
     #[test]
@@ -1734,7 +2108,7 @@ mod tests {
 
         assert!(tick_through(&mut session, 80, 99).is_empty());
         assert_eq!(
-            session.handle(at(100), Input::Tick),
+            legacy(&session.handle(at(100), Input::Tick)),
             break_transition(1, 20)
         );
         assert_eq!(session.snapshot(at(100)).focused_secs, 70);
@@ -1747,7 +2121,7 @@ mod tests {
         let effects = session.handle(at(55), Input::Stop);
         let totals = only_totals(&effects);
         assert_eq!((totals.focused_secs, totals.cycles_completed), (55, 0));
-        assert_eq!(effects, stop_effects(Phase::Focus, 1, totals));
+        assert_eq!(legacy(&effects), stop_effects(Phase::Focus, 1, totals));
         let snap = session.snapshot(at(55));
         assert_eq!(snap.phase, Phase::Idle);
         assert_eq!(snap.meeting_hold, None);
@@ -1778,7 +2152,7 @@ mod tests {
         );
         assert!(tick_through(&mut session, 150, 169).is_empty());
         assert_eq!(
-            session.handle(at(170), Input::Tick),
+            legacy(&session.handle(at(170), Input::Tick)),
             break_transition(1, 20)
         );
         assert_eq!(session.snapshot(at(170)).focused_secs, 70);
@@ -1799,7 +2173,7 @@ mod tests {
         session.handle(at(125), Input::Resume);
         assert!(tick_through(&mut session, 125, 134).is_empty());
         assert_eq!(
-            session.handle(at(135), Input::Tick),
+            legacy(&session.handle(at(135), Input::Tick)),
             break_transition(1, 20)
         );
 
@@ -1811,7 +2185,7 @@ mod tests {
         session.handle(at(145), Input::Resume);
         assert!(tick_through(&mut session, 145, 154).is_empty());
         assert_eq!(
-            session.handle(at(155), Input::Tick),
+            legacy(&session.handle(at(155), Input::Tick)),
             held_break_transition(1, Some("Meeting m"))
         );
     }
@@ -1823,7 +2197,7 @@ mod tests {
         assert!(!session.snapshot(at(39)).music_muted);
 
         assert_eq!(
-            session.handle(at(40), Input::Tick),
+            legacy(&session.handle(at(40), Input::Tick)),
             held_break_transition(1, Some("Meeting standup"))
         );
         let snap = session.snapshot(at(40));
@@ -1854,7 +2228,7 @@ mod tests {
 
         assert!(tick_through(&mut session, 200, 219).is_empty());
         assert_eq!(
-            session.handle(at(220), Input::Tick),
+            legacy(&session.handle(at(220), Input::Tick)),
             focus_transition(2, 40)
         );
         let totals = only_totals(&session.handle(at(225), Input::Stop));
@@ -1874,7 +2248,7 @@ mod tests {
         tick_through(&mut skipped, 0, 40);
         assert!(skipped.is_paused());
         assert_eq!(
-            skipped.handle(at(60), Input::SkipPhase),
+            legacy(&skipped.handle(at(60), Input::SkipPhase)),
             focus_transition(2, 40)
         );
         let snap = skipped.snapshot(at(60));
@@ -1893,7 +2267,7 @@ mod tests {
             ),
             (40, 0, 1)
         );
-        assert_eq!(effects, stop_effects(Phase::Break, 1, totals));
+        assert_eq!(legacy(&effects), stop_effects(Phase::Break, 1, totals));
         assert_eq!(stopped.snapshot(at(60)).meeting_hold, None);
     }
 
@@ -1903,10 +2277,13 @@ mod tests {
         blank.subject = "   ".to_owned();
         let mut session = with_holds(vec![blank]);
         let effects = tick_through(&mut session, 0, 40);
-        assert_eq!(effects, held_break_transition(1, None));
+        assert_eq!(legacy(&effects), held_break_transition(1, None));
         // Tracking stays off through the held break and its Resume; on again with the next focus.
         assert!(session.handle(at(50), Input::Resume).is_empty());
-        assert_eq!(session.handle(at(70), Input::Tick), focus_transition(2, 40));
+        assert_eq!(
+            legacy(&session.handle(at(70), Input::Tick)),
+            focus_transition(2, 40)
+        );
     }
 
     #[test]
@@ -1920,7 +2297,7 @@ mod tests {
         assert_eq!(session.snapshot(at(40)).meeting_hold, view("a", Extend, 60));
         assert!(tick_through(&mut session, 40, 59).is_empty());
         assert_eq!(
-            session.handle(at(60), Input::Tick),
+            legacy(&session.handle(at(60), Input::Tick)),
             held_break_transition(1, Some("Meeting b"))
         );
         assert_eq!(
@@ -1930,7 +2307,10 @@ mod tests {
 
         assert!(session.handle(at(70), Input::Resume).is_empty());
         assert!(tick_through(&mut session, 70, 89).is_empty());
-        assert_eq!(session.handle(at(90), Input::Tick), focus_transition(2, 40));
+        assert_eq!(
+            legacy(&session.handle(at(90), Input::Tick)),
+            focus_transition(2, 40)
+        );
         assert!(
             !session.snapshot(at(100)).music_muted,
             "PauseAtBreak never mutes"
@@ -1938,7 +2318,7 @@ mod tests {
         // The break due at 130 s overlaps "b" again, but the hold was used.
         assert!(tick_through(&mut session, 90, 129).is_empty());
         assert_eq!(
-            session.handle(at(130), Input::Tick),
+            legacy(&session.handle(at(130), Input::Tick)),
             break_transition(2, 20)
         );
     }
@@ -1996,7 +2376,10 @@ mod tests {
                 .is_empty()
         );
         assert!(tick_through(&mut session, 20, 39).is_empty());
-        assert_eq!(session.handle(at(40), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(40), Input::Tick)),
+            break_transition(1, 20)
+        );
 
         // Removed during an extension: the focus stays extended (and muted) until the meeting ends.
         let mut session = with_holds(vec![hold("a", Extend, 45, 70)]);
@@ -2010,7 +2393,10 @@ mod tests {
         assert_eq!(snap.meeting_hold, view("a", Extend, 70));
         assert!(snap.music_muted);
         assert!(tick_through(&mut session, 50, 69).is_empty());
-        assert_eq!(session.handle(at(70), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(70), Input::Tick)),
+            break_transition(1, 20)
+        );
     }
 
     #[test]
@@ -2105,7 +2491,10 @@ mod tests {
             "no muting for an ignored meeting"
         );
         assert!(tick_through(&mut session, 0, 39).is_empty());
-        assert_eq!(session.handle(at(40), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(40), Input::Tick)),
+            break_transition(1, 20)
+        );
         let snap = session.snapshot(at(40));
         assert_eq!((snap.paused, snap.phase_total_secs), (false, 20));
         assert_eq!(snap.meeting_hold, None);
@@ -2165,7 +2554,10 @@ mod tests {
             .collect();
         assert_eq!(ids, ["late", "last"]);
         assert!(!session.snapshot(at(5)).music_muted);
-        assert_eq!(tick_through(&mut session, 0, 40), break_transition(1, 20));
+        assert_eq!(
+            legacy(&tick_through(&mut session, 0, 40)),
+            break_transition(1, 20)
+        );
 
         let far = Now {
             mono_ms: u64::MAX,
@@ -2204,7 +2596,10 @@ mod tests {
         // Start keeps it; it is in every snapshot of the session, in Focus and in Break.
         session.handle(at(0), start_input(TimingProfile::demo()));
         assert_eq!(session.snapshot(at(5)).goal, Some(goal("PROJ-1")));
-        assert_eq!(tick_through(&mut session, 0, 40), break_transition(1, 20));
+        assert_eq!(
+            legacy(&tick_through(&mut session, 0, 40)),
+            break_transition(1, 20)
+        );
         assert_eq!(session.snapshot(at(41)).goal, Some(goal("PROJ-1")));
 
         // Stop moves it into the totals and leaves the next session without a goal.
@@ -2303,7 +2698,7 @@ mod tests {
 
         assert!(tick_through(&mut session, 10, 14).is_empty());
         assert_eq!(
-            session.handle(at(15), Input::Tick),
+            legacy(&session.handle(at(15), Input::Tick)),
             break_transition(1, 900)
         );
         // The break that follows has its full length; the time really spent counts.
@@ -2325,7 +2720,7 @@ mod tests {
         assert_eq!(session.snapshot(at(6)).remaining_secs, 3);
         assert!(tick_through(&mut session, 6, 8).is_empty());
         assert_eq!(
-            session.handle(at(9), Input::Tick),
+            legacy(&session.handle(at(9), Input::Tick)),
             focus_transition(2, 2700)
         );
         let snap = session.snapshot(at(9));
@@ -2353,7 +2748,7 @@ mod tests {
         );
         assert!(tick_through(&mut session, 100, 106).is_empty());
         assert_eq!(
-            session.handle(at(107), Input::Tick),
+            legacy(&session.handle(at(107), Input::Tick)),
             break_transition(1, 900)
         );
         assert_eq!(session.snapshot(at(107)).focused_secs, 17);
@@ -2389,7 +2784,7 @@ mod tests {
         assert_eq!(session.remaining_ms(at(10)), Some(1_000));
         assert!(session.handle(at_ms(10_999), Input::Tick).is_empty());
         assert_eq!(
-            session.handle(at(11), Input::Tick),
+            legacy(&session.handle(at(11), Input::Tick)),
             break_transition(1, 900)
         );
 
@@ -2418,7 +2813,10 @@ mod tests {
         session.handle(at(46), set_remaining(2));
         assert!(tick_through(&mut session, 46, 47).is_empty());
         // The extension was used: the focus now ends into a normal break.
-        assert_eq!(session.handle(at(48), Input::Tick), break_transition(1, 20));
+        assert_eq!(
+            legacy(&session.handle(at(48), Input::Tick)),
+            break_transition(1, 20)
+        );
     }
 
     #[test]
@@ -2437,5 +2835,536 @@ mod tests {
         let snap = session.snapshot(at(102));
         assert_eq!((snap.paused, snap.remaining_secs), (true, 5));
         assert_eq!(snap.focused_secs, 10, "gap time is not focus time");
+    }
+
+    // -----------------------------------------------------------------------
+    // Beta (ADR-022): Progress facts and small steps (demo profile: 40 s focus, 20 s break)
+    // -----------------------------------------------------------------------
+
+    fn progress_of(effects: &[Effect]) -> Vec<ProgressFact> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Progress(fact) => Some(fact.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn focus_ended(cycle: u32, ran_secs: u32, how: PhaseEnd, held: bool) -> Effect {
+        Effect::Progress(ProgressFact::FocusEnded {
+            session_id: "s1".to_owned(),
+            cycle,
+            ran_secs,
+            how,
+            held,
+            profile: TimingProfile::demo(),
+        })
+    }
+
+    fn break_ended(cycle: u32, ran_secs: u32, how: PhaseEnd) -> Effect {
+        Effect::Progress(ProgressFact::BreakEnded {
+            session_id: "s1".to_owned(),
+            cycle,
+            ran_secs,
+            how,
+            profile: TimingProfile::demo(),
+        })
+    }
+
+    fn draft(id: Option<u32>, text: &str) -> StepDraft {
+        StepDraft {
+            id,
+            text: text.to_owned(),
+        }
+    }
+
+    fn step(id: u32, text: &str, done: bool) -> MicroStep {
+        MicroStep {
+            id,
+            text: text.to_owned(),
+            done,
+        }
+    }
+
+    /// An idle session with the plan `texts` (ids 1, 2, ...).
+    fn planned(texts: &[&str]) -> Session {
+        let mut session = Session::new();
+        let drafts = texts.iter().map(|text| draft(None, text)).collect();
+        assert!(session.handle(at(0), Input::SetSteps(drafts)).is_empty());
+        session
+    }
+
+    #[test]
+    fn old_effects_keep_their_order() {
+        // Every ADR-013 row with the Progress facts filtered out is exactly the pre-ADR-022 vector.
+        let mut session = Session::new();
+        assert_eq!(
+            legacy(&session.handle(at(0), start_input(TimingProfile::demo()))),
+            vec![
+                Effect::PhaseChanged(PhaseChange {
+                    from: Phase::Idle,
+                    to: Phase::Focus,
+                    cycle: 1,
+                }),
+                Effect::Shields(true),
+                Effect::Tracking(true),
+                Effect::Chime(ChimeKind::FocusStart),
+            ]
+        );
+        assert_eq!(
+            legacy(&tick_through(&mut session, 0, 40)),
+            break_transition(1, 20)
+        );
+        assert_eq!(
+            legacy(&tick_through(&mut session, 40, 60)),
+            focus_transition(2, 40)
+        );
+        assert_eq!(
+            legacy(&session.handle(at(61), Input::SkipPhase)),
+            break_transition(2, 20)
+        );
+        assert_eq!(
+            legacy(&session.handle(at(62), Input::SkipPhase)),
+            focus_transition(3, 40)
+        );
+        let effects = session.handle(at(63), Input::Stop);
+        let totals = only_totals(&effects);
+        assert_eq!(legacy(&effects), stop_effects(Phase::Focus, 3, totals));
+
+        let mut held = with_holds(vec![hold("m", PauseAtBreak, 45, 90)]);
+        assert_eq!(
+            legacy(&tick_through(&mut held, 0, 40)),
+            held_break_transition(1, Some("Meeting m"))
+        );
+        let effects = held.handle(at(50), Input::Stop);
+        let totals = only_totals(&effects);
+        assert_eq!(legacy(&effects), stop_effects(Phase::Break, 1, totals));
+    }
+
+    #[test]
+    fn every_transition_reports_its_fact_in_place() {
+        let mut session = started(TimingProfile::demo());
+        // Focus → Break at the deadline: the fact right before the toast.
+        assert_eq!(
+            tick_through(&mut session, 0, 40),
+            vec![
+                Effect::PhaseChanged(PhaseChange {
+                    from: Phase::Focus,
+                    to: Phase::Break,
+                    cycle: 1,
+                }),
+                Effect::Tracking(false),
+                Effect::Shields(false),
+                Effect::Chime(ChimeKind::BreakStart),
+                focus_ended(1, 40, PhaseEnd::Deadline, false),
+                Effect::Notify(NotifyKind::BreakStarted { break_secs: 20 }),
+            ]
+        );
+        // Break → Focus at the deadline: after the chime, before the toast and the shields.
+        assert_eq!(
+            tick_through(&mut session, 40, 60),
+            vec![
+                Effect::PhaseChanged(PhaseChange {
+                    from: Phase::Break,
+                    to: Phase::Focus,
+                    cycle: 2,
+                }),
+                Effect::Chime(ChimeKind::FocusStart),
+                break_ended(1, 20, PhaseEnd::Deadline),
+                Effect::Notify(NotifyKind::FocusStarted {
+                    focus_secs: 40,
+                    cycle: 2,
+                }),
+                Effect::Shields(true),
+                Effect::Tracking(true),
+            ]
+        );
+        // Skips report `Skipped` with the time that phase ran.
+        let skipped = session.handle(at(65), Input::SkipPhase);
+        assert_eq!(skipped[4], focus_ended(2, 5, PhaseEnd::Skipped, false));
+        assert_eq!(legacy(&skipped), break_transition(2, 20));
+        let skipped = session.handle(at(68), Input::SkipPhase);
+        assert_eq!(skipped[2], break_ended(2, 3, PhaseEnd::Skipped));
+        assert_eq!(legacy(&skipped), focus_transition(3, 40));
+
+        // Stop in a running focus: the fact after the phase change, before the summary.
+        let effects = session.handle(at(75), Input::Stop);
+        let totals = only_totals(&effects);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::Tracking(false),
+                Effect::Shields(false),
+                Effect::PhaseChanged(PhaseChange {
+                    from: Phase::Focus,
+                    to: Phase::Idle,
+                    cycle: 3,
+                }),
+                focus_ended(3, 7, PhaseEnd::Stopped, false),
+                Effect::SessionEnded(totals),
+            ]
+        );
+    }
+
+    #[test]
+    fn stop_in_a_paused_focus_and_in_a_break_reports_the_phase_time() {
+        let mut paused = started(TimingProfile::demo());
+        tick_through(&mut paused, 0, 12);
+        paused.handle(at(12), Input::Pause);
+        let effects = paused.handle(at(90), Input::Stop);
+        assert_eq!(effects[3], focus_ended(1, 12, PhaseEnd::Stopped, false));
+        assert!(matches!(effects[4], Effect::SessionEnded(_)));
+
+        let mut on_break = started(TimingProfile::demo());
+        tick_through(&mut on_break, 0, 47);
+        let effects = on_break.handle(at(47), Input::Stop);
+        let totals = only_totals(&effects);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::Tracking(false),
+                Effect::Shields(false),
+                Effect::PhaseChanged(PhaseChange {
+                    from: Phase::Break,
+                    to: Phase::Idle,
+                    cycle: 1,
+                }),
+                break_ended(1, 7, PhaseEnd::Stopped),
+                Effect::SessionEnded(totals),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_held_break_reports_held_before_its_toast() {
+        let mut session = with_holds(vec![hold("m", PauseAtBreak, 45, 90)]);
+        assert_eq!(
+            tick_through(&mut session, 0, 40),
+            vec![
+                Effect::PhaseChanged(PhaseChange {
+                    from: Phase::Focus,
+                    to: Phase::Break,
+                    cycle: 1,
+                }),
+                Effect::Tracking(false),
+                Effect::Shields(false),
+                Effect::Chime(ChimeKind::BreakStart),
+                focus_ended(1, 40, PhaseEnd::Deadline, true),
+                Effect::Notify(NotifyKind::BreakHeld {
+                    subject: Some("Meeting m".to_owned()),
+                }),
+            ]
+        );
+        // Stopped while still held: the break never ran.
+        let effects = session.handle(at(70), Input::Stop);
+        assert_eq!(effects[3], break_ended(1, 0, PhaseEnd::Stopped));
+        assert_eq!(progress_of(&effects).len(), 1);
+    }
+
+    #[test]
+    fn ran_secs_counts_running_time_only_and_includes_an_extension() {
+        // Paused 10 s → 50 s: the block ran 40 s.
+        let mut session = started(TimingProfile::demo());
+        tick_through(&mut session, 0, 10);
+        session.handle(at(10), Input::Pause);
+        session.handle(at(50), Input::Resume);
+        assert_eq!(
+            progress_of(&tick_through(&mut session, 50, 80)),
+            [ProgressFact::FocusEnded {
+                session_id: "s1".to_owned(),
+                cycle: 1,
+                ran_secs: 40,
+                how: PhaseEnd::Deadline,
+                held: false,
+                profile: TimingProfile::demo(),
+            }]
+        );
+
+        // A sleep gap is not counted and its auto-pause reports nothing.
+        let mut session = started(TimingProfile::demo());
+        tick_through(&mut session, 0, 10);
+        let interrupted = session.handle(at(101), Input::Tick);
+        assert!(progress_of(&interrupted).is_empty());
+        session.handle(at(110), Input::Resume);
+        let effects = tick_through(&mut session, 110, 140);
+        assert_eq!(effects[4], focus_ended(1, 40, PhaseEnd::Deadline, false));
+
+        // A meeting extension counts as focus.
+        let mut session = with_holds(vec![hold("a", Extend, 50, 70)]);
+        assert!(progress_of(&tick_through(&mut session, 0, 69)).is_empty());
+        let effects = session.handle(at(70), Input::Tick);
+        assert_eq!(effects[4], focus_ended(1, 70, PhaseEnd::Deadline, false));
+
+        // Developer mode's shorter phase reports the time really spent.
+        let mut session = started(TimingProfile::demo());
+        tick_through(&mut session, 0, 5);
+        session.handle(at(5), Input::DevSetRemaining { secs: 2 });
+        let effects = tick_through(&mut session, 5, 7);
+        assert_eq!(effects[4], focus_ended(1, 7, PhaseEnd::Deadline, false));
+    }
+
+    #[test]
+    fn inputs_without_a_phase_change_report_nothing() {
+        let mut session = started(TimingProfile::demo());
+        for (secs, input) in [
+            (1, Input::Pause),
+            (2, Input::Resume),
+            (3, Input::SetGoal(Some(goal("A-1")))),
+            (4, Input::SetMeetingHolds(Vec::new())),
+            (5, Input::DevSetRemaining { secs: 30 }),
+            (6, Input::SetSteps(vec![draft(None, "a")])),
+            (7, Input::SetStepDone { id: 1, done: false }),
+            (8, Input::Tick),
+        ] {
+            assert!(
+                progress_of(&session.handle(at(secs), input)).is_empty(),
+                "{secs}"
+            );
+        }
+        // Inputs while idle report nothing either (also a double Stop).
+        session.handle(at(9), Input::Stop);
+        assert!(session.handle(at(10), Input::Stop).is_empty());
+        assert!(
+            session
+                .handle(at(11), Input::SetStepDone { id: 1, done: true })
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn steps_are_cleaned_and_limited() {
+        let long = "x".repeat(85);
+        let cleaned = normalize_steps(vec![
+            draft(None, "  Napisz tytuł  "),
+            draft(Some(3), ""),
+            draft(None, " \t\n "),
+            draft(Some(7), "a\tb\nc"),
+            draft(None, &long),
+        ])
+        .expect("three steps");
+        assert_eq!(cleaned.len(), 3);
+        assert_eq!(cleaned[0], draft(None, "Napisz tytuł"));
+        assert_eq!(cleaned[1], draft(Some(7), "a b c"));
+        assert_eq!(cleaned[2].text.chars().count(), MAX_STEP_CHARS);
+        assert!(cleaned[2].text.ends_with('…'));
+        assert_eq!(
+            cleaned[2].text,
+            format!("{}…", "x".repeat(MAX_STEP_CHARS - 1))
+        );
+        // Exactly 80 characters stay as they are; a space before the cut is not kept.
+        let exact = "y".repeat(MAX_STEP_CHARS);
+        assert_eq!(
+            normalize_steps(vec![draft(None, &exact)]).expect("ok")[0].text,
+            exact
+        );
+        let spaced = format!("{} {}", "z".repeat(78), "w".repeat(10));
+        assert_eq!(
+            normalize_steps(vec![draft(None, &spaced)]).expect("ok")[0].text,
+            format!("{}…", "z".repeat(78))
+        );
+
+        // Five steps (plus empty ones) are fine, six are not.
+        let mut five: Vec<StepDraft> = (0..5).map(|n| draft(None, &format!("s{n}"))).collect();
+        five.push(draft(None, "   "));
+        assert_eq!(normalize_steps(five.clone()).expect("five").len(), 5);
+        five.push(draft(None, "s5"));
+        let error = normalize_steps(five).expect_err("six");
+        assert_eq!(error.code, ERR_TOO_MANY_STEPS);
+        assert_eq!(error.code, "tooManySteps");
+        assert_eq!(error.field.as_deref(), Some("steps"));
+        assert!(!error.message.contains("s5"), "never echoes a text");
+    }
+
+    #[test]
+    fn step_ids_are_stable_and_new_ids_go_above_every_issued_one() {
+        let mut session = planned(&["a", "b"]);
+        assert_eq!(session.steps(), [step(1, "a", false), step(2, "b", false)]);
+
+        session.handle(
+            at(1),
+            Input::SetSteps(vec![draft(Some(2), "b2"), draft(None, "c")]),
+        );
+        assert_eq!(session.steps(), [step(2, "b2", false), step(3, "c", false)]);
+        // A removed id is never reused: it comes back as a new step.
+        session.handle(at(2), Input::SetSteps(vec![draft(Some(1), "a again")]));
+        assert_eq!(session.steps(), [step(4, "a again", false)]);
+        session.handle(at(3), Input::SetSteps(Vec::new()));
+        assert!(session.steps().is_empty());
+        session.handle(at(4), Input::SetSteps(vec![draft(None, "z")]));
+        assert_eq!(session.steps(), [step(5, "z", false)]);
+        // A repeated id counts once; anything above the limit is dropped; texts are cleaned again.
+        let drafts = vec![
+            draft(Some(5), "z"),
+            draft(Some(5), "dup"),
+            draft(None, "  "),
+            draft(None, "  three\t"),
+            draft(None, "four"),
+            draft(None, "five"),
+            draft(None, "six"),
+        ];
+        session.handle(at(5), Input::SetSteps(drafts));
+        let ids: Vec<u32> = session.steps().iter().map(|s| s.id).collect();
+        assert_eq!(ids, [5, 6, 7, 8, 9]);
+        assert_eq!(session.steps()[2].text, "three");
+    }
+
+    #[test]
+    fn ticking_is_for_a_running_session_and_reports_the_first_tick_only_once() {
+        let mut session = planned(&["a", "b"]);
+        // Idle: no ticks.
+        assert!(
+            session
+                .handle(at(0), Input::SetStepDone { id: 1, done: true })
+                .is_empty()
+        );
+        assert!(!session.steps()[0].done);
+
+        let effects = session.handle(at(0), start_input(TimingProfile::demo()));
+        assert_eq!(
+            progress_of(&effects),
+            [ProgressFact::Started {
+                session_id: "s1".to_owned(),
+                steps: 2,
+                profile: TimingProfile::demo(),
+            }]
+        );
+        let tick = |session: &mut Session, secs, id, done| {
+            session.handle(at(secs), Input::SetStepDone { id, done })
+        };
+        assert_eq!(
+            tick(&mut session, 5, 1, true),
+            [Effect::Progress(ProgressFact::StepDone {
+                session_id: "s1".to_owned(),
+                step_id: 1,
+                first_time: true,
+                done: 1,
+                total: 2,
+                phase: Phase::Focus,
+                profile: TimingProfile::demo(),
+            })]
+        );
+        assert!(session.steps()[0].done);
+        // No change, an untick and an unknown id report nothing.
+        assert!(tick(&mut session, 6, 1, true).is_empty());
+        assert!(tick(&mut session, 7, 1, false).is_empty());
+        assert!(!session.steps()[0].done);
+        assert!(tick(&mut session, 8, 99, true).is_empty());
+        // Ticked again: not a first tick any more.
+        let again = progress_of(&tick(&mut session, 9, 1, true));
+        assert!(matches!(
+            again[..],
+            [ProgressFact::StepDone {
+                first_time: false,
+                done: 1,
+                ..
+            }]
+        ));
+        // In a paused break too, with the phase it happened in.
+        session.handle(at(10), Input::SkipPhase);
+        session.handle(at(11), Input::Pause);
+        let in_break = progress_of(&tick(&mut session, 12, 2, true));
+        assert!(matches!(
+            in_break[..],
+            [ProgressFact::StepDone {
+                step_id: 2,
+                first_time: true,
+                done: 2,
+                total: 2,
+                phase: Phase::Break,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn steps_survive_start_and_open_ones_carry_over_at_stop() {
+        let mut session = planned(&["a", "b", "c"]);
+        let idle = session.snapshot(at(0));
+        assert_eq!(idle.steps.len(), 3);
+        assert_eq!(idle.phase, Phase::Idle);
+
+        session.handle(at(0), start_input(TimingProfile::demo()));
+        assert_eq!(session.snapshot(at(1)).steps, idle.steps);
+        session.handle(at(2), Input::SetStepDone { id: 2, done: true });
+        assert!(session.snapshot(at(3)).steps[1].done);
+
+        let totals = only_totals(&session.handle(at(5), Input::Stop));
+        assert_eq!(
+            totals.steps,
+            [step(1, "a", false), step(2, "b", true), step(3, "c", false)]
+        );
+        // The open steps are the next plan, with their ids; nothing counts as ticked before.
+        assert_eq!(session.steps(), [step(1, "a", false), step(3, "c", false)]);
+        assert_eq!(session.snapshot(at(6)).steps, session.steps());
+        session.handle(at(7), start_input(TimingProfile::demo()));
+        let first = progress_of(&session.handle(at(8), Input::SetStepDone { id: 1, done: true }));
+        assert!(matches!(
+            first[..],
+            [ProgressFact::StepDone {
+                first_time: true,
+                ..
+            }]
+        ));
+        // A new step after the carry-over gets an id above every one given out.
+        session.handle(
+            at(9),
+            Input::SetSteps(vec![draft(Some(1), "a"), draft(None, "d")]),
+        );
+        assert_eq!(session.steps(), [step(1, "a", true), step(4, "d", false)]);
+        // A session without steps ends with none.
+        let mut plain = started(TimingProfile::demo());
+        assert!(
+            only_totals(&plain.handle(at(1), Input::Stop))
+                .steps
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn steps_never_change_phases_or_other_effects() {
+        let mut with_steps = planned(&["a", "b"]);
+        let mut without = Session::new();
+        let inputs = |secs: u64| match secs {
+            0 => start_input(TimingProfile::demo()),
+            10 => Input::Pause,
+            20 => Input::Resume,
+            70 => Input::SkipPhase,
+            95 => Input::Stop,
+            _ => Input::Tick,
+        };
+        for secs in 0..=96 {
+            let mut a = with_steps.handle(at(secs), inputs(secs));
+            if secs == 5 || secs == 75 {
+                a.extend(with_steps.handle(
+                    at(secs),
+                    Input::SetStepDone {
+                        id: 1,
+                        done: secs == 5,
+                    },
+                ));
+                a.extend(with_steps.handle(at(secs), Input::SetSteps(vec![draft(Some(1), "a")])));
+            }
+            let b = without.handle(at(secs), inputs(secs));
+            // The summary lists the steps; everything else is the same.
+            let no_steps = |effects: Vec<Effect>| -> Vec<Effect> {
+                legacy(&effects)
+                    .into_iter()
+                    .map(|effect| match effect {
+                        Effect::SessionEnded(totals) => Effect::SessionEnded(SessionTotals {
+                            steps: Vec::new(),
+                            ..totals
+                        }),
+                        other => other,
+                    })
+                    .collect()
+            };
+            assert_eq!(no_steps(a), no_steps(b), "at {secs} s");
+            assert_eq!(
+                with_steps.snapshot(at(secs)).remaining_secs,
+                without.snapshot(at(secs)).remaining_secs
+            );
+            assert_eq!(with_steps.phase(), without.phase());
+        }
     }
 }

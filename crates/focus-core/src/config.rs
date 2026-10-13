@@ -4,8 +4,9 @@
 use std::ops::RangeInclusive;
 
 use crate::api::{
-    AppError, CalendarConfig, ChimeKind, ChimeSound, Config, CustomChimes, Language, MusicConfig,
-    MusicSourceKind, NoiseColor, ShieldsConfig, Theme, TintConfig, WorkConfig,
+    AppError, CalendarConfig, CelebrationLevel, ChimeKind, ChimeSound, Config, CustomChimes,
+    DailyGoal, Language, MusicConfig, MusicSourceKind, NoiseColor, RewardsConfig, ShieldsConfig,
+    Theme, TintConfig, Weekday, WorkConfig,
 };
 use crate::blocklist::normalize_domain;
 use crate::launchers;
@@ -59,6 +60,8 @@ pub const MAX_WORK_URL_LEN: usize = 512;
 pub const MAX_JIRA_EMAIL_LEN: usize = 254;
 /// Longest Azure DevOps organisation name accepted (`work.azureOrg`).
 pub const MAX_AZURE_ORG_LEN: usize = 64;
+/// Most days off per week for the streak (`rewards.restWeekdays`, ADR-022).
+pub const MAX_REST_WEEKDAYS: usize = 6;
 
 const MAX_TENANT_LEN: usize = 253;
 const MAX_HOST_LEN: usize = 253;
@@ -85,7 +88,7 @@ impl Default for Config {
             launch_on_login: false,
             language: Language::System,
             close_to_tray: None,
-            phase_popups: false,
+            phase_popups: true,
             tint: TintConfig::default(),
             theme: Theme::Midnight,
             chime_sound: ChimeSound::Midnight,
@@ -98,6 +101,25 @@ impl Default for Config {
             work: WorkConfig::default(),
             show_mascot: true,
             developer_mode: false,
+            beta_features: false,
+            rewards: RewardsConfig::default(),
+        }
+    }
+}
+
+impl Default for RewardsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            micro_steps: true,
+            surprises: true,
+            sounds: true,
+            celebrations: CelebrationLevel::Full,
+            focus_companion: false,
+            show_streak: true,
+            streak_paused: false,
+            daily_goal: DailyGoal::Light,
+            rest_weekdays: vec![Weekday::Sat, Weekday::Sun],
         }
     }
 }
@@ -203,6 +225,8 @@ impl Config {
             work,
             show_mascot,
             developer_mode,
+            beta_features,
+            rewards,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -232,6 +256,47 @@ impl Config {
             work: work.normalized()?,
             show_mascot,
             developer_mode,
+            beta_features,
+            rewards: rewards.normalized()?,
+        })
+    }
+
+    /// Beta rewards (ADR-022) are on: sparks, levels, daily goal, streak and celebrations.
+    pub fn rewards_active(&self) -> bool {
+        self.beta_features && self.rewards.enabled
+    }
+
+    /// Beta small steps (ADR-022) are on (they work without the sparks too).
+    pub fn steps_active(&self) -> bool {
+        self.beta_features && self.rewards.micro_steps
+    }
+
+    /// The streak counts days: rewards on and the streak not paused by the user (ADR-022).
+    pub fn streak_counting(&self) -> bool {
+        self.rewards_active() && !self.rewards.streak_paused
+    }
+}
+
+impl RewardsConfig {
+    /// Rewards part of [`Config::normalized`]: the days off are deduplicated and sorted Monday..Sunday; more than
+    /// [`MAX_REST_WEEKDAYS`] distinct days return `config.invalid` with field `rewards.restWeekdays` (a week needs at
+    /// least one day that can count).
+    pub fn normalized(self) -> Result<RewardsConfig, AppError> {
+        let mut rest_weekdays = self.rest_weekdays;
+        rest_weekdays.sort_unstable();
+        rest_weekdays.dedup();
+        if rest_weekdays.len() > MAX_REST_WEEKDAYS {
+            return Err(invalid(
+                "rewards.restWeekdays",
+                format!(
+                    "at most {MAX_REST_WEEKDAYS} days off per week, got {}",
+                    rest_weekdays.len()
+                ),
+            ));
+        }
+        Ok(RewardsConfig {
+            rest_weekdays,
+            ..self
         })
     }
 }
@@ -967,7 +1032,10 @@ mod tests {
 
         assert_eq!(cfg.language, Language::System);
         assert_eq!(cfg.close_to_tray, None);
-        assert!(!cfg.phase_popups);
+        assert!(
+            cfg.phase_popups,
+            "FocusMode popups replace Windows toasts by default"
+        );
         assert_eq!(
             cfg.tint,
             TintConfig {
@@ -1801,11 +1869,23 @@ mod tests {
         let defaults = Config::default();
         assert_eq!(old.language, defaults.language);
         assert_eq!(old.close_to_tray, None);
-        assert!(!old.phase_popups);
+        // Like every other missing field: the current default (FocusMode popups on). Every config.json the app wrote
+        // since ADR-014 stores `phasePopups`, so a saved choice (on or off) is always kept.
+        assert_eq!(old.phase_popups, defaults.phase_popups);
+        assert!(old.phase_popups);
         assert_eq!(old.tint, defaults.tint);
         assert!(!old.shields.close_launchers);
         assert_eq!(old.shields.launchers, defaults.shields.launchers);
         assert_eq!(old.clone().normalized(), Ok(old));
+    }
+
+    #[test]
+    fn saved_phase_popups_choice_is_kept_whatever_the_default() {
+        for saved in [false, true] {
+            let cfg: Config = serde_json::from_value(serde_json::json!({ "phasePopups": saved }))
+                .expect("saved choice");
+            assert_eq!(cfg.phase_popups, saved);
+        }
     }
 
     #[test]
@@ -1943,7 +2023,7 @@ mod tests {
         );
         assert_eq!(json["language"], "system");
         assert!(json["closeToTray"].is_null());
-        assert_eq!(json["phasePopups"], false);
+        assert_eq!(json["phasePopups"], true);
         assert_eq!(json["tint"]["enabled"], false);
         assert_eq!(json["tint"]["startMinutes"], 1080);
         assert_eq!(json["tint"]["endMinutes"], 540);
@@ -2386,5 +2466,112 @@ mod tests {
         assert_eq!(once.work.jira_url, "https://firma.atlassian.net");
         assert_eq!(once.work.jira_email, "jan@firma.pl");
         assert_eq!(once.work.azure_org, "firma");
+    }
+
+    // --- Beta rewards (ADR-022) ---
+
+    #[test]
+    fn beta_defaults_are_off_with_every_part_ready() {
+        let cfg = Config::default();
+        assert!(!cfg.beta_features);
+        assert!(!cfg.rewards_active() && !cfg.steps_active() && !cfg.streak_counting());
+        assert_eq!(
+            cfg.rewards,
+            RewardsConfig {
+                enabled: true,
+                micro_steps: true,
+                surprises: true,
+                sounds: true,
+                celebrations: CelebrationLevel::Full,
+                focus_companion: false,
+                show_streak: true,
+                streak_paused: false,
+                daily_goal: DailyGoal::Light,
+                rest_weekdays: vec![Weekday::Sat, Weekday::Sun],
+            }
+        );
+        assert_eq!(cfg.clone().normalized(), Ok(cfg));
+    }
+
+    #[test]
+    fn config_written_before_beta_loads_with_it_off() {
+        let old: Config = serde_json::from_str(r#"{"focusMinutes": 30, "developerMode": true}"#)
+            .expect("old config");
+        assert!(!old.beta_features);
+        assert_eq!(old.rewards, RewardsConfig::default());
+        assert!(!old.rewards_active() && !old.steps_active());
+        assert_eq!(old.clone().normalized(), Ok(old));
+    }
+
+    #[test]
+    fn beta_helpers_follow_the_switches() {
+        let mut cfg = Config {
+            beta_features: true,
+            ..Config::default()
+        };
+        assert!(cfg.rewards_active() && cfg.steps_active() && cfg.streak_counting());
+        cfg.rewards.streak_paused = true;
+        assert!(cfg.rewards_active() && !cfg.streak_counting());
+        cfg.rewards.enabled = false;
+        assert!(!cfg.rewards_active() && !cfg.streak_counting());
+        assert!(cfg.steps_active(), "small steps work without the sparks");
+        cfg.rewards.micro_steps = false;
+        assert!(!cfg.steps_active());
+        // The master switch wins over every part.
+        let off = Config {
+            beta_features: false,
+            rewards: RewardsConfig::default(),
+            ..Config::default()
+        };
+        assert!(!off.rewards_active() && !off.steps_active() && !off.streak_counting());
+    }
+
+    #[test]
+    fn rest_weekdays_are_deduplicated_sorted_and_limited() {
+        let with_days = |days: Vec<Weekday>| Config {
+            rewards: RewardsConfig {
+                rest_weekdays: days,
+                ..RewardsConfig::default()
+            },
+            ..Config::default()
+        };
+        let cfg = with_days(vec![Weekday::Sun, Weekday::Wed, Weekday::Sun, Weekday::Mon])
+            .normalized()
+            .expect("valid");
+        assert_eq!(
+            cfg.rewards.rest_weekdays,
+            [Weekday::Mon, Weekday::Wed, Weekday::Sun]
+        );
+        assert_eq!(cfg.clone().normalized(), Ok(cfg));
+        assert!(with_days(Vec::new()).normalized().is_ok(), "no days off");
+
+        let six = vec![
+            Weekday::Tue,
+            Weekday::Mon,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sat,
+        ];
+        assert_eq!(
+            with_days(six)
+                .normalized()
+                .map(|c| c.rewards.rest_weekdays.len()),
+            Ok(6)
+        );
+        let all = vec![
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
+        ];
+        assert_eq!(
+            field_of(with_days(all).normalized()).as_deref(),
+            Some("rewards.restWeekdays")
+        );
     }
 }
