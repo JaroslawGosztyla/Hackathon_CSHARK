@@ -9,6 +9,10 @@ Nowa decyzja = nowy wpis na końcu; starych nie przepisujemy, tylko zmieniamy st
 **Stan na 2026-10-12 (speedrun):** [ADR-013](#adr-013-speedrun-pivot-produktu) zmienia zakres produktu i częściowo zastępuje
 ADR-003, 009, 010, 011 i 012. Tam, gdzie DESIGN.md lub ARCHITECTURE.md mówią co innego, wygrywa ADR-013 i `api.rs`.
 
+**Stan na 2026-10-13:** [ADR-014](#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki) dokłada do ADR-013
+zasobnik z okienkami faz, odcień ekranu (tylko overlay, domyślnie wyłączony), zamykanie launcherów gier, Teams z poszanowaniem statusu użytkownika
+i wybór języka. Zmienia przy tym ADR-009, 010, 012 i 013 (szczegóły w „Co zmienia”).
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -112,7 +116,7 @@ CI buduje na 3 OS. Ograniczenia pozostałych platform są jawnie opisane (DESIGN
 ---
 
 ## ADR-009: Tint przez overlay; gamma ramp tylko jako eksperyment
-**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F01/F02); zakres odłożony przez ADR-013 (2026-10-12)
+**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F01/F02); zakres odłożony przez ADR-013 (2026-10-12); overlay przywrócony przez ADR-014 (2026-10-13)
 
 **Kontekst:** Microsoft odradza `SetDeviceGammaRamp` (może zwrócić sukces bez efektu, HDR jest niezdefiniowany, system może nadpisać).
 Drop, panic hook ani handler wyjścia nie wykonają się po zabiciu procesu, więc gamma nie daje gwarancji powrotu kolorów.
@@ -127,6 +131,9 @@ Poprawny S-02 wymagałby kopii bazowej rampy per monitor i polityki konfliktu. *
 bo overlay pokrywa funkcję.
 
 **Poprawka (ADR-013, 2026-10-12):** tint (overlay i gamma) wypada z zakresu speedrunu. Jeśli wróci, obowiązuje ta decyzja: overlay, nie gamma.
+
+**Poprawka (ADR-014, 2026-10-13):** tint wraca na prośbę właściciela produktu, **tylko jako overlay**, domyślnie wyłączony,
+z harmonogramem według pory dnia (od–do, siła, przejście) i podglądem w Ustawieniach. Gamma ramp (S-02) nadal nie wchodzi.
 
 ---
 
@@ -151,6 +158,10 @@ w trakcie Focus. Po Stop, Pause i w przerwie odnawianie się kończy i status wy
 Teams DND staje się opcjonalną osłoną skupienia: `setUserPreferredPresence` z `expirationDuration` = długość focusa + 5 min,
 a na przerwę i po Stop **automatyczne** `clearUserPreferredPresence`. To uchyla R07 na wyraźne życzenie właściciela produktu; ryzyko opisuje ADR-013.
 Wykrywanie rozmów przez Graph nadal Won't.
+
+**Poprawka (ADR-014, 2026-10-13):** przed ustawieniem DND powłoka czyta bieżący status (`GET /me/presence`). Gdy użytkownik jest „offline”
+(m.in. „Wyświetlaj jako offline”) albo ma już „Nie przeszkadzać”, FocusMode statusu nie zmienia i w przerwie ani po Stop go nie czyści.
+Część ryzyka R07 znika: nie kasujemy już DND ani niewidoczności ustawionych przez użytkownika przed focusem.
 
 ---
 
@@ -199,10 +210,14 @@ Aktor nie czeka na wolne efekty; ich wyniki są oznaczone `session_id`, a spóź
 wzorzec listen → getter → stosuj tylko nowszą rewizję oraz wykonawcy efektów z R02 (aktor nie czeka, jeden wykonawca na zasób, docelowy stan z generacją).
 Odpadają okna przerwy, ostrzeżenia i `tint-*`, `window_ready`, heartbeat, watchdog i `break_id`.
 
+**Poprawka (ADR-014, 2026-10-13):** wracają okna overlay odcienia (jedno na monitor) i dochodzi małe okno `popup` (okienko faz).
+Oba stany mają parę getter + event z rewizją: `get_tint_status` + `tint://changed` (`TintStatus`) i `get_popup` + `popup://show` (`PopupInfo`).
+Okna overlay tylko czytają stan, a okno `popup` dodatkowo wysyła `popup_action`. Protokół gotowości, heartbeat, watchdog i `break_id` nie wracają.
+
 ---
 
 ## ADR-013: Speedrun: pivot produktu
-**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4)
+**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7)
 
 **Kontekst:** termin oddania to **jutro** (2026-10-13). Po T0-2/T0-3 nie było jeszcze kontraktu (T0-4), maszyny stanów ani okien przerwy,
 a plan M1–M4 zakładał jeszcze ok. 10 dni pracy. Równocześnie właściciel produktu zmienił wymagania:
@@ -367,3 +382,168 @@ i nie odpowiada na nowe wymagania. rodio nie odtworzy YouTube ani streamu bez po
 - ADR-012 **w części**: zostają snapshot z `revision`, wzorzec listen → getter → nowsza rewizja i wykonawcy efektów (R02).
   Odpadają okna przerwy, ostrzeżenia i tint, `window_ready`, heartbeat oraz `break_id`.
 - ADR-001, 002, 006, 007 i 008 bez zmian: core nadal jest czysty, kontrakt idzie przez ts-rs, a platformą odbioru jest Windows.
+
+**Poprawka (ADR-014, 2026-10-13):** pkt 6: pierwsze X na oknie głównym pyta, czy schować aplikację do zasobnika, a zamiast toastów
+mogą się pojawiać okienka FocusMode. Pkt 7: tint nie jest już odłożony (wraca jako overlay). Pkt 4: dochodzi osłona „zamknij launchery gier”;
+Teams nie rusza statusu „offline” ani własnego DND użytkownika; `BlocklistIssue` niesie kod (`code`), a polski opis wybiera UI.
+
+---
+
+## ADR-014: Zasobnik i okienka faz, odcień ekranu (overlay), zamykanie launcherów gier, języki
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** po pierwszych testach zakresu z ADR-013 właściciel produktu poprosił 2026-10-13 o:
+1. możliwość schowania aplikacji do zasobnika i **okienka przy starcie skupienia i przerwy** w stylu FocusMode (małe okno w rogu ekranu,
+   jak komunikaty antywirusa) zamiast toastów Windows. Pierwsze X na oknie ma zawsze zapytać, czy schować aplikację do zasobnika, a „tak” włącza też okienka;
+2. **ciepły odcień ekranu** zależny od pory dnia (np. cieplej po 18:00, normalnie od 9:00), domyślnie wyłączony;
+3. **zamykanie launcherów gier** (Steam, Epic Games Store, GOG Galaxy…) na start skupienia, z polami wyboru, które zamykać;
+4. przełączniki „Nie przeszkadzać” także dla **innych komunikatorów** (np. Discord), ale nie wtedy, gdy użytkownik jest tam niewidoczny;
+   jeśli się nie da, pominąć.
+
+Do tego kolejny krok to tłumaczenie aplikacji na 10 języków, więc teksty dla użytkownika nie mogą powstawać w `focus-core`.
+Stan z ADR-013 stał temu na przeszkodzie: X zawsze chowało okno (bez pytania, więc łatwo było przeoczyć, że aplikacja działa dalej), tint był odłożony
+(twarda zasada 6 w CLAUDE.md), Teams DND przykrywało także „Wyświetlaj jako offline” i ręczne DND, a potem je czyściło,
+a parser `websiteblacklist.txt` w core zwracał opisy błędów po polsku.
+
+**Opcje — okienka faz:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Własne okno Tauri `popup` w rogu ekranu** | wygląd aplikacji; własne przyciski (pokaż okno, pomiń fazę); nie jest powiadomieniem Windows, więc „Nie przeszkadzać” go nie wycisza | kolejne okno WebView (pamięć); nie może kraść fokusu ani zasłaniać pracy |
+| Toast Windows (`tauri-plugin-notification`, stan z ADR-013) | natywny, bez kodu UI | wygląd systemu; w trybie dev nazwa i ikona PowerShell; przyciski akcji w pluginie są tylko na mobile |
+| Okno główne na wierzch | nic nowego | wyrywa z pracy i kradnie fokus |
+
+**Opcje — odcień ekranu:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Overlay: przezroczyste, klikalne na wylot okno na każdym monitorze** (ADR-009) | znika z procesem, więc kolory zawsze wracają; działa z HDR i razem z „Oświetleniem nocnym” Windows; zwykłe API okien Tauri | nie przykrywa gier w wyłącznym pełnym ekranie; mieszanie alfa obniża kontrast; trafia na zrzuty ekranu |
+| Gamma ramp (`SetDeviceGammaRamp`) | prawdziwa zmiana kolorów, także kursora | odrzucona w ADR-009 (R08): brak gwarancji powrotu po kill, gubi kalibrację, HDR niezdefiniowany |
+| Sterowanie „Oświetleniem nocnym” Windows | systemowe | brak publicznego API (tylko nieudokumentowany zapis w rejestrze); odrzucone |
+
+**Opcje — launchery gier:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Zamknięcie procesów o dokładnych nazwach, w sesji użytkownika, na start focusa** | bez praw administratora; użytkownik wybiera launchery | launcher można uruchomić ponownie w trakcie; nazwy procesów zmieniają się z wersjami |
+| Blokada uruchamiania (IFEO `Debugger`, AppLocker, zatrzymanie usług) | trwała | prawa administratora, zmiana systemowa, nie wraca po crashu; odrzucone |
+| Tylko przypomnienie | bezpieczne | nic nie zamyka |
+
+**Opcje — inne komunikatory:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Teams przez Graph z odczytem statusu przed zmianą** | oficjalne API; ta sama zgoda `Presence.ReadWrite` | Graph nie odróżnia „Wyświetlaj jako offline” od braku zalogowania; status aktualizuje się z opóźnieniem |
+| Discord | – | brak API do zmiany statusu użytkownika (OAuth2 i lokalne RPC Discorda tego nie dają); automatyzacja konta tokenem użytkownika („self-bot”) łamie warunki korzystania z Discorda i grozi blokadą konta; **odrzucone** |
+| Slack (`dnd.setSnooze`) | oficjalne API | własna aplikacja Slack i zgoda workspace'u, kolejna integracja OAuth; poza zakresem, kandydat na później |
+
+**Decyzja:**
+
+1. **Zasobnik i okienka faz.**
+   - `Config.closeToTray: Option<bool>`, domyślnie `None` (= zapytaj). Dopóki wyboru nie ma, X na oknie głównym go nie zamyka: powłoka przerywa
+     zamknięcie (`CloseRequested` → `prevent_close`) i wysyła do okna `app://close-requested`. UI pyta, czy schować FocusMode do zasobnika,
+     i odpowiada komendą `resolve_close { toTray }`. Powłoka zapisuje wybór w configu: `toTray: true` włącza też `phasePopups` i chowa okno,
+     a `false` kończy aplikację (zwykłe wyjście, więc osłony schodzą). Kolejne X działa według zapisanego wyboru, bez pytania; wybór można zmienić w Ustawieniach.
+     Bez odpowiedzi: drugie X w ciągu minuty od pytania (ale nie szybciej niż po 1 s, czyli nie dwuklik) chowa okno do zasobnika, a X po dłuższym czasie
+     (pytanie zamknięte Escape albo zignorowane) pyta ponownie.
+   - Okna głównego nie niszczymy, dopóki działa aplikacja, bo w nim gra muzyka (ADR-013 pkt 2). X albo je chowa, albo kończy cały proces.
+     „Zakończ” w zasobniku działa zawsze, także gdy WebView nie odpowiada.
+   - `Config.phasePopups`, domyślnie wyłączone; włącza je wybór zasobnika przy pierwszym X albo przełącznik w Ustawieniach. Gdy jest włączone,
+     zamiast toastu Windows powłoka pokazuje okno `popup` przy starcie przerwy i skupienia, przy automatycznej pauzie po uśpieniu
+     i po zamknięciu launcherów (`PopupKind`: `breakStarted`, `focusStarted`, `interrupted`, `launchersClosed`). Okno jest małe, w prawym dolnym rogu ekranu,
+     w stylu aplikacji, zawsze na wierzchu, bez paska zadań i bez przejmowania fokusu. Znika samo po kilku sekundach albo po kliknięciu:
+     `popup_action` z `dismiss`, `showMain` albo `skipPhase` (to samo, co „Pomiń fazę” w zasobniku).
+   - Okno `popup` (`src-tauri/src/popup.rs`, własny wątek) powstaje widoczne i bez aktywacji (`focused(false)`) dla każdego okienka i jest niszczone,
+     gdy okienko znika, bo `show()` na istniejącym oknie aktywowałoby je i zabrało fokus. Okienko, które przychodzi, gdy poprzednie jest jeszcze widoczne,
+     tylko je aktualizuje. Gdy strona sama się nie zamknie, powłoka chowa okno po limicie bezpieczeństwa. Gdy okna nie da się utworzyć,
+     powłoka pokazuje toast, który okienko zastępuje (degradacja, nigdy oba naraz).
+   - Stan okienka: `get_popup` + `popup://show` (`PopupInfo` z rewizją; `kind: null` = schowaj). Kolejność efektów z tabeli ADR-013 się nie zmienia:
+     core wysyła `Notify` w tym samym miejscu, a powłoka wybiera tylko kanał (okienko albo toast).
+2. **Odcień ekranu wraca, ale tylko jako overlay (ADR-009).**
+   - Przezroczyste, klikalne na wylot okna overlay, po jednym na monitor: bez dekoracji, zawsze na wierzchu, bez paska zadań i bez fokusu,
+     w ciepłym kolorze z przezroczystością zależną od poziomu. Gamma ramp i „Oświetlenie nocne” Windows odpadają.
+   - **Domyślnie wyłączony.** `Config.tint: TintConfig { enabled, startMinutes, endMinutes, strength, transitionMinutes }`; domyślnie od 18:00 (`1080`)
+     do 09:00 (`540`), siła 45 ze 100, przejście 30 min (zakres 0–180). Okno czasu może przechodzić przez północ, ale początek i koniec muszą się różnić.
+     Walidacja (`config.invalid` z polem `tint.*`) obowiązuje także przy wyłączonym odcieniu.
+   - Poziom liczy czysta funkcja `focus_core::tint::tint_level(cfg, minute_of_day)`: od `startMinutes` rośnie liniowo przez `transitionMinutes`,
+     a przed `endMinutes` tak samo opada (przejście zajmuje najwyżej połowę okna). Minutę doby czasu lokalnego daje `focus-platform`
+     (`clock.rs`, `GetLocalTime`), bo core nie czyta zegara, a kalendarzowe `now` sesji jest w UTC. Bez nowej zależności (np. `chrono`).
+   - Powłoka (`src-tauri/src/tint.rs`) przelicza poziom cyklicznie i po każdej zmianie configu, a przy poziomie 0 overlay znika.
+     Odcień nie jest osłoną skupienia: działa według pory dnia niezależnie od sesji (także w Idle i w przerwie), dopóki działa aplikacja.
+   - Podgląd w Ustawieniach: `preview_tint { strength }` pokazuje odcień o danej sile przez kilka sekund mimo harmonogramu, a `null` od razu kończy podgląd.
+     Stan: `get_tint_status` + `tint://changed` (`TintStatus` z rewizją: `enabled`, `level`, `preview`, `active`, `error`).
+   - W UI opisujemy go jako efekt wizualny: bez kalibracji barw i bez obietnic zdrowotnych (zasada 10 w CLAUDE.md).
+3. **Zamykanie launcherów gier** (nowa osłona skupienia).
+   - `shields.closeLaunchers` (domyślnie wyłączone) i `shields.launchers` (pola wyboru). Do wyboru: Steam, Epic Games Launcher, GOG Galaxy, Ubisoft Connect,
+     EA app, Battle.net i Riot Client (domyślnie zaznaczone) oraz Xbox app, Amazon Games i itch.
+   - Na **każdy start fazy Focus** (pierwszy cykl, każdy następny i „Pomiń fazę” z przerwy) powłoka zamyka procesy zaznaczonych launcherów.
+     Dopasowanie tylko po **dokładnych nazwach plików `.exe`** z `focus_core::launchers::process_names`, bez rozróżniania wielkości liter
+     (np. `steam.exe`, `steamwebhelper.exe`, `EpicGamesLauncher.exe`, `GalaxyClient.exe`; `steam.exe` nigdy nie trafi w `steamwebhelper.exe`).
+     Ogólnych nazw (`agent`, `launcher`, `helper`, `updater`…) na liście nie ma i pilnuje tego test.
+   - `focus-platform/src/processes.rs`: lista procesów z Toolhelp (`CreateToolhelp32Snapshot`), tylko procesy **bieżącej sesji Windows** (`ProcessIdToSessionId`),
+     nigdy własny proces. Proces zamykamy przez `TerminateProcess` (po ponownym sprawdzeniu nazwy przez uchwyt, bo pid mógł zostać użyty ponownie),
+     bez łagodnego `WM_CLOSE`, bo launchery na nie tylko chowają się do zasobnika. Główny proces launchera idzie przed procesami pomocniczymi,
+     żeby rodzic ich nie wskrzesił. Usług (`steamservice`, `EABackgroundService`…), procesów wymagających praw administratora i procesów gier nie ruszamy.
+     Proces, którego nie da się zamknąć, jest pomijany; błędem jest tylko nieudany odczyt listy procesów.
+   - Wynik trafia do `ShieldStatus.launchers` (`IntegrationStatus`) i `ShieldStatus.closedLaunchers`, a gdy coś zamknięto, do okienka `launchersClosed`.
+     Poza Windows: `Unavailable`.
+   - To jednorazowe sprzątanie, nie blokada: launchera nie pilnujemy w trakcie focusa i nie uruchamiamy go ponownie w przerwie ani po Stop.
+     Nie ma czego przywracać, więc zasada „osłony zawsze wracają” tej osłony nie dotyczy.
+4. **Teams szanuje status użytkownika; Discord odrzucony.**
+   - Na start focusa, przed `setUserPreferredPresence`, powłoka czyta bieżący status (`GET /me/presence`, w ramach zgody `Presence.ReadWrite`).
+     Gdy `availability` to `Offline` („Wyświetlaj jako offline” albo brak zalogowania), FocusMode **nie ustawia** DND, bo DND zrobiłoby z niewidocznego
+     użytkownika widocznego. Gdy `availability` to już `DoNotDisturb` (ustawione przez użytkownika, prezentacja, czas skupienia), FocusMode też go
+     nie ustawia. W obu przypadkach **nie czyści** statusu w przerwie ani po Stop: czyścimy tylko DND, które ustawiliśmy sami.
+   - Discord: nie robimy. Discord nie daje aplikacjom API do zmiany statusu użytkownika, a automatyzacja konta tokenem użytkownika („self-bot”)
+     łamie warunki korzystania z Discorda i grozi blokadą konta. Banery, które Discord pokazuje jako powiadomienia Windows, wycisza osłona powiadomień Windows.
+   - Inne komunikatory (np. Slack przez oficjalne `dnd.setSnooze`) są poza zakresem.
+5. **Języki.**
+   - `Config.language`: `system` (domyślnie) albo jeden z 10 języków: `en`, `pl`, `de`, `fr`, `it`, `uk`, `ru`, `es`, `zh`, `ja`.
+     `system` oznacza język wyświetlania Windows (`get_system_language`: `focus-platform/src/locale.rs` + `Language::from_tag`), a gdy go nie ma na liście, angielski.
+   - Język obejmuje UI, zasobnik, okienka faz i toasty. `focus-core` nie zawiera tekstów dla użytkownika: zwraca kody i ewentualny szczegół po angielsku
+     (`AppError.code`, nowe `BlocklistIssue.code`), a tekst wybiera UI (`src/lib/strings.ts`) albo powłoka (`src-tauri/src/texts.rs`).
+   - Tłumaczenia przyjdą osobnym przebiegiem. Do tego czasu wszystkie teksty są po polsku, niezależnie od `language`.
+6. **Okna i kontrakt.**
+   - Okno `popup` i okna overlay ładują lekkie strony z grupy tras `src/routes/(overlay)/`, bez odtwarzacza muzyki i nawigacji. Okno główne ładuje
+     `src/routes/(app)/`, gdzie żyje odtwarzacz, więc muzyka nie zagra w kilku oknach naraz.
+   - Kontrakt (`api.rs`; jak w ADR-013, w tej samej gałęzi co implementacja): komendy `resolve_close`, `get_system_language`, `get_popup`, `popup_action`,
+     `get_tint_status` i `preview_tint`; eventy `app://close-requested`, `popup://show` i `tint://changed`; DTO `Language`, `TintConfig`, `GameLauncher`,
+     `PopupKind`, `PopupInfo`, `PopupAction`, `TintStatus` i `BlocklistIssueCode`; nowe pola `Config` i `ShieldStatus`. Szczegóły: ARCHITECTURE §6.
+
+**Konsekwencje:**
+- Overlay nie zastąpi prawdziwej zmiany temperatury barwowej. Nie przykrywa gier i aplikacji w **wyłącznym pełnym ekranie** (omijają kompozycję pulpitu), ekranu blokady,
+  okien UAC ani części elementów systemu (np. menu Start), a kursor zostaje w normalnych kolorach. To zwykłe okno, więc trafia na zrzuty ekranu i nagrania
+  (chyba że powłoka wyłączy je z przechwytywania przez `content_protected`). Kolor jest nakładany przez mieszanie alfa, więc obraz traci trochę kontrastu,
+  a czernie lekko się rozjaśniają (gamma tylko by przygasiła niebieski). W zamian kolory zawsze wracają: okna giną razem z procesem, także po crashu i kill.
+- Okna overlay i `popup` to kolejne WebView, czyli więcej pamięci. Overlay na każdym monitorze trzeba odtworzyć po zmianie układu monitorów;
+  gdy się nie uda, `TintStatus.error` opisuje błąd, a harmonogram próbuje dalej.
+- Pierwsze X zachowuje się inaczej niż w ADR-013: przed wyborem nic się nie zamyka, a po „nie” X kończy aplikację (muzyka cichnie, osłony schodzą).
+  Jeśli UI nie odpowie na `app://close-requested`, okno zostaje otwarte, a wyjściem jest „Zakończ” w zasobniku (zasada 7).
+- Zamknięcie launchera może przerwać pobieranie albo aktualizację gry i czat w launcherze. Gra uruchomiona z launchera nie jest zamykana,
+  ale może stracić nakładkę i synchronizację, a część gier kończy się razem z launcherem. Dlatego osłona jest domyślnie wyłączona.
+  Nazwy procesów mogą się zmienić po aktualizacji launchera (lista w `crates/focus-core/src/launchers.rs`). Świadomie pominięte: Origin
+  (EA wyłączyło tego klienta 2025-04-17, a nazwa koliduje z innym oprogramowaniem), zbyt ogólne `Agent.exe` (Battle.net) i `butler.exe` (itch),
+  usługi oraz procesy uruchamiające gry.
+- Teams: Graph zwraca `Offline` zarówno dla „Wyświetlaj jako offline”, jak i dla braku zalogowania. W obu przypadkach nic nie zmieniamy
+  (bez sesji Teams preferowany status i tak nie byłby widoczny). Status w Graph aktualizuje się z opóźnieniem, więc odczyt tuż po naszym
+  `clearUserPreferredPresence` (bardzo krótka przerwa, np. 20 s w demo) może jeszcze pokazać DND, a wtedy kolejny cykl pominie Teams.
+  Ryzyko z ADR-013 zostaje w węższej postaci: status zmieniony ręcznie **w trakcie** focusa i tak zostanie wyczyszczony na przerwę.
+- Discord i inne komunikatory: brak funkcji; README wyjaśnia dlaczego.
+- `config.json` z nieznaną wartością enuma (np. język albo launcher z nowszej wersji po powrocie do starszej) nie wczytuje się i aplikacja wraca
+  do ustawień domyślnych (`config.corrupt`), tak jak przy pozostałych enumach. Stary `config.json` bez nowych pól wczytuje się z wartościami domyślnymi.
+- `BlocklistIssue` ma teraz `code` (`BlocklistIssueCode`), a `message` to angielski szczegół (np. powód z parsera regexu albo domena do podpowiedzi).
+  Polski opis z ADR-013 pkt 4 wybiera UI. Podpowiedź dla linii `*.facebook.com` istnieje na razie tylko jako angielski dopisek do szczegółu `invalidRegex`;
+  osobny kod (np. `wildcardDomain`) wymaga zmiany kontraktu przez `/sync-contract`.
+- Nowych crate'ów nie ma. W `focus-platform` dochodzą feature'y `windows`: `Win32_System_Diagnostics_ToolHelp`, `Win32_Globalization` i `Win32_System_RemoteDesktop`.
+- Twardej izolacji komend per okno (manifest komend w `build.rs`, ARCHITECTURE §10, B-12) nadal nie ma. Okna `popup` i overlay potrzebują tylko
+  swoich getterów i eventów, a `popup` także `popup_action`.
+
+**Co zmienia:**
+- ADR-009: tint wraca do zakresu, tylko jako overlay i domyślnie wyłączony. Gamma ramp nadal nie.
+- ADR-010 i ADR-013 pkt 4 (Teams): nie zmieniamy statusu „offline” ani DND ustawionego przez użytkownika i wtedy też go nie czyścimy.
+- ADR-012: wracają okna overlay (tylko odczyt stanu) i dochodzi okno `popup`; oba stany mają getter + event z rewizją.
+  Protokół gotowości, heartbeat i watchdog nie wracają.
+- ADR-013: pkt 6 (X pyta raz; okienka FocusMode zamiast toastów, gdy włączone), pkt 7 (tint nie jest już odłożony),
+  pkt 4 (nowa osłona: launchery gier; `BlocklistIssue.code`).
+- CLAUDE.md, twarda zasada 6: „Bez pełnoekranowych okien przerwy, gammy i trybu spotkania (odłożone, ADR-013); odcień ekranu tylko jako overlay,
+  domyślnie wyłączony (ADR-009, ADR-014)”.

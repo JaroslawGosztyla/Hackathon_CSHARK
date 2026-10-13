@@ -1,17 +1,21 @@
 # FocusMode 🎧
 
 Sesje skupienia w klimacie lofi: ustawiasz czasy pracy i przerwy (domyślnie 45 / 15 minut), wybierasz muzykę
-i klikasz Start. Na czas skupienia FocusMode wycisza to, co rozprasza: powiadomienia Windows, status w Teams
-i strony z memami. W przerwie wszystko wraca, a muzyka gra dalej. Po zakończeniu sesji widzisz, w których
+i klikasz Start. Na czas skupienia FocusMode wycisza to, co rozprasza: powiadomienia Windows, status w Teams,
+strony z memami i launchery gier. W przerwie wszystko wraca, a muzyka gra dalej. Po zakończeniu sesji widzisz, w których
 aplikacjach naprawdę spędziłeś czas.
 
 Rust + Tauri 2 + Svelte 5 · Windows 10/11 (pełne wsparcie), macOS / Linux (best-effort) · projekt hackathonowy.
-Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu).
+Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu)
+i [ADR-014](docs/DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki).
 
 ## Co potrafi
 
 - **Pętla skupienie ⇄ przerwa** aż do Stop. Czasy ustawiasz sam (1–240 / 1–120 min) albo wybierasz preset: 25/5, 45/15, 50/10, 90/20.
 - **Dzwonek i powiadomienie** przy każdej zmianie fazy. W przerwie aplikacja proponuje, jak się poruszać.
+  Zamiast zwykłego powiadomienia Windows możesz włączyć **okienka FocusMode**: małe okno w prawym dolnym rogu ekranu, w stylu aplikacji,
+  z przyciskami „Pokaż okno” i „Pomiń fazę”. Nie zabiera fokusu i znika samo po kilku sekundach. Pojawia się też, gdy sesja zatrzymała się
+  po uśpieniu komputera i gdy FocusMode zamknął launchery gier. To okno aplikacji, a nie powiadomienie, więc „Nie przeszkadzać” go nie wycisza.
 - **Pauza, Wznów, Pomiń fazę, Stop** w dowolnej chwili, w oknie albo z ikony w zasobniku (działa też przy ukrytym oknie).
   Uśpienie komputera w trakcie sesji automatycznie ją wstrzymuje.
 - **Muzyka** (gra też w przerwie, chyba że wyłączysz to w ustawieniach):
@@ -35,11 +39,23 @@ Zakres i decyzje: [ADR-013](docs/DECISIONS.md#adr-013-speedrun-pivot-produktu).
     [`websiteblacklist.txt`](#lista-blokowanych-stron-websiteblacklisttxt), z domenami i wyrażeniami regularnymi) przez rozszerzenie przeglądarki,
     które przekierowuje na stronę „Wracaj do pracy”; gdy rozszerzenie nie odezwało się w ostatnich 90 s (np. go nie ma),
     FocusMode rozpoznaje stronę po tytule okna przeglądarki i przywołuje cię powiadomieniem,
-  - ekran i komputer nie usypiają się w trakcie skupienia.
+  - ekran i komputer nie usypiają się w trakcie skupienia,
+  - **zamykanie launcherów gier** na start każdej fazy skupienia (domyślnie wyłączone). Zaznaczasz, które: Steam, Epic Games Launcher, GOG Galaxy,
+    Ubisoft Connect, EA app, Battle.net, Riot Client, Xbox app, Amazon Games, itch. FocusMode zamyka tylko procesy samych launcherów
+    (po dokładnej nazwie pliku, np. `steam.exe`, `EpicGamesLauncher.exe`), tylko twoje i bez praw administratora. Gier ani usług nie rusza
+    i nie uruchamia launcherów ponownie w przerwie; w trakcie skupienia możesz je włączyć sam.
+- **Ciepłe kolory ekranu według pory dnia** (domyślnie wyłączone; Ustawienia → „Ciepłe kolory ekranu”): wieczorem ekran robi się cieplejszy,
+  rano wraca do normy. Ustawiasz godzinę początku i końca (domyślnie 18:00 → 9:00), siłę i długość płynnego przejścia (domyślnie 30 min),
+  a przesunięcie suwaka siły od razu pokazuje podgląd. Działa niezależnie od sesji. To półprzezroczysta warstwa nad ekranem, przez którą normalnie klikasz,
+  a nie zmiana ustawień karty graficznej, więc po zamknięciu (albo awarii) aplikacji kolory od razu wracają.
 - **Wykres produktywności**: w trakcie skupienia FocusMode co sekundę sprawdza, która aplikacja jest na pierwszym planie.
   Po Stop pokazuje czas według procesu (np. `Code.exe`, `chrome.exe`), osobno bezczynność, a historię sesji zapisuje lokalnie.
-- Okno działa w tle (zamknięcie = schowanie do zasobnika), jedna instancja, opcjonalny start przy logowaniu
+- **Zasobnik**: przy pierwszym kliknięciu X FocusMode pyta, czy schować się do zasobnika (obok zegara). „Tak” chowa okno (muzyka i sesja trwają dalej)
+  i od razu włącza okienka FocusMode; „Nie” sprawia, że X zamyka aplikację. Wybór zapamiętuje i możesz go zmienić w Ustawieniach.
+  Z menu ikony w zasobniku zawsze sterujesz sesją i zamkniesz aplikację („Zakończ”). Jedna instancja, opcjonalny start przy logowaniu
   (wtedy FocusMode startuje zminimalizowany do zasobnika).
+- **Języki**: angielski, polski, niemiecki, francuski, włoski, ukraiński, rosyjski, hiszpański, chiński i japoński; domyślnie język Windows
+  (gdy go nie ma na liście, angielski). Tłumaczenia są w przygotowaniu, na razie teksty są po polsku.
 
 ## Instalacja (Windows)
 
@@ -113,7 +129,20 @@ Microsoft Graph pozwala ustawić status tylko aplikacji zarejestrowanej w twoim 
 5. Kliknij **Połącz**, otwórz pokazaną stronę Microsoft i wpisz kod.
 
 W trakcie skupienia status to „Nie przeszkadzać” z wygaśnięciem (długość skupienia + 5 min), a na przerwę i po Stop FocusMode go czyści.
-Uwaga: czyszczenie usuwa też status ustawiony w Teams ręcznie.
+Przed zmianą FocusMode sprawdza twój bieżący status:
+
+- jeśli jesteś **„Wyświetlaj jako offline”** (Teams pokazuje wtedy „offline”, tak samo jak przy braku zalogowania), FocusMode nic nie zmienia,
+  żeby nie zdradzić, że jesteś przy komputerze,
+- jeśli masz już **„Nie przeszkadzać”** (ustawione samodzielnie albo w trakcie prezentacji), FocusMode go nie rusza i potem nie czyści.
+
+Uwaga: status zmieniony w Teams ręcznie **w trakcie** skupienia zostanie wyczyszczony na przerwę. Teams pokazuje zmianę statusu z opóźnieniem (do kilku minut).
+
+## Discord i inne komunikatory
+
+Discord nie udostępnia aplikacjom API do zmiany statusu użytkownika, a sterowanie kontem przez token użytkownika łamie regulamin Discorda
+i grozi blokadą konta, więc FocusMode nie zmienia statusu w Discordzie. Ustaw „Nie przeszkadzać” w Discordzie ręcznie.
+Banery powiadomień Discorda, które pokazuje Windows, wycisza osłona „Wycisz powiadomienia Windows”.
+Inne komunikatory (np. Slack) nie są na razie obsługiwane.
 
 ## Tryb demo
 
@@ -144,13 +173,19 @@ W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
   Linki, których nie da się osadzić (np. live Lofi Girl), grają w małym osobnym oknie ze zwykłą stroną YouTube, jak karta przeglądarki:
   działają w nim skrypty i ciasteczka YouTube/Google (zapisane w profilu WebView2 aplikacji, także zgoda na ciasteczka). To okno nie ma dostępu
   do komend aplikacji, przechodzi tylko po domenach YouTube i Google, a inne linki otwiera w twojej przeglądarce.
-  Token Teams jest zaszyfrowany DPAPI dla bieżącego użytkownika Windows.
+  Token Teams jest zaszyfrowany DPAPI dla bieżącego użytkownika Windows. Przed ustawieniem „Nie przeszkadzać” FocusMode odczytuje twój bieżący
+  status z Microsoft Graph (ta sama zgoda `Presence.ReadWrite`); odczytu nigdzie nie zapisuje.
 - **Dostęp do plików**: odtwarzacz może czytać z dysku tylko pliki audio znalezione w wybranym folderze muzyki.
+- **Zamykanie launcherów gier** (tylko gdy je włączysz): na start skupienia FocusMode przegląda lokalnie listę uruchomionych procesów
+  i zamyka wyłącznie te, których nazwa pliku dokładnie pasuje do zaznaczonych launcherów, tylko w twojej sesji Windows i bez praw administratora.
+  Listy procesów nie zapisuje ani nigdzie nie wysyła.
+- **Ciepłe kolory ekranu, okienka FocusMode i język** działają lokalnie: ciepła warstwa to okno aplikacji nad ekranem (bez zmian w sterowniku grafiki
+  i ustawieniach Windows), godzina pochodzi z zegara systemu, a język z ustawień Windows.
 - **Wyciszenie powiadomień** zmienia tylko ustawienie „Nie przeszkadzać” bieżącego użytkownika (bez praw administratora) i tylko wtedy,
   gdy było wyłączone. Zaraz po włączeniu FocusMode zapisuje, co trzeba cofnąć (`shields-restore.json`), i dodaje wpis `FocusModeRestore`
   w `HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce`, który przy następnym logowaniu uruchamia FocusMode z `--restore-shields`.
   Powiadomienia wracają w przerwie, po Stop i przy wyjściu, a po awarii przy następnym uruchomieniu aplikacji albo najpóźniej przy następnym logowaniu.
-- Dane leżą lokalnie w `%APPDATA%\com.focusmode.app`: `config.json` (ustawienia), `websiteblacklist.txt` (lista blokowanych stron),
+- Dane leżą lokalnie w `%APPDATA%\com.focusmode.app`: `config.json` (ustawienia, także język, wybór zasobnika, odcień i launchery), `websiteblacklist.txt` (lista blokowanych stron),
   `history.jsonl` (podsumowania sesji),
   `teams-token.bin` (jeśli połączysz Teams), `shields-restore.json` (tylko w trakcie wyciszenia). Logi: `%LOCALAPPDATA%\com.focusmode.app\logs`,
   dane WebView2 (w tym ciasteczka YouTube z okna YouTube i z osadzonego playera): `%LOCALAPPDATA%\com.focusmode.app\EBWebView`.
@@ -165,7 +200,14 @@ W bashu: `FOCUSMODE_DEMO=1 npm run tauri dev`. Z `just`: `just demo`.
   Takie linki grają w ukrytym oknie YouTube. W tym trybie FocusMode nie przechodzi sam do następnego linku po końcu utworu.
   Link, którego nie da się odtworzyć wcale, jest pomijany z komunikatem.
 - Rozszerzenie trzeba raz załadować ręcznie. Zmiana fazy dociera do niego najpóźniej po 30 s (przy otwieraniu stron szybciej).
-- Przerwa to dzwonek, powiadomienie i propozycje ruchu w oknie. Nie ma pełnoekranowej blokady ekranu.
+- Przerwa to dzwonek, powiadomienie (albo okienko FocusMode) i propozycje ruchu w oknie. Nie ma pełnoekranowej blokady ekranu.
+- Ciepłe kolory ekranu to warstwa nad ekranem, a nie zmiana kolorów karty graficznej: nie przykrywa gier w trybie wyłącznego pełnego ekranu,
+  ekranu blokady, okien UAC ani menu Start, a kursor zostaje w normalnych kolorach. Warstwa może być widoczna na zrzutach ekranu i nagraniach
+  i lekko obniża kontrast (czernie robią się odrobinę jaśniejsze). To efekt wizualny, nie kalibracja barw. Działa tylko na Windows.
+- Zamknięcie launchera przerywa w nim pobieranie i aktualizacje. Gry uruchomionej z launchera FocusMode nie zamyka, ale gra może stracić
+  nakładkę launchera, a niektóre gry kończą się razem z nim. Po aktualizacji launchera nazwy jego procesów mogą się zmienić.
+- Teams: Microsoft Graph pokazuje „offline” tak samo dla „Wyświetlaj jako offline”, jak i dla braku zalogowania; w obu przypadkach FocusMode nie zmienia statusu.
+  Bardzo krótka przerwa (np. 20 s w trybie demo) może sprawić, że w następnym cyklu Teams wciąż pokazuje nasze „Nie przeszkadzać” i FocusMode je pominie.
 - W trybie dev powiadomienia Windows mogą mieć nazwę i ikonę PowerShell. Po instalacji mają nazwę FocusMode.
 
 ## Rozwój
@@ -195,10 +237,10 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Katalog | Zawartość |
 |---|---|
-| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów, config, parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki; kontrakt IPC w `api.rs` |
+| `crates/focus-core` | czysta logika: profil czasów, maszyna stanów, config, parser listy stron (domyślna lista w `assets/websiteblacklist.txt`), statystyki, harmonogram odcienia, launchery gier, języki; kontrakt IPC w `api.rs` |
 | `crates/focus-audio` | dzwonki (rodio) na dedykowanym wątku |
-| `crates/focus-platform` | integracje Windows: aktywne okno, wyciszenie powiadomień, keep-awake, Teams (Graph) |
-| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray |
+| `crates/focus-platform` | integracje Windows: aktywne okno, wyciszenie powiadomień, keep-awake, Teams (Graph), zamykanie procesów, język systemu, czas lokalny |
+| `src-tauri/` | powłoka Tauri: komendy, aktor sesji, osłony, tracker, most dla rozszerzenia, persystencja, tray, okienka faz, overlay odcienia |
 | `src/` | frontend SvelteKit (SPA): ekrany, odtwarzacz muzyki, teksty UI |
 | `browser-extension/` | rozszerzenie MV3 do blokady stron |
 | `spikes/` | wyrzucalne eksperymenty z M0 |
@@ -207,7 +249,7 @@ W trybie dev rozszerzenie ładujesz z `browser-extension/` w repo; po zmianach w
 
 | Plik | Zawartość |
 |---|---|
-| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013 opisuje aktualny zakres** |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | decyzje architektoniczne (ADR); **ADR-013 i ADR-014 opisują aktualny zakres** |
 | [docs/TASKS.md](docs/TASKS.md) | taski (sekcja „Speedrun”), milestone'y i podział pracy A/B |
 | [docs/DESIGN.md](docs/DESIGN.md) | produkt, UX, ryzyka (sprzed pivotu, w części nieaktualne) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | stos, crate'y, wątki, narzędzia (sprzed pivotu, w części nieaktualne); kontrakt IPC w §6 aktualny |

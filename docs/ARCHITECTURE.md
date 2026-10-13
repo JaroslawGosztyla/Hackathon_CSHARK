@@ -3,8 +3,10 @@
 > Status: **wersja 3** — po dwóch cross-review ([2026-09-27](reviews/codex-crosscheck-2026-09-27.md), [2026-10-06](reviews/codex-review-2026-10-06.md); poprawki R01–R09).
 > Decyzje: [DECISIONS.md](DECISIONS.md). Produkt i profil czasów: [DESIGN.md](DESIGN.md).
 >
-> **Uwaga (2026-10-13):** aktualny zakres to [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu) (speedrun). Aktualny jest §6 (kontrakt IPC, zgodny z `api.rs`).
-> Pozostałe sekcje są sprzed pivotu (okna przerwy, ostrzeżenie, tryb spotkania, tint, muzyka w rodio). Tam, gdzie różnią się od ADR-013, wygrywa ADR-013 (task SR-09).
+> **Uwaga (2026-10-13):** aktualny zakres to [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu) (speedrun)
+> + [ADR-014](DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki) (zasobnik i okienka faz, odcień ekranu jako overlay, launchery gier, języki).
+> Aktualny jest §6 (kontrakt IPC, zgodny z `api.rs`). Pozostałe sekcje są sprzed pivotu (okna przerwy, ostrzeżenie, tryb spotkania, tint, muzyka w rodio).
+> Tam, gdzie różnią się od ADR-013 i ADR-014, wygrywają ADR-y (task SR-09).
 
 ## 1. Stos technologiczny w skrócie
 
@@ -302,6 +304,12 @@ a `field` to pole configu, które nie przeszło walidacji (`focusMinutes`, `musi
 | `get_blocklist` | – | `BlocklistInfo` | wczytana lista `websiteblacklist.txt` (przy pierwszym starcie plik powstaje z domyślnej listy wbudowanej w aplikację) |
 | `open_blocklist_file` | – | `()` | otwiera `websiteblacklist.txt` w domyślnym edytorze tekstu systemu |
 | `reload_blocklist` | – | `BlocklistInfo` | wczytuje plik od razu (po zapisaniu i tak wczytuje się sam) |
+| `resolve_close` | `toTray: boolean` | `Config` | odpowiedź na `app://close-requested` (pierwsze X na oknie głównym): zapisuje `closeToTray` (przy `toTray` włącza też `phasePopups`), potem chowa okno albo kończy aplikację (ADR-014) |
+| `get_system_language` | – | `Language` | obsługiwany język najbliższy językowi wyświetlania systemu (`en`, gdy żaden nie pasuje); nigdy `system` |
+| `get_popup` | – | `PopupInfo` | co pokazuje teraz okienko faz (dla okna `popup`) |
+| `popup_action` | `action: PopupAction` | `()` | przycisk w okienku albo jego timeout: `dismiss` (zamknij), `showMain` (pokaż i aktywuj okno główne), `skipPhase` (jak „Pomiń fazę” w zasobniku) |
+| `get_tint_status` | – | `TintStatus` | |
+| `preview_tint` | `strength: number \| null` | `()` | podgląd odcienia o sile 0..100 przez kilka sekund, mimo harmonogramu (Ustawienia); `null` kończy podgląd od razu |
 
 Most dla rozszerzenia nie jest komendą Tauri: `GET http://127.0.0.1:47615/v1/state` → `BridgeState { active, blocklist, patterns, phase, remainingSecs }`
 (port to stała `BRIDGE_PORT` w `api.rs`). `blocklist` to znormalizowane domeny (każda blokuje też swoje subdomeny), a `patterns` to źródła
@@ -323,6 +331,9 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `app://error` | `AppError` | integracja zawiodła; sesja trwa (degradacja) |
 | `media://window` | `MediaWindowStatus` | okno YouTube się otwiera, zamyka, przechodzi na inny adres albo zmienia tytuł |
 | `blocklist://changed` | `BlocklistInfo` | `websiteblacklist.txt` wczytany ponownie (automatycznie albo przez `reload_blocklist`) z innym wynikiem |
+| `app://close-requested` | `null` | do okna głównego, gdy użytkownik kliknął X, a `closeToTray` jest jeszcze `null`: UI pyta i odpowiada `resolve_close` |
+| `popup://show` | `PopupInfo` | okienko faz ma pokazać komunikat (albo się schować: `kind: null`) |
+| `tint://changed` | `TintStatus` | zmienił się poziom odcienia, podgląd albo stan okien overlay |
 
 **Każdy stan widoku ma parę getter + event z rewizją** (ADR-012, R06):
 
@@ -333,13 +344,15 @@ Emituje tylko powłoka; nazwy `obszar://nazwa`.
 | `TeamsStatus` | `get_teams_status` | `teams://status` |
 | `MediaWindowStatus` | `get_media_window` | `media://window` |
 | `BlocklistInfo` | `get_blocklist` (także wynik `reload_blocklist`) | `blocklist://changed` |
+| `PopupInfo` | `get_popup` | `popup://show` |
+| `TintStatus` | `get_tint_status` | `tint://changed` |
 
 Pole `revision` ustawia powłoka i rośnie z każdym wysłanym stanem. UI, dla każdego z tych stanów:
 1. **najpierw** rejestruje `listen(...)`,
 2. potem wywołuje getter,
 3. stosuje dane tylko wtedy, gdy `revision` jest większa od już posiadanej (chroni przed starszą odpowiedzią gettera).
 
-`session://phase-changed`, `session://summary`, `focus://nudge` i `app://error` to zdarzenia jednorazowe, bez rewizji
+`session://phase-changed`, `session://summary`, `focus://nudge`, `app://error` i `app://close-requested` to zdarzenia jednorazowe, bez rewizji
 (ostatnie podsumowanie da się też pobrać przez `get_last_summary`).
 
 ### 6.3 Snapshot sesji i okna
@@ -362,10 +375,16 @@ pub struct SessionSnapshot {
 
 | Okno | Zawartość | Uprawnienia IPC |
 |---|---|---|
-| `main` | SPA (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie; zamknięcie = ukrycie | wszystkie komendy (capability `default`) |
+| `main` | SPA z grupy tras `(app)` (Skupienie / Podsumowanie / Ustawienia) + odtwarzacz muzyki w layoucie. Nigdy nie jest niszczone: X chowa je do zasobnika albo kończy aplikację, zależnie od `closeToTray`; dopóki wyboru nie ma, X wysyła `app://close-requested` (ADR-014) | wszystkie komendy (capability `default`) |
 | `media` | strona YouTube / YouTube Music jako strona najwyższego poziomu (fallback, ADR-013 pkt 2) | **żadnych**: powłoka steruje nim przez `eval` wstrzykniętego kontrolera, a stan wraca do UI jako `media://window` |
+| `popup` | okienko faz z grupy tras `(overlay)`: małe, w prawym dolnym rogu ekranu, zawsze na wierzchu, bez paska zadań i bez fokusu; tylko gdy `phasePopups` (ADR-014) | potrzebuje tylko `get_popup`, `popup_action`, `get_config` (dobór treści) i `popup://show` |
+| overlay odcienia (jedno na monitor) | strona z grupy tras `(overlay)`: przezroczysta, klikalna na wylot, bez fokusu, zawsze na wierzchu; tylko gdy poziom odcienia > 0 (ADR-014) | tylko odczyt: `get_tint_status` i `tint://changed` |
 
-Okien przerwy, ostrzeżenia i `tint-*` nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
+Okien przerwy i ostrzeżenia nie ma (ADR-013), więc odpadają `window_ready`, heartbeat, watchdog i `break_id`.
+Strony z grupy `(overlay)` nie mają odtwarzacza muzyki ani nawigacji. Capability `overlays.json` daje oknom `popup` i `tint-*` tylko
+`core:event:default` (listen/unlisten), więc wtyczek (opener, dialog, autostart…) wywołać nie mogą. Komendy aplikacji Tauri przepuszcza lokalnym
+oknom bez ACL, bo aplikacja nie ma manifestu komend: twarda izolacja komend per okno (manifest w `build.rs`, §10, B-12) nadal nie jest zrobiona,
+więc kolumna „Uprawnienia IPC” dla `popup` i overlayu opisuje, czego te okna używają, a nie egzekwowaną granicę.
 
 ### 6.4 Przykłady JSON
 
@@ -376,7 +395,7 @@ Okien przerwy, ostrzeżenia i `tint-*` nie ma (ADR-013), więc odpadają `window
   "remainingSecs": 12, "phaseTotalSecs": 20, "focusSecs": 40, "breakSecs": 20, "focusedSecs": 40, "demo": true }
 ```
 
-`ShieldStatus` (Focus, Teams wyłączone w ustawieniach):
+`ShieldStatus` (Focus, Teams wyłączone w ustawieniach, na starcie focusa zamknięto Steam i Epic):
 
 ```json
 { "revision": 7, "active": true,
@@ -384,8 +403,33 @@ Okien przerwy, ostrzeżenia i `tint-*` nie ma (ADR-013), więc odpadają `window
   "teams": { "state": "off", "detail": null },
   "sites": { "state": "on", "detail": null },
   "keepAwake": { "state": "on", "detail": null },
+  "launchers": { "state": "on", "detail": null },
+  "closedLaunchers": ["steam", "epic"],
   "extensionConnected": true }
 ```
+
+`Config`, tylko pola dodane przez ADR-014 (wartości domyślne):
+
+```json
+{ "language": "system", "closeToTray": null, "phasePopups": false,
+  "tint": { "enabled": false, "startMinutes": 1080, "endMinutes": 540, "strength": 45, "transitionMinutes": 30 },
+  "shields": { "closeLaunchers": false, "launchers": ["steam", "epic", "gog", "ubisoft", "ea", "battleNet", "riot"] } }
+```
+
+`PopupInfo` (okienko na start przerwy po pierwszym cyklu, profil 45/15):
+
+```json
+{ "revision": 5, "kind": "breakStarted", "cycle": 1, "phaseSecs": 900, "launchers": [] }
+```
+
+`TintStatus` (18:15, domyślny harmonogram: połowa przejścia, więc połowa siły 45):
+
+```json
+{ "revision": 12, "enabled": true, "level": 23, "preview": false, "active": true, "error": null }
+```
+
+Argumenty nowych komend: `resolve_close` → `{ "toTray": true }`, `popup_action` → `{ "action": "skipPhase" }`,
+`preview_tint` → `{ "strength": 60 }` albo `{ "strength": null }`.
 
 `MediaWindowStatus` (okno YouTube z domyślnym streamem):
 
@@ -403,13 +447,13 @@ Argumenty komend okna YouTube: `open_media_window` → `{ "url": "https://www.yo
 { "code": "config.invalid", "message": "focusMinutes must be between 1 and 240, got 300", "field": "focusMinutes" }
 ```
 
-`BlocklistInfo` (plik z jedną pominiętą linią; listy skrócone, `message` przykładowy):
+`BlocklistInfo` (plik z jedną pominiętą linią; listy skrócone):
 
 ```json
 { "revision": 2, "path": "C:\\Users\\ola\\AppData\\Roaming\\com.focusmode.app\\websiteblacklist.txt",
   "domains": ["kwejk.pl", "jbzd.com.pl", "reddit.com"],
   "patterns": ["linkedin\\.com/feed", "youtube\\.com/shorts"],
-  "issues": [{ "line": 42, "text": "(reddit|wykop\\.pl", "message": "Niepoprawne wyrażenie regularne: brak zamykającego nawiasu." }],
+  "issues": [{ "line": 42, "text": "(reddit|wykop\\.pl", "code": "invalidRegex", "message": "unclosed group" }],
   "error": null }
 ```
 
@@ -429,13 +473,56 @@ Zostaje włącznik `shields.blockSites`. Stary `config.json` z polem `shields.bl
 - `BlocklistInfo { revision, path, domains, patterns, issues, error }`: `path` to bezwzględna ścieżka pliku, `domains` to znormalizowane domeny
   (zwykłe linie), a `patterns` to źródła regexów (linie w `/…/` albo ze znakami regexu). Obie listy zachowują kolejność z pliku, bez duplikatów.
   `issues` to pominięte linie, a `error` jest ustawiony, gdy pliku nie da się przeczytać; wtedy w użyciu zostaje poprzednia lista (albo domyślna).
-- `BlocklistIssue { line, text, message }`: numer linii (od 1), linia jak w pliku (przycięta, najwyżej 200 znaków) i polski opis
-  dla Ustawień (niepoprawna domena, niepoprawny albo zbyt złożony regex, przekroczony limit).
+- `BlocklistIssue { line, text, code, message }`: numer linii (od 1), linia jak w pliku (przycięta, najwyżej 200 znaków),
+  kod `BlocklistIssueCode` i szczegół po angielsku (ADR-014: core nie zwraca tekstów dla użytkownika). Kody: `invalidDomain`, `invalidRegex`
+  (`message` = powód z parsera regexu, np. `unclosed group`), `regexTooComplex`, `matchesEverything`, `pastedUrl` (`message` = domena do podpowiedzi),
+  `lineTooLong` (limit 500 znaków), `tooManyDomains` (limit 2000), `tooManyPatterns` (limit 500). Ustawienia mapują `code` na tekst ze `strings.ts`,
+  a `message` pokazują jako dodatkowy szczegół.
 - Parsowanie i walidacja to czysta funkcja w `focus-core` (`blocklist.rs`, crate `regex`). Plik tworzy, czyta i przeładowuje powłoka
   (`src-tauri/src/blocklist.rs`): przy starcie, automatycznie po zapisaniu i przez `reload_blocklist`. Domyślna treść
   (`crates/focus-core/assets/websiteblacklist.txt`) jest wbudowana w aplikację, a przy braku pliku zostaje do niego skopiowana.
 - Dopasowanie: domena blokuje siebie i swoje subdomeny. Regex jest dopasowywany bez rozróżniania wielkości liter: w rozszerzeniu
   do pełnego adresu URL karty, a w awaryjnym nudge'u trackera do tytułu okna przeglądarki.
+
+### 6.6 Zasobnik, okienka faz, odcień, launchery i język (ADR-014)
+
+Nowe pola `Config` (stary `config.json` bez nich wczytuje się z wartościami domyślnymi; częściowy obiekt `tint` jest uzupełniany domyślnymi):
+
+| Pole | Typ | Domyślnie | Znaczenie |
+|---|---|---|---|
+| `language` | `Language` | `system` | język UI, zasobnika, okienek i toastów: `system` albo `en`, `pl`, `de`, `fr`, `it`, `uk`, `ru`, `es`, `zh`, `ja`; `system` = język wyświetlania systemu (`get_system_language`), a gdy go nie obsługujemy, `en`. Do przebiegu tłumaczeń teksty są po polsku |
+| `closeToTray` | `boolean \| null` | `null` | X na oknie głównym: `true` chowa do zasobnika, `false` kończy aplikację, `null` = zapytaj przy pierwszym X (`app://close-requested` → `resolve_close`) |
+| `phasePopups` | `boolean` | `false` | okienka FocusMode (okno `popup`) zamiast toastów Windows; włącza je też `resolve_close { toTray: true }` |
+| `tint.enabled` | `boolean` | `false` | odcień ekranu według pory dnia (overlay) |
+| `tint.startMinutes` | `number` | `1080` (18:00) | minuta doby, od której odcień narasta; 0..1439 |
+| `tint.endMinutes` | `number` | `540` (09:00) | minuta doby, w której ekran wraca do normy; 0..1439, różna od `startMinutes` (okno może przechodzić przez północ) |
+| `tint.strength` | `number` | `45` | pełna siła 0..100 |
+| `tint.transitionMinutes` | `number` | `30` | długość narastania po `startMinutes` i zanikania przed `endMinutes`, 0..180 (najwyżej połowa okna) |
+| `shields.closeLaunchers` | `boolean` | `false` | zamykaj wybrane launchery gier na każdy start fazy Focus |
+| `shields.launchers` | `GameLauncher[]` | `steam`, `epic`, `gog`, `ubisoft`, `ea`, `battleNet`, `riot` | które launchery zamykać; do wyboru także `xbox`, `amazon`, `itch`; normalizowane (bez duplikatów, stała kolejność) |
+
+Błędy walidacji: `config.invalid` z polem `tint.startMinutes`, `tint.endMinutes` (także gdy początek = koniec), `tint.strength` albo `tint.transitionMinutes`,
+również przy wyłączonym odcieniu.
+
+Nowe DTO i pola:
+
+| Typ | Pola / warianty | Uwagi |
+|---|---|---|
+| `Language` | `system`, `en`, `pl`, `de`, `fr`, `it`, `uk`, `ru`, `es`, `zh`, `ja` | `get_system_language` nigdy nie zwraca `system` |
+| `TintConfig` | `enabled`, `startMinutes`, `endMinutes`, `strength`, `transitionMinutes` | poziom liczy `focus_core::tint::tint_level(cfg, minute_of_day)`; minutę doby czasu lokalnego daje `focus-platform` (`clock.rs`) |
+| `TintStatus` | `revision`, `enabled`, `level` (0..100, 0 = brak overlayu), `preview`, `active` (okna overlay są pokazane), `error` (angielski szczegół, gdy okien nie da się utworzyć; harmonogram próbuje dalej) | getter `get_tint_status`, event `tint://changed` |
+| `GameLauncher` | `steam`, `epic`, `gog`, `ubisoft`, `ea`, `battleNet`, `riot`, `xbox`, `amazon`, `itch` | nazwy procesów i nazwy wyświetlane: `focus_core::launchers` |
+| `ShieldStatus.launchers` | `IntegrationStatus` | osłona „zamknij launchery”; poza Windows `unavailable` |
+| `ShieldStatus.closedLaunchers` | `GameLauncher[]` | launchery zamknięte na ostatnim starcie focusa (puste, gdy żaden nie działał) |
+| `PopupKind` | `breakStarted`, `focusStarted`, `interrupted` (auto-pauza po uśpieniu), `launchersClosed` | |
+| `PopupInfo` | `revision`, `kind` (`null` = schowaj), `cycle`, `phaseSecs` (długość fazy, która się zaczęła), `launchers` | getter `get_popup`, event `popup://show` |
+| `PopupAction` | `dismiss`, `showMain`, `skipPhase` | argument `popup_action` |
+| `BlocklistIssueCode` | §6.5 | |
+
+Kolejność efektów z tabeli ADR-013 się nie zmienia: core nadal wysyła `Notify` w tym samym miejscu, a powłoka wybiera kanał (okienko `popup` albo toast).
+Zamykanie launcherów: na start każdej fazy Focus, tylko dokładne nazwy exe z `focus_core::launchers::process_names`, tylko procesy bieżącej sesji
+(`focus-platform/src/processes.rs`: Toolhelp + `ProcessIdToSessionId` + `TerminateProcess`), nigdy usługi ani procesy gier.
+Teams: przed ustawieniem DND powłoka czyta `GET /me/presence`; przy `availability` = `Offline` albo `DoNotDisturb` nie ustawia DND i potem go nie czyści.
 
 ## 7. Model wątków i współbieżności
 
@@ -510,6 +597,9 @@ Ustalenia ze spike'a T0-10 (kod referencyjny: [spikes/audio-spike](../spikes/aud
 ## 9. Tint i integracje
 
 ### 9.1 Tint: overlay jako główny mechanizm (ADR-009)
+> **Aktualnie (ADR-014):** overlay wrócił do zakresu, domyślnie wyłączony; harmonogram z minutą doby czasu lokalnego (`focus-platform/src/clock.rs`)
+> i poziomem 0..100 z `focus_core::tint` zamiast kelwinów; okna i podgląd w `src-tauri/src/tint.rs`; kontrakt w §6.6. Poniżej plan sprzed pivotu.
+
 - Okna `tint-{n}` na każdym monitorze: przezroczyste, bez dekoracji, `always_on_top`, `skip_taskbar`, nieaktywujące się,
   `set_ignore_cursor_events(true)`. Kolor i alfa z `core::tint` (kelvin → RGBA).
 - To **efekt wizualny**, nie kalibracja barw: obniża kontrast i tak go opisujemy.
@@ -528,6 +618,9 @@ Ustalenia ze spike'a T0-10 (kod referencyjny: [spikes/audio-spike](../spikes/aud
   Weryfikacja ewentualnego eksperymentu: start z nieliniową rampą, zwykłe wyjście, kill + restart, zmiana monitora; patrzymy na wierność kalibracji, a nie na to, że „nie jest już pomarańczowo”.
 
 ### 9.3 Teams DND (Could, S-01, ADR-010)
+> **Aktualnie (ADR-013 + ADR-014):** DND z wygaśnięciem focus + 5 min, automatyczne czyszczenie na przerwę i po Stop, ale tylko gdy FocusMode
+> sam je ustawił; przy statusie `Offline` albo `DoNotDisturb` (odczyt `GET /me/presence`) statusu nie ruszamy. Poniżej plan sprzed pivotu.
+
 - `Presence.ReadWrite` (delegowane), device code flow (public client), token w keychainie (`keyring`).
 - Ustawienie: `POST /users/{id}/presence/setUserPreferredPresence` (`/me/...` sprawdzić w próbie),
   `{"availability":"DoNotDisturb","activity":"DoNotDisturb","expirationDuration":"PT10M"}`.
@@ -541,6 +634,8 @@ Ustalenia ze spike'a T0-10 (kod referencyjny: [spikes/audio-spike](../spikes/aud
 - **Nie wykrywamy rozmów przez Graph** — od tego jest ręczny tryb spotkania.
 
 ## 10. Okna
+
+> **Aktualnie:** okna `main`, `media`, `popup` i overlay odcienia (tabela w §6.3). Okien `warning` i `break-{n}` nie ma (ADR-013). Poniżej plan sprzed pivotu.
 
 | Etykieta | URL | Cechy |
 |---|---|---|

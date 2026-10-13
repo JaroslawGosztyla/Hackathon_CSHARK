@@ -2,9 +2,10 @@
 
 Aplikacja desktopowa do sesji skupienia w stylu „lofi”: użytkownik ustawia czasy (domyślnie 45 min focus / 15 min przerwy)
 i muzykę (stream, np. Lofi Girl na YouTube, linki YouTube/YouTube Music, folder, szum) → Start → pętla Focus ⇄ Przerwa aż do Stop,
-z dzwonkiem i toastem przy każdej zmianie fazy. Na czas focusa „osłony”: wyciszenie powiadomień Windows, Teams „Nie przeszkadzać” (Graph),
-blokada rozpraszających stron (rozszerzenie przeglądarki + lokalny most), nieusypianie ekranu. W przerwie osłony schodzą, a muzyka gra dalej.
-Po Stop wykres produktywności według aktywnego procesu. **Aktualny zakres: ADR-013 (speedrun)**; wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
+z dzwonkiem i toastem (albo okienkiem FocusMode w rogu ekranu) przy każdej zmianie fazy. Na czas focusa „osłony”: wyciszenie powiadomień Windows,
+Teams „Nie przeszkadzać” (Graph; nie rusza „offline” ani własnego DND użytkownika), blokada rozpraszających stron (rozszerzenie przeglądarki + lokalny most),
+nieusypianie ekranu, zamknięcie launcherów gier. W przerwie osłony schodzą, a muzyka gra dalej. Opcjonalnie odcień ekranu według pory dnia (overlay).
+Po Stop wykres produktywności według aktywnego procesu. **Aktualny zakres: ADR-013 (speedrun) + ADR-014**; wygrywa z DESIGN/ARCHITECTURE tam, gdzie się różnią.
 Architektura multiplatformowa, **odbiór i gwarancje UX tylko na Windows** (ADR-008).
 Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), prowadzony z pomocą AI.
 
@@ -14,11 +15,11 @@ Projekt hackathonowy, 2 osoby (**A** = silnik Rust, **B** = aplikacja i UX), pro
 2. Ustal, dla kogo pracujesz (A czy B): sprawdź `CLAUDE.local.md`; jeśli go nie ma — zapytaj.
 3. Przy pracy nad architekturą/IPC czytaj [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md);
    przy decyzjach produktowych [docs/DESIGN.md](docs/DESIGN.md); ADR-y w [docs/DECISIONS.md](docs/DECISIONS.md).
-   Oba dokumenty są sprzed pivotu: najpierw ADR-013 i `crates/focus-core/src/api.rs`.
+   Oba dokumenty są sprzed pivotu: najpierw ADR-013, ADR-014 i `crates/focus-core/src/api.rs`.
 
 ## Stos
 
-Tauri 2 (powłoka, okno, tray, toasty, instalator NSIS) · Rust workspace (`focus-core`, `focus-audio`, `focus-platform`) ·
+Tauri 2 (powłoka, okna, tray, toasty, instalator NSIS) · Rust workspace (`focus-core`, `focus-audio`, `focus-platform`) ·
 rodio (tylko dzwonki) · Svelte 5 + TypeScript + Vite (UI i odtwarzacz muzyki w WebView z CSP:
 iframe YouTube sterowany przez `postMessage`, `<audio>`, WebAudio) ·
 ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
@@ -26,20 +27,29 @@ ts-rs (typy TS z DTO w Ruście) · rozszerzenie MV3 dla przeglądarek Chromium.
 ## Struktura
 
 - `crates/focus-core/` — czysta logika: `timing.rs` (profil czasów), `session.rs` (maszyna stanów Focus ⇄ Przerwa), `config.rs` (domyślne + walidacja),
-  `blocklist.rs` (parser `websiteblacklist.txt`: domeny + regexy RE2, procesy przeglądarek, dopasowanie tytułów), `stats.rs` (użycie aplikacji, podsumowanie).
+  `blocklist.rs` (parser `websiteblacklist.txt`: domeny + regexy RE2, procesy przeglądarek, dopasowanie tytułów; błędy jako `BlocklistIssueCode`),
+  `stats.rs` (użycie aplikacji, podsumowanie), `tint.rs` (harmonogram odcienia: poziom 0–100 z minuty doby),
+  `launchers.rs` (launchery gier i ich dokładne nazwy procesów), `language.rs` (obsługiwane języki, tag systemu → `Language`).
   `src/api.rs` = kontrakt IPC. `assets/websiteblacklist.txt` = domyślna lista stron wbudowana w aplikację (ADR-013 pkt 4).
 - `crates/focus-audio/` — dedykowany wątek rodio, syntetyczne dzwonki (`ChimePlayer`). Muzyka nie gra w Ruście.
 - `crates/focus-platform/` — integracje OS za traitami z `Noop`: `foreground` (aktywne okno + bezczynność),
   `notifications` (DND Windows przez nieudokumentowany COM `IQuietHoursSettings`, stan sprzed focusa awaryjnie z WNF),
-  `power` (keep-awake), `teams` (Graph, device code, token DPAPI).
+  `power` (keep-awake), `teams` (Graph, device code, token DPAPI, odczyt statusu przed DND),
+  `processes` (zamykanie procesów po dokładnej nazwie exe w bieżącej sesji: Toolhelp + `TerminateProcess`),
+  `locale` (język wyświetlania systemu), `clock` (minuta doby czasu lokalnego dla odcienia, `GetLocalTime`).
 - `src-tauri/src/` — powłoka: `commands.rs` (cienkie adaptery), `session_actor.rs` (aktor + tick 1 s), `effects.rs` (dispatch efektów),
-  `shields.rs` (wątek osłon z generacją, `shields-restore.json` + wpis RunOnce `FocusModeRestore` → `--restore-shields`),
+  `shields.rs` (wątek osłon z generacją, `shields-restore.json` + wpis RunOnce `FocusModeRestore` → `--restore-shields`; także zamykanie launcherów),
   `tracker.rs` (próbkowanie aktywnej aplikacji + awaryjny nudge po tytule okna, gdy rozszerzenie nie odpytało mostu przez 90 s),
   `bridge.rs` (HTTP `127.0.0.1:47615` dla rozszerzenia), `persistence.rs` (`config.json`, `history.jsonl`),
   `blocklist.rs` (`websiteblacklist.txt` w katalogu konfiguracji: utworzenie z domyślnej listy, odczyt, auto-przeładowanie po zapisie, `blocklist://changed`),
-  `music.rs` (skan folderu; asset scope tylko dla znalezionych plików audio),
-  `teams.rs`, `tray.rs`, `texts.rs` (teksty toastów).
+  `music.rs` (skan folderu; asset scope tylko dla znalezionych plików audio), `media_window.rs` (ukryte okno YouTube, ADR-013 pkt 2),
+  `popup.rs` (okno `popup`: okienka faz w rogu ekranu, `popup://show`), `tint.rs` (overlay odcienia na każdym monitorze, harmonogram, podgląd, `tint://changed`),
+  `close.rs` (X na oknie głównym: zasobnik, wyjście albo pytanie `app://close-requested`), `window_util.rs` (opcje WebView2 okna głównego dla
+  pozostałych okien, pozycja w rogu ekranu), `teams.rs`, `tray.rs`, `texts.rs` (wszystkie teksty powłoki: toasty, tray, okienka).
+  `src-tauri/capabilities/`: `default.json` (okno `main`), `overlays.json` (okna `popup` i `tint-*`: tylko eventy).
 - `src/` — **frontend Svelte/TS** (nie Rust!). `src/lib/api.ts` = jedyne miejsce z `invoke`/`listen`. `src/lib/player/` = odtwarzacz muzyki.
+  Trasy: `src/routes/(app)/` = okno główne (Skupienie / Podsumowanie / Ustawienia, w layoucie odtwarzacz),
+  `src/routes/(overlay)/` = lekkie strony okna `popup` i overlayu odcienia, **bez odtwarzacza** (inaczej muzyka grałaby w kilku oknach).
 - `src/lib/bindings/` — **generowane** przez ts-rs, nie edytuj ręcznie.
 - `browser-extension/` — rozszerzenie MV3 (Chrome/Edge/Brave/Opera/Vivaldi): odpytuje most i przekierowuje rozpraszające strony na `blocked.html`.
   Trafia do instalatora jako zasób (`bundle.resources`).
@@ -77,16 +87,18 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
    Ignorowanie spóźnionego wyniku chroni tylko stan aktora i **nie anuluje efektu** (ADR-012, R02).
 4. **Kod per OS tylko w `focus-platform`**, za traitem, z `#[cfg(target_os = "...")]` i implementacją `Noop`.
    Żadnego UI na surowym Win32/HWND — okna robi Tauri.
-5. **Kontrakt IPC zmieniasz tylko przez `/sync-contract`**. Każdy stan widoku (snapshot sesji, `ShieldStatus`, `TeamsStatus`) ma getter + event
-   z rewizją (ADR-012): UI robi listen → getter → stosuje tylko nowszą `revision`.
-6. **Bez pełnoekranowych okien przerwy, tint, gammy i trybu spotkania** — odłożone (ADR-013). Jeśli tint wróci, to przez overlay (ADR-009).
+5. **Kontrakt IPC zmieniasz tylko przez `/sync-contract`**. Każdy stan widoku (snapshot sesji, `ShieldStatus`, `TeamsStatus`, `TintStatus`, `PopupInfo`…)
+   ma getter + event z rewizją (ADR-012): UI robi listen → getter → stosuje tylko nowszą `revision`.
+6. **Bez pełnoekranowych okien przerwy, gammy i trybu spotkania** — odłożone (ADR-013). **Odcień ekranu tylko jako overlay**
+   (przezroczyste, klikalne na wylot okna per monitor), **domyślnie wyłączony** (ADR-009, ADR-014).
 7. **Sesja nie może uwięzić użytkownika**: Stop działa w każdej fazie i jest idempotentny; Pauza/Wznów/Pomiń fazę z UI i z traya
    (tray idzie kanałem aktora, niezależnie od WebView). **Osłony zawsze wracają**: schodzą w przerwie, po Stop i przy wyjściu,
    a token wyciszenia powiadomień jest zapisywany zaraz po zmianie (`shields-restore.json` + wpis RunOnce `FocusModeRestore`
    z `--restore-shields`), więc po crashu powiadomienia wracają przy następnym starcie albo najpóźniej przy następnym logowaniu.
 8. Błąd integracji (audio/osłony/Teams/most/zapis) nie przerywa sesji: log + event `app://error` + degradacja (status `Error` osłony).
    Dzwonki grają na dedykowanym wątku rodio z komunikacją przez kanały. Muzyka gra w WebView okna głównego,
-   więc zamknięcie okna je tylko ukrywa (ADR-013).
+   więc tego okna nie niszczymy: X chowa je do zasobnika albo kończy całą aplikację, zależnie od `closeToTray`
+   (dopóki wyboru nie ma, pierwsze X pyta; ADR-013, ADR-014).
 9. Brak `unwrap()`/`expect()` poza testami i setupem. Biblioteki: `thiserror`; powłoka: `anyhow`;
    granica IPC: `AppError { code, message, field }`.
 10. Dołączane do aplikacji muzyka i grafiki tylko z licencją pozwalającą na użycie (CC0/CC-BY), z wpisem w `CREDITS.md`.
@@ -95,11 +107,15 @@ Frontend to **SvelteKit w trybie SPA** (`adapter-static`, `ssr = false`) z szabl
 11. **Prywatność**: nic nie opuszcza komputera poza ruchem, który wybrał użytkownik (muzyka, opcjonalnie Graph dla Teams).
     Most słucha tylko na `127.0.0.1` i tylko udostępnia stan; rozszerzenie nie wysyła adresów stron i nie ładuje zdalnego kodu.
     Tracker zapisuje tylko nazwy procesów i sumy czasu; tytułów okien nie zapisujemy ani nie logujemy. Tokenów nie logujemy.
+    Launchery gier zamykamy tylko po dokładnych nazwach exe z `focus-core/src/launchers.rs`, tylko w bieżącej sesji,
+    nigdy usług, procesów gier ani niczego, co wymaga praw administratora (ADR-014).
 
 ## Konwencje
 
-- Kod, identyfikatory, komentarze i commity **po angielsku**; dokumentacja w `docs/` i teksty UI **po polsku**
-  (teksty UI w `src/lib/strings.ts`).
+- Kod, identyfikatory, komentarze i commity **po angielsku**; dokumentacja w `docs/` **po polsku**.
+- Teksty dla użytkownika są na razie po polsku, docelowo w 10 językach (ADR-014). Każdy tekst UI trafia do `src/lib/strings.ts`,
+  każdy tekst powłoki (toasty, tray, okienka) do `src-tauri/src/texts.rs`. `focus-core` nie zwraca tekstów: tylko kody
+  (`AppError.code`, `BlocklistIssue.code`) i ewentualny szczegół po angielsku.
 - Commity: Conventional Commits z obszarem: `feat(core): …`, `fix(audio): …`, `feat(ui): …`,
   obszary: `core`, `audio`, `platform`, `shell`, `ui`, `docs`, `ci`. Małe i częste.
 - Serde na DTO: `#[serde(rename_all = "camelCase")]`. Eventy nazywamy `obszar://nazwa`.
