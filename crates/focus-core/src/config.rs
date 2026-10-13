@@ -1,11 +1,10 @@
 //! Config defaults and validation. The shell persists only configs that passed
 //! [`Config::normalized`]; the UI shows the returned `AppError.field` next to the input.
 
-use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::api::{AppError, Config, MusicConfig, MusicSourceKind, NoiseColor, ShieldsConfig};
-use crate::blocklist::{DEFAULT_BLOCKLIST, normalize_domain};
+use crate::blocklist::normalize_domain;
 use crate::timing::{DEFAULT_BREAK_MINUTES, DEFAULT_FOCUS_MINUTES};
 
 /// Lofi Girl's current YouTube live stream (default music source). The channel `/live` page always
@@ -21,8 +20,6 @@ pub const FOCUS_MINUTES_RANGE: RangeInclusive<u32> = 1..=240;
 pub const BREAK_MINUTES_RANGE: RangeInclusive<u32> = 1..=120;
 /// Maximum number of music links.
 pub const MAX_LINKS: usize = 200;
-/// Maximum number of blocked domains.
-pub const MAX_BLOCKLIST: usize = 500;
 /// Default chime volume.
 pub const DEFAULT_CHIME_VOLUME: f32 = 0.7;
 /// Default music volume.
@@ -71,7 +68,6 @@ impl Default for ShieldsConfig {
             teams_client_id: String::new(),
             teams_tenant: DEFAULT_TEAMS_TENANT.to_owned(),
             block_sites: true,
-            blocklist: DEFAULT_BLOCKLIST.iter().map(|d| (*d).to_owned()).collect(),
             keep_awake: true,
         }
     }
@@ -80,8 +76,9 @@ impl Default for ShieldsConfig {
 impl Config {
     /// Validates and normalizes a config received from the UI or read from disk.
     ///
-    /// Trims strings, normalizes the blocklist (`normalize_domain`, dedupe, invalid entries
-    /// dropped), trims links and drops empty ones (a bare `youtube.com/...` gets `https://`).
+    /// Trims strings, trims links and drops empty ones (a bare `youtube.com/...` gets `https://`).
+    /// The site blocklist is not part of the config: it lives in `websiteblacklist.txt`
+    /// ([`crate::blocklist::Blocklist::parse`]).
     /// Out-of-range values are never clamped silently: they return `Err` with code
     /// `config.invalid` and `field` set to the camelCase path (`focusMinutes`, `music.volume`).
     pub fn normalized(self) -> Result<Config, AppError> {
@@ -173,28 +170,11 @@ impl ShieldsConfig {
             teams_client_id,
             teams_tenant,
             block_sites,
-            blocklist,
             keep_awake,
         } = self;
 
         let teams_client_id = normalize_client_id(&teams_client_id)?;
         let teams_tenant = normalize_tenant(&teams_tenant)?;
-
-        let mut seen = HashSet::new();
-        let blocklist: Vec<String> = blocklist
-            .iter()
-            .filter_map(|entry| normalize_domain(entry.as_str()))
-            .filter(|domain| seen.insert(domain.clone()))
-            .collect();
-        if blocklist.len() > MAX_BLOCKLIST {
-            return Err(invalid(
-                "shields.blocklist",
-                format!(
-                    "at most {MAX_BLOCKLIST} blocked domains are allowed, got {}",
-                    blocklist.len()
-                ),
-            ));
-        }
 
         Ok(ShieldsConfig {
             mute_notifications,
@@ -202,7 +182,6 @@ impl ShieldsConfig {
             teams_client_id,
             teams_tenant,
             block_sites,
-            blocklist,
             keep_awake,
         })
     }
@@ -372,8 +351,6 @@ mod tests {
         assert_eq!(shields.teams_tenant, "organizations");
         assert!(shields.block_sites);
         assert!(shields.keep_awake);
-        assert_eq!(shields.blocklist.len(), DEFAULT_BLOCKLIST.len());
-        assert!(shields.blocklist.iter().any(|d| d == "reddit.com"));
     }
 
     #[test]
@@ -397,7 +374,18 @@ mod tests {
         assert_eq!(partial.music.stream_url, LOFI_GIRL_URL);
         assert!(!partial.shields.block_sites);
         assert!(partial.shields.keep_awake);
-        assert_eq!(partial.shields.blocklist.len(), DEFAULT_BLOCKLIST.len());
+    }
+
+    #[test]
+    fn ignores_the_removed_blocklist_field() {
+        // A config.json written before websiteblacklist.txt still loads; the old list is dropped.
+        let old: Config = serde_json::from_str(
+            r#"{"shields":{"blockSites":true,"blocklist":["reddit.com","kwejk.pl"]}}"#,
+        )
+        .expect("old config");
+        assert_eq!(old, Config::default());
+        let json = serde_json::to_value(&old).expect("serialize");
+        assert!(json["shields"].get("blocklist").is_none());
     }
 
     #[test]
@@ -472,54 +460,6 @@ mod tests {
             };
             assert!(cfg.normalized().is_ok());
         }
-    }
-
-    #[test]
-    fn normalizes_and_deduplicates_blocklist() {
-        let cfg = with_shields(ShieldsConfig {
-            blocklist: vec![
-                "https://www.Reddit.com/r/x".to_owned(),
-                "reddit.com".to_owned(),
-                "   ".to_owned(),
-                "reddit".to_owned(),
-                "YouTube.com".to_owned(),
-                "old.reddit.com".to_owned(),
-            ],
-            ..ShieldsConfig::default()
-        });
-        let normalized = cfg.normalized().expect("valid");
-        assert_eq!(
-            normalized.shields.blocklist,
-            ["reddit.com", "youtube.com", "old.reddit.com"]
-        );
-    }
-
-    #[test]
-    fn rejects_too_many_blocked_domains() {
-        let many = (0..=MAX_BLOCKLIST)
-            .map(|i| format!("site{i}.com"))
-            .collect();
-        let cfg = with_shields(ShieldsConfig {
-            blocklist: many,
-            ..ShieldsConfig::default()
-        });
-        assert_eq!(
-            field_of(cfg.normalized()).as_deref(),
-            Some("shields.blocklist")
-        );
-
-        // Duplicates collapse before the limit is checked.
-        let dupes = (0..=MAX_BLOCKLIST)
-            .map(|_| "reddit.com".to_owned())
-            .collect();
-        let cfg = with_shields(ShieldsConfig {
-            blocklist: dupes,
-            ..ShieldsConfig::default()
-        });
-        assert_eq!(
-            cfg.normalized().expect("valid").shields.blocklist,
-            ["reddit.com"]
-        );
     }
 
     #[test]
@@ -694,7 +634,6 @@ mod tests {
             },
             shields: ShieldsConfig {
                 teams_tenant: " Organizations ".to_owned(),
-                blocklist: vec!["WWW.9GAG.com/".to_owned(), "9gag.com".to_owned()],
                 ..ShieldsConfig::default()
             },
             ..Config::default()
@@ -702,7 +641,7 @@ mod tests {
         let once = messy.normalized().expect("valid");
         let twice = once.clone().normalized().expect("still valid");
         assert_eq!(once, twice);
-        assert_eq!(once.shields.blocklist, ["9gag.com"]);
+        assert_eq!(once.shields.teams_tenant, "organizations");
         assert_eq!(once.music.links[0], "https://youtu.be/abc");
     }
 }

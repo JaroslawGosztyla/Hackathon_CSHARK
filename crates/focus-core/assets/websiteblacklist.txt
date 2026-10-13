@@ -1,0 +1,155 @@
+# FocusMode — lista rozpraszających stron (websiteblacklist.txt)
+#
+# Strony z tej listy są blokowane tylko w czasie skupienia (w przerwie i po Stop działają normalnie).
+# Jedna pozycja w linii. Linie zaczynające się od # to komentarze; puste linie są pomijane.
+#
+# • Zwykła domena, np.  kwejk.pl
+#   Blokuje domenę i wszystkie jej subdomeny (www.kwejk.pl, m.kwejk.pl…). Adres z https:// i ścieżką
+#   też zadziała, ale liczy się tylko domena: https://www.reddit.com/r/polska blokuje cały reddit.com.
+#   Adres ze znakiem ? (np. youtube.com/watch?v=…) jest już wyrażeniem regularnym — wpisz samą domenę.
+#
+# • Wyrażenie regularne — linia w ukośnikach /…/ albo zawierająca któryś ze znaków  \ ^ $ * + ? ( ) [ ] { } |
+#   Dopasowywane do całego adresu strony (np. https://www.youtube.com/shorts/abc), bez rozróżniania
+#   wielkości liter. Składnia RE2 (jak w Chrome): bez lookahead i odwołań wstecznych. Kropka to „dowolny znak”,
+#   więc w domenach pisz \. — np.  youtube\.com/shorts  blokuje tylko Shorts, a nie cały YouTube.
+#
+# Plik wczytuje się ponownie sam po zapisaniu (albo przyciskiem „Wczytaj ponownie” w Ustawieniach).
+# Żeby odblokować stronę, usuń linię albo dopisz na jej początku #.
+# Blokada w przeglądarce działa przez rozszerzenie FocusMode; bez niego aplikacja tylko upomina,
+# gdy tytuł okna przeglądarki pasuje do listy.
+
+# --- Memy i humor -------------------------------------------------------------------------------
+kwejk.pl
+jbzd.com.pl
+demotywatory.pl
+joemonster.org
+besty.pl
+mistrzowie.org
+faktopedia.pl
+chamsko.pl
+jeja.pl
+wiocha.pl
+paczaizm.pl
+memy.pl
+9gag.com
+imgur.com
+knowyourmeme.com
+ifunny.co
+memedroid.com
+cheezburger.com
+boredpanda.com
+buzzfeed.com
+
+# --- Media społecznościowe i fora ------------------------------------------------------------------
+facebook.com
+instagram.com
+tiktok.com
+x.com
+twitter.com
+threads.net
+threads.com
+bsky.app
+snapchat.com
+pinterest.com
+tumblr.com
+reddit.com
+wykop.pl
+4chan.org
+4channel.org
+vk.com
+# LinkedIn jest potrzebny w pracy — blokujemy tylko tablicę (feed):
+linkedin\.com/feed
+
+# --- Plotki i rozrywka --------------------------------------------------------------------------------
+pudelek.pl
+plotek.pl
+pomponik.pl
+kozaczek.pl
+party.pl
+viva.pl
+tmz.com
+dailymail.co.uk
+eonline.com
+people.com
+
+# --- Strony główne portali (poczta i inne usługi portali działają dalej) --------------------------------------
+^https?://(www\.)?(onet|wp|interia|o2|gazeta)\.pl/?(\?.*)?$
+
+# --- Sport ----------------------------------------------------------------------------------------------
+sport.pl
+sportowefakty.wp.pl
+przegladsportowy.onet.pl
+meczyki.pl
+weszlo.com
+transfermarkt.pl
+transfermarkt.com
+flashscore.pl
+flashscore.com
+livescore.com
+sofascore.com
+espn.com
+skysports.com
+bbc\.co\.uk/sport
+
+# --- Wideo i streaming (muzyka w FocusMode gra niezależnie od tej listy) ---------------------------------
+youtube\.com/shorts
+twitch.tv
+kick.com
+cda.pl
+player.pl
+polsatboxgo.pl
+netflix.com
+primevideo.com
+disneyplus.com
+max.com
+hbomax.com
+skyshowtime.com
+dailymotion.com
+# Cały YouTube (odkomentuj, jeśli nie używasz go w pracy):
+# youtube.com
+
+# --- Gry ----------------------------------------------------------------------------------------------
+gry-online.pl
+ppe.pl
+gram.pl
+eurogamer.pl
+store.steampowered.com
+steamcommunity.com
+store.epicgames.com
+ign.com
+gamespot.com
+polygon.com
+kotaku.com
+chess.com
+lichess.org
+poki.com
+poki.pl
+crazygames.com
+miniclip.com
+
+# --- Zakupy -------------------------------------------------------------------------------------------
+allegro.pl
+olx.pl
+vinted.pl
+aliexpress.com
+temu.com
+shein.com
+ebay.com
+# amazon.com
+# amazon.pl
+
+# --- Wiadomości (odkomentuj, jeśli chcesz) ---------------------------------------------------------------
+# onet.pl
+# wp.pl
+# interia.pl
+# gazeta.pl
+# tvn24.pl
+# cnn.com
+# foxnews.com
+# bbc\.com/news
+
+# --- Komunikatory (domyślnie dozwolone — często potrzebne w pracy) ---------------------------------------
+# messenger.com
+# discord.com
+# web.whatsapp.com
+# web.telegram.org
