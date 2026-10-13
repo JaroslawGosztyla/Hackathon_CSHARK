@@ -4,7 +4,8 @@
 use std::ops::RangeInclusive;
 
 use crate::api::{
-    AppError, Config, Language, MusicConfig, MusicSourceKind, NoiseColor, ShieldsConfig, TintConfig,
+    AppError, ChimeKind, ChimeSound, Config, CustomChimes, Language, MusicConfig, MusicSourceKind,
+    NoiseColor, ShieldsConfig, Theme, TintConfig,
 };
 use crate::blocklist::normalize_domain;
 use crate::launchers;
@@ -30,8 +31,25 @@ pub const DEFAULT_CHIME_VOLUME: f32 = 0.7;
 pub const DEFAULT_MUSIC_VOLUME: f32 = 0.6;
 /// Default Microsoft identity platform tenant for Teams (work and school accounts).
 pub const DEFAULT_TEAMS_TENANT: &str = "organizations";
+/// Most per-break reminders (`breakReminders`).
+pub const MAX_BREAK_REMINDERS: usize = 24;
+/// Longest reminder in characters (after trimming).
+pub const MAX_REMINDER_CHARS: usize = 160;
+/// Longest custom chime file name in characters.
+pub const MAX_CHIME_FILE_NAME_CHARS: usize = 100;
+/// Largest audio file accepted as a custom chime (`import_chime`), 10 MiB.
+pub const MAX_CUSTOM_CHIME_BYTES: u64 = 10 * 1024 * 1024;
+/// Audio file extensions accepted as custom chimes (lowercase, without the dot).
+pub const CUSTOM_CHIME_EXTENSIONS: [&str; 5] = ["mp3", "wav", "ogg", "flac", "m4a"];
 
 const MAX_TENANT_LEN: usize = 253;
+/// Characters Windows does not allow in file names (besides separators and control characters).
+const FORBIDDEN_FILE_NAME_CHARS: [char; 7] = ['<', '>', ':', '"', '|', '?', '*'];
+/// Windows device names that cannot be used as a file name stem (`nul.mp3`).
+const RESERVED_FILE_STEMS: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
 const GUID_LEN: usize = 36;
 const GUID_DASH_POSITIONS: [usize; 4] = [8, 13, 18, 23];
 
@@ -49,6 +67,13 @@ impl Default for Config {
             close_to_tray: None,
             phase_popups: false,
             tint: TintConfig::default(),
+            theme: Theme::Midnight,
+            chime_sound: ChimeSound::Midnight,
+            custom_chimes: CustomChimes::default(),
+            break_reminders: Vec::new(),
+            repeat_reminders: false,
+            track_titles: true,
+            keep_history: true,
         }
     }
 }
@@ -56,7 +81,8 @@ impl Default for Config {
 impl Default for MusicConfig {
     fn default() -> Self {
         Self {
-            source: MusicSourceKind::Stream,
+            // The bundled Open Lo-Fi tracks: offline, no consent page, no account.
+            source: MusicSourceKind::Library,
             folder: None,
             links: Vec::new(),
             stream_url: LOFI_GIRL_URL.to_owned(),
@@ -90,9 +116,12 @@ impl Config {
     /// The site blocklist is not part of the config: it lives in `websiteblacklist.txt`
     /// ([`crate::blocklist::Blocklist::parse`]).
     /// Game launchers lose duplicates and follow the canonical order ([`launchers::ALL`]).
+    /// Break reminders are trimmed (control characters become spaces); empty ones stay as
+    /// "no reminder for that break" placeholders. Custom chime names are trimmed (empty → `None`)
+    /// and must be plain audio file names ([`is_chime_file_name`]).
     /// Out-of-range values are never clamped silently: they return `Err` with code
     /// `config.invalid` and `field` set to the camelCase path (`focusMinutes`, `music.volume`,
-    /// `tint.startMinutes`).
+    /// `tint.startMinutes`, `breakReminders`, `customChimes.breakFile`).
     pub fn normalized(self) -> Result<Config, AppError> {
         let Config {
             focus_minutes,
@@ -106,6 +135,13 @@ impl Config {
             close_to_tray,
             phase_popups,
             tint,
+            theme,
+            chime_sound,
+            custom_chimes,
+            break_reminders,
+            repeat_reminders,
+            track_titles,
+            keep_history,
         } = self;
 
         check_range("focusMinutes", focus_minutes, FOCUS_MINUTES_RANGE)?;
@@ -124,8 +160,165 @@ impl Config {
             close_to_tray,
             phase_popups,
             tint: tint.normalized()?,
+            theme,
+            chime_sound,
+            custom_chimes: custom_chimes.normalized()?,
+            break_reminders: normalize_reminders(break_reminders)?,
+            repeat_reminders,
+            track_titles,
+            keep_history,
         })
     }
+}
+
+/// The user's reminder for the `break_number`-th break of a session (1-based: the break after
+/// focus cycle 1 is break 1, so the shell passes the snapshot's `cycle` when a break starts).
+///
+/// `None` for break 0 and for an entry that is empty after trimming. Past the end of
+/// `break_reminders` it is `None` too, unless `repeat_reminders` is on: then the list starts over
+/// (`[a, b]` → a, b, a, b, …).
+pub fn reminder_for_break(cfg: &Config, break_number: u32) -> Option<String> {
+    let reminders = &cfg.break_reminders;
+    let index = usize::try_from(break_number.checked_sub(1)?).ok()?;
+    let entry = match reminders.get(index) {
+        Some(entry) => entry,
+        None if cfg.repeat_reminders && !reminders.is_empty() => {
+            reminders.get(index % reminders.len())?
+        }
+        None => return None,
+    };
+    let entry = entry.trim();
+    (!entry.is_empty()).then(|| entry.to_owned())
+}
+
+/// `true` for a name that can be used as a custom chime file inside the app data `sounds` folder:
+/// a plain file name (no `/`, `\`, `:`, `..`, control or other characters Windows forbids, no
+/// leading dot, no trailing dot or space, not a device name like `nul.mp3`) of at most
+/// [`MAX_CHIME_FILE_NAME_CHARS`] characters, with a non-empty stem and one of the
+/// [`CUSTOM_CHIME_EXTENSIONS`] (any case).
+pub fn is_chime_file_name(name: &str) -> bool {
+    if name.is_empty()
+        || name.chars().count() > MAX_CHIME_FILE_NAME_CHARS
+        || name.contains("..")
+        || name.starts_with('.')
+        || name.ends_with(['.', ' '])
+        || name.chars().any(|c| {
+            c == '/' || c == '\\' || c.is_control() || FORBIDDEN_FILE_NAME_CHARS.contains(&c)
+        })
+    {
+        return false;
+    }
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    let device = stem.split('.').next().unwrap_or(stem).trim_end();
+    !stem.trim().is_empty()
+        && chime_extension(extension).is_some()
+        && !RESERVED_FILE_STEMS
+            .iter()
+            .any(|reserved| device.eq_ignore_ascii_case(reserved))
+}
+
+/// File name the shell stores an imported chime under: `break.<ext>` or `focus.<ext>`, with the
+/// lowercase extension of `source` (a path or a file name). `None` when the extension is not one of
+/// the [`CUSTOM_CHIME_EXTENSIONS`].
+pub fn custom_chime_file_name(chime: ChimeKind, source: &str) -> Option<String> {
+    let file_name = source.trim().rsplit(['/', '\\']).next()?;
+    let (stem, extension) = file_name.rsplit_once('.')?;
+    if stem.trim().is_empty() {
+        return None;
+    }
+    let extension = chime_extension(extension)?;
+    let prefix = match chime {
+        ChimeKind::BreakStart => "break",
+        ChimeKind::FocusStart => "focus",
+    };
+    Some(format!("{prefix}.{extension}"))
+}
+
+/// The allowed extension matching `extension` case-insensitively.
+fn chime_extension(extension: &str) -> Option<&'static str> {
+    CUSTOM_CHIME_EXTENSIONS
+        .iter()
+        .copied()
+        .find(|allowed| extension.eq_ignore_ascii_case(allowed))
+}
+
+impl CustomChimes {
+    /// Custom part of [`Config::normalized`]: trims both names (empty → `None`) and rejects
+    /// anything but a plain audio file name ([`is_chime_file_name`]); errors use
+    /// `customChimes.breakFile` / `customChimes.focusFile`.
+    pub fn normalized(self) -> Result<CustomChimes, AppError> {
+        Ok(CustomChimes {
+            break_file: normalize_chime_file("customChimes.breakFile", self.break_file)?,
+            focus_file: normalize_chime_file("customChimes.focusFile", self.focus_file)?,
+        })
+    }
+
+    /// File to play for `chime` with `chimeSound: custom`: its own file, else the other one
+    /// (`focus_file: None` = the break file for both); `None` when no custom file is set
+    /// (the shell then plays the default sound).
+    pub fn file_for(&self, chime: ChimeKind) -> Option<&str> {
+        let (own, other) = match chime {
+            ChimeKind::BreakStart => (&self.break_file, &self.focus_file),
+            ChimeKind::FocusStart => (&self.focus_file, &self.break_file),
+        };
+        own.as_deref().or(other.as_deref())
+    }
+}
+
+fn normalize_chime_file(field: &str, name: Option<String>) -> Result<Option<String>, AppError> {
+    let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else {
+        return Ok(None);
+    };
+    if is_chime_file_name(&name) {
+        return Ok(Some(name));
+    }
+    let allowed = CUSTOM_CHIME_EXTENSIONS.join(", ");
+    Err(invalid(
+        field,
+        format!(
+            "{field} must be a plain file name of at most {MAX_CHIME_FILE_NAME_CHARS} characters \
+             ending in one of: {allowed}; got {name:?}"
+        ),
+    ))
+}
+
+/// Trims every reminder (control characters such as line breaks become spaces) and checks the
+/// count and length limits. Empty entries are kept: they mean "no reminder for that break".
+fn normalize_reminders(reminders: Vec<String>) -> Result<Vec<String>, AppError> {
+    const FIELD: &str = "breakReminders";
+    if reminders.len() > MAX_BREAK_REMINDERS {
+        return Err(invalid(
+            FIELD,
+            format!(
+                "at most {MAX_BREAK_REMINDERS} break reminders are allowed, got {}",
+                reminders.len()
+            ),
+        ));
+    }
+    reminders
+        .iter()
+        .enumerate()
+        .map(|(index, reminder)| {
+            let text: String = reminder
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            let text = text.trim();
+            let chars = text.chars().count();
+            if chars > MAX_REMINDER_CHARS {
+                return Err(invalid(
+                    FIELD,
+                    format!(
+                        "break reminder {} is longer than {MAX_REMINDER_CHARS} characters ({chars})",
+                        index + 1
+                    ),
+                ));
+            }
+            Ok(text.to_owned())
+        })
+        .collect()
 }
 
 impl MusicConfig {
@@ -222,6 +415,7 @@ impl TintConfig {
             end_minutes,
             strength,
             transition_minutes,
+            mode,
         } = self;
 
         let last_minute = MINUTES_PER_DAY.saturating_sub(1);
@@ -246,6 +440,7 @@ impl TintConfig {
             end_minutes,
             strength,
             transition_minutes,
+            mode,
         })
     }
 }
@@ -363,7 +558,7 @@ fn is_guid(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::GameLauncher;
+    use crate::api::{GameLauncher, TintMode};
 
     fn field_of(result: Result<Config, AppError>) -> Option<String> {
         let err = result.expect_err("config should be rejected");
@@ -399,7 +594,7 @@ mod tests {
         assert!(!cfg.launch_on_login);
 
         let music = &cfg.music;
-        assert_eq!(music.source, MusicSourceKind::Stream);
+        assert_eq!(music.source, MusicSourceKind::Library);
         assert_eq!(music.stream_url, LOFI_GIRL_URL);
         assert_eq!(music.noise, NoiseColor::Brown);
         assert!(music.shuffle);
@@ -440,8 +635,320 @@ mod tests {
                 end_minutes: 9 * 60,
                 strength: 45,
                 transition_minutes: 30,
+                mode: TintMode::NightLight,
             }
         );
+
+        assert_eq!(cfg.theme, Theme::Midnight);
+        assert_eq!(cfg.chime_sound, ChimeSound::Midnight);
+        assert_eq!(cfg.custom_chimes, CustomChimes::default());
+        assert_eq!(cfg.custom_chimes.break_file, None);
+        assert_eq!(cfg.custom_chimes.focus_file, None);
+        assert!(cfg.break_reminders.is_empty());
+        assert!(!cfg.repeat_reminders);
+        assert!(cfg.track_titles);
+        assert!(cfg.keep_history);
+    }
+
+    #[test]
+    fn config_written_before_themes_reminders_and_history_options_loads_with_defaults() {
+        // config.json as saved by the version with language, tint and launchers (no newer fields).
+        let old: Config = serde_json::from_str(
+            r#"{
+                "focusMinutes": 45, "breakMinutes": 15,
+                "music": {
+                    "source": "stream", "folder": null, "links": [],
+                    "streamUrl": "https://www.youtube.com/@LofiGirl/live",
+                    "noise": "brown", "shuffle": true, "volume": 0.6, "pauseDuringBreak": false
+                },
+                "shields": {
+                    "muteNotifications": false, "teamsDnd": false, "teamsClientId": "",
+                    "teamsTenant": "organizations", "blockSites": true, "keepAwake": true,
+                    "closeLaunchers": true, "launchers": ["steam"]
+                },
+                "chimeVolume": 0.7, "trackApps": true, "launchOnLogin": false,
+                "language": "pl", "closeToTray": true, "phasePopups": true,
+                "tint": {
+                    "enabled": true, "startMinutes": 1200, "endMinutes": 420,
+                    "strength": 60, "transitionMinutes": 15
+                }
+            }"#,
+        )
+        .expect("old config");
+        // An explicit choice of the old default source is kept.
+        assert_eq!(old.music.source, MusicSourceKind::Stream);
+        assert!(old.tint.enabled);
+        assert_eq!(old.tint.strength, 60);
+        assert_eq!(old.tint.mode, TintMode::NightLight);
+        assert_eq!(old.theme, Theme::Midnight);
+        assert_eq!(old.chime_sound, ChimeSound::Midnight);
+        assert_eq!(old.custom_chimes, CustomChimes::default());
+        assert!(old.break_reminders.is_empty());
+        assert!(!old.repeat_reminders);
+        assert!(old.track_titles);
+        assert!(old.keep_history);
+        assert_eq!(old.clone().normalized(), Ok(old));
+    }
+
+    #[test]
+    fn reminders_follow_break_numbers() {
+        let cfg = Config {
+            break_reminders: vec![
+                "Stretch".to_owned(),
+                "Water + dog".to_owned(),
+                "Lunch".to_owned(),
+            ],
+            ..Config::default()
+        };
+        assert_eq!(reminder_for_break(&cfg, 0), None);
+        assert_eq!(reminder_for_break(&cfg, 1).as_deref(), Some("Stretch"));
+        assert_eq!(reminder_for_break(&cfg, 2).as_deref(), Some("Water + dog"));
+        assert_eq!(reminder_for_break(&cfg, 3).as_deref(), Some("Lunch"));
+        assert_eq!(reminder_for_break(&cfg, 4), None);
+        assert_eq!(reminder_for_break(&cfg, u32::MAX), None);
+
+        let repeating = Config {
+            repeat_reminders: true,
+            ..cfg
+        };
+        let cycle: Vec<_> = (1..=7).map(|n| reminder_for_break(&repeating, n)).collect();
+        assert_eq!(
+            cycle,
+            [
+                Some("Stretch"),
+                Some("Water + dog"),
+                Some("Lunch"),
+                Some("Stretch"),
+                Some("Water + dog"),
+                Some("Lunch"),
+                Some("Stretch"),
+            ]
+            .map(|r| r.map(str::to_owned))
+        );
+        assert_eq!(reminder_for_break(&repeating, 0), None);
+        assert!(reminder_for_break(&repeating, u32::MAX).is_some());
+    }
+
+    #[test]
+    fn empty_reminders_mean_no_reminder() {
+        let cfg = Config {
+            break_reminders: vec![String::new(), "  Walk  ".to_owned(), "   ".to_owned()],
+            repeat_reminders: true,
+            ..Config::default()
+        };
+        let got: Vec<_> = (1..=6).map(|n| reminder_for_break(&cfg, n)).collect();
+        let walk = Some("Walk".to_owned());
+        assert_eq!(got, [None, walk.clone(), None, None, walk, None]);
+
+        let none = Config::default();
+        assert_eq!(reminder_for_break(&none, 1), None);
+        let repeat_none = Config {
+            repeat_reminders: true,
+            ..Config::default()
+        };
+        assert_eq!(reminder_for_break(&repeat_none, 5), None);
+    }
+
+    #[test]
+    fn normalizes_and_limits_break_reminders() {
+        let cfg = Config {
+            break_reminders: vec![
+                "  Rozciąganie  ".to_owned(),
+                String::new(),
+                "Woda\r\ni pies\t".to_owned(),
+                "   ".to_owned(),
+            ],
+            ..Config::default()
+        };
+        let reminders = cfg.normalized().expect("valid").break_reminders;
+        assert_eq!(reminders, ["Rozciąganie", "", "Woda  i pies", ""]);
+
+        // 160 characters (not bytes) after trimming are fine; 161 are not.
+        let ok = Config {
+            break_reminders: vec![format!("  {}  ", "ż".repeat(MAX_REMINDER_CHARS))],
+            ..Config::default()
+        };
+        assert!(ok.normalized().is_ok());
+        let long = Config {
+            break_reminders: vec!["a".repeat(MAX_REMINDER_CHARS + 1)],
+            ..Config::default()
+        };
+        assert_eq!(
+            field_of(long.normalized()).as_deref(),
+            Some("breakReminders")
+        );
+
+        let full = Config {
+            break_reminders: vec![String::new(); MAX_BREAK_REMINDERS],
+            ..Config::default()
+        };
+        assert!(full.normalized().is_ok());
+        let too_many = Config {
+            break_reminders: vec!["x".to_owned(); MAX_BREAK_REMINDERS + 1],
+            ..Config::default()
+        };
+        assert_eq!(
+            field_of(too_many.normalized()).as_deref(),
+            Some("breakReminders")
+        );
+    }
+
+    #[test]
+    fn validates_custom_chime_file_names() {
+        for good in [
+            "break.mp3",
+            "focus.WAV",
+            "my chime (1).ogg",
+            "dzwonek-żaba.flac",
+            "a.m4a",
+            "con-test.mp3",
+            "nullify.wav",
+        ] {
+            assert!(is_chime_file_name(good), "{good}");
+        }
+        let long_ok = format!("{}.mp3", "a".repeat(MAX_CHIME_FILE_NAME_CHARS - 4));
+        assert!(is_chime_file_name(&long_ok));
+        let too_long = format!("{}.mp3", "a".repeat(MAX_CHIME_FILE_NAME_CHARS - 3));
+        assert!(!is_chime_file_name(&too_long));
+        for bad in [
+            "",
+            "mp3",
+            ".mp3",
+            "chime",
+            "chime.txt",
+            "chime.mp3.exe",
+            "chime.",
+            "../break.mp3",
+            "..\\break.mp3",
+            "a..b.mp3",
+            "sounds/break.mp3",
+            "sounds\\break.mp3",
+            "C:break.mp3",
+            "C:\\break.mp3",
+            "/etc/break.mp3",
+            "break.mp3:stream",
+            "br<e>ak.mp3",
+            "what?.mp3",
+            "star*.mp3",
+            "pipe|.mp3",
+            "quote\".mp3",
+            "line\nbreak.mp3",
+            "nul.mp3",
+            "NUL.tar.mp3",
+            "Com1.wav",
+            "lpt9.ogg",
+            "trailing .mp3 ",
+        ] {
+            assert!(!is_chime_file_name(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn normalizes_custom_chimes_in_config() {
+        let cfg = Config {
+            chime_sound: ChimeSound::Custom,
+            custom_chimes: CustomChimes {
+                break_file: Some("  break.mp3 ".to_owned()),
+                focus_file: Some("   ".to_owned()),
+            },
+            ..Config::default()
+        };
+        let normalized = cfg.normalized().expect("valid");
+        assert_eq!(normalized.chime_sound, ChimeSound::Custom);
+        assert_eq!(
+            normalized.custom_chimes,
+            CustomChimes {
+                break_file: Some("break.mp3".to_owned()),
+                focus_file: None,
+            }
+        );
+
+        for (chimes, field) in [
+            (
+                CustomChimes {
+                    break_file: Some("..\\..\\evil.mp3".to_owned()),
+                    focus_file: None,
+                },
+                "customChimes.breakFile",
+            ),
+            (
+                CustomChimes {
+                    break_file: Some("break.mp3".to_owned()),
+                    focus_file: Some("focus.exe".to_owned()),
+                },
+                "customChimes.focusFile",
+            ),
+        ] {
+            let cfg = Config {
+                custom_chimes: chimes,
+                ..Config::default()
+            };
+            assert_eq!(field_of(cfg.normalized()).as_deref(), Some(field));
+        }
+    }
+
+    #[test]
+    fn custom_chime_file_falls_back_to_the_other_one() {
+        let both = CustomChimes {
+            break_file: Some("break.mp3".to_owned()),
+            focus_file: Some("focus.wav".to_owned()),
+        };
+        assert_eq!(both.file_for(ChimeKind::BreakStart), Some("break.mp3"));
+        assert_eq!(both.file_for(ChimeKind::FocusStart), Some("focus.wav"));
+
+        let break_only = CustomChimes {
+            break_file: Some("break.mp3".to_owned()),
+            focus_file: None,
+        };
+        assert_eq!(
+            break_only.file_for(ChimeKind::FocusStart),
+            Some("break.mp3")
+        );
+
+        let focus_only = CustomChimes {
+            break_file: None,
+            focus_file: Some("focus.wav".to_owned()),
+        };
+        assert_eq!(
+            focus_only.file_for(ChimeKind::BreakStart),
+            Some("focus.wav")
+        );
+
+        let none = CustomChimes::default();
+        assert_eq!(none.file_for(ChimeKind::BreakStart), None);
+        assert_eq!(none.file_for(ChimeKind::FocusStart), None);
+    }
+
+    #[test]
+    fn names_imported_chime_files() {
+        for (chime, source, expected) in [
+            (
+                ChimeKind::BreakStart,
+                "C:\\Users\\me\\Music\\Bell.MP3",
+                Some("break.mp3"),
+            ),
+            (
+                ChimeKind::FocusStart,
+                "/home/me/gong.flac",
+                Some("focus.flac"),
+            ),
+            (ChimeKind::FocusStart, "ding.m4a", Some("focus.m4a")),
+            (
+                ChimeKind::BreakStart,
+                "C:\\a.b\\song.ogg",
+                Some("break.ogg"),
+            ),
+            (ChimeKind::BreakStart, "C:\\Music\\notes.txt", None),
+            (ChimeKind::BreakStart, "C:\\Music\\.mp3", None),
+            (ChimeKind::BreakStart, "C:\\Music.mp3\\file", None),
+            (ChimeKind::BreakStart, "", None),
+        ] {
+            let name = custom_chime_file_name(chime, source);
+            assert_eq!(name.as_deref(), expected, "{source}");
+            if let Some(name) = name {
+                assert!(is_chime_file_name(&name));
+            }
+        }
     }
 
     #[test]
@@ -490,6 +997,11 @@ mod tests {
         assert_eq!(cfg.tint.start_minutes, 1080);
         assert_eq!(cfg.tint.end_minutes, 540);
         assert_eq!(cfg.tint.transition_minutes, 30);
+        assert_eq!(cfg.tint.mode, TintMode::NightLight);
+
+        let gamma: Config = serde_json::from_str(r#"{"tint":{"mode":"gamma"}}"#).expect("mode");
+        assert_eq!(gamma.tint.mode, TintMode::Gamma);
+        assert!(!gamma.tint.enabled);
     }
 
     #[test]
@@ -505,12 +1017,23 @@ mod tests {
                     end_minutes: 420,
                     strength: 80,
                     transition_minutes: 0,
+                    mode: TintMode::Gamma,
                 },
                 shields: ShieldsConfig {
                     close_launchers: true,
                     launchers: vec![GameLauncher::Xbox, GameLauncher::Itch],
                     ..ShieldsConfig::default()
                 },
+                theme: Theme::Pixel,
+                chime_sound: ChimeSound::Custom,
+                custom_chimes: CustomChimes {
+                    break_file: Some("break.mp3".to_owned()),
+                    focus_file: Some("focus.ogg".to_owned()),
+                },
+                break_reminders: vec!["Stretch".to_owned(), String::new(), "Lunch".to_owned()],
+                repeat_reminders: true,
+                track_titles: false,
+                keep_history: false,
                 ..Config::default()
             };
             let json = serde_json::to_string(&cfg).expect("serialize");
@@ -563,7 +1086,7 @@ mod tests {
         assert_eq!(json["trackApps"], true);
         assert_eq!(json["launchOnLogin"], false);
         assert_eq!(json["music"]["streamUrl"], LOFI_GIRL_URL);
-        assert_eq!(json["music"]["source"], "stream");
+        assert_eq!(json["music"]["source"], "library");
         assert_eq!(json["music"]["noise"], "brown");
         assert_eq!(json["music"]["pauseDuringBreak"], false);
         assert_eq!(json["shields"]["teamsClientId"], "");
@@ -584,6 +1107,43 @@ mod tests {
         assert_eq!(json["tint"]["endMinutes"], 540);
         assert_eq!(json["tint"]["strength"], 45);
         assert_eq!(json["tint"]["transitionMinutes"], 30);
+        assert_eq!(json["tint"]["mode"], "nightLight");
+        assert_eq!(json["theme"], "midnight");
+        assert_eq!(json["chimeSound"], "midnight");
+        assert!(json["customChimes"]["breakFile"].is_null());
+        assert!(json["customChimes"]["focusFile"].is_null());
+        assert_eq!(json["breakReminders"], serde_json::json!([]));
+        assert_eq!(json["repeatReminders"], false);
+        assert_eq!(json["trackTitles"], true);
+        assert_eq!(json["keepHistory"], true);
+
+        let gamma = serde_json::to_value(TintMode::Gamma).expect("serialize");
+        assert_eq!(gamma, "gamma");
+        let themes = [
+            (Theme::Midnight, "midnight"),
+            (Theme::Vaporwave, "vaporwave"),
+            (Theme::Lunar, "lunar"),
+            (Theme::Autumn, "autumn"),
+            (Theme::Dark, "dark"),
+            (Theme::Light, "light"),
+            (Theme::Pixel, "pixel"),
+        ];
+        for (theme, name) in themes {
+            assert_eq!(serde_json::to_value(theme).expect("serialize"), name);
+        }
+        let sounds = [
+            (ChimeSound::Midnight, "midnight"),
+            (ChimeSound::Vaporwave, "vaporwave"),
+            (ChimeSound::Lunar, "lunar"),
+            (ChimeSound::Autumn, "autumn"),
+            (ChimeSound::Classic, "classic"),
+            (ChimeSound::Soft, "soft"),
+            (ChimeSound::Chiptune, "chiptune"),
+            (ChimeSound::Custom, "custom"),
+        ];
+        for (sound, name) in sounds {
+            assert_eq!(serde_json::to_value(sound).expect("serialize"), name);
+        }
     }
 
     #[test]
