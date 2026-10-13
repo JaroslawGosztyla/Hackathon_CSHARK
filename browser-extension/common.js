@@ -6,7 +6,11 @@
 /** Loopback port of the FocusMode bridge (`BRIDGE_PORT` in crates/focus-core/src/api.rs). */
 export const BRIDGE_PORT = 47615;
 
-/** `GET` returns `BridgeState` JSON: `{ active, blocklist, phase, remainingSecs }`. */
+/**
+ * `GET` returns `BridgeState` JSON: `{ active, blocklist, patterns, phase, remainingSecs }`. `blocklist` holds
+ * domains, `patterns` regex sources (RE2 syntax, case-insensitive, matched against the full URL); both come
+ * from `websiteblacklist.txt` in the app and are empty when nothing is blocked.
+ */
 export const BRIDGE_STATE_URL = `http://127.0.0.1:${BRIDGE_PORT}/v1/state`;
 
 /** Runtime message: ask the service worker for the cached (or a refreshed) state. */
@@ -22,20 +26,33 @@ export const MSG_POLL_NOW = 'focusmode:poll-now';
 /** Phases as serialized by the app (`Phase` enum, camelCase). */
 export const PHASES = Object.freeze(['idle', 'focus', 'break']);
 
-/** Upper bound of domains turned into a blocking rule (the app caps the list at 500). */
-export const MAX_DOMAINS = 1000;
+/** Upper bound of domains turned into a blocking rule (same cap as `MAX_DOMAINS` in the app's blocklist parser). */
+export const MAX_DOMAINS = 2000;
 
-/** State used before the app has been contacted at least once. */
+/** Upper bound of regex patterns taken from the app (each one becomes its own blocking rule). */
+export const MAX_PATTERNS = 500;
+
+/** Longer regex sources are ignored (Chrome limits a compiled rule regex to 2 KB anyway). */
+export const MAX_PATTERN_LENGTH = 1000;
+
+/**
+ * State used before the app has been contacted at least once. The worker adds what it did with it:
+ * `rulesMode` ('none' | 'regex' | 'path' | 'tabs'), `rulesKey`, `patternRules` (patterns that got a
+ * declarativeNetRequest rule) and `skippedPatterns` (patterns the browser refused or that did not fit).
+ */
 export const INITIAL_STATE = Object.freeze({
   connected: false,
   active: false,
   phase: null,
   remainingSecs: 0,
   blocklist: [],
+  patterns: [],
   fetchedAt: 0,
   error: 'not-checked',
   rulesMode: 'none',
   rulesKey: null,
+  patternRules: [],
+  skippedPatterns: [],
 });
 
 /** Polish UI texts shared by the popup and the blocked page. */
@@ -95,6 +112,115 @@ export function normalizeBlocklist(list) {
 }
 
 /**
+ * Validates the regex sources received from the app: strings, trimmed, non-empty, not too long, without
+ * line breaks; duplicates dropped, order kept (it is the file order), at most MAX_PATTERNS. Whether the
+ * browser can run them is checked later (isRegexSupported in the worker, compilePattern here).
+ * @param {unknown} list
+ * @returns {string[]}
+ */
+export function normalizePatterns(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const patterns = [];
+  for (const entry of list) {
+    if (typeof entry !== 'string') continue;
+    const source = entry.trim();
+    if (source.length === 0 || source.length > MAX_PATTERN_LENGTH || /[\r\n]/.test(source)) continue;
+    if (seen.has(source)) continue;
+    seen.add(source);
+    patterns.push(source);
+    if (patterns.length >= MAX_PATTERNS) break;
+  }
+  return patterns;
+}
+
+/**
+ * `regexFilter` of the declarativeNetRequest rule for a pattern. The user regex is an unanchored search in
+ * the URL; the rule must match the whole URL so that `\1` (the outer group, always group 1) carries the
+ * complete original address to blocked.html. `.*` around a search does not change what matches, and a
+ * `^` / `$` inside the pattern still means the start / end of the URL (the `.*` next to it then matches
+ * nothing). The non-capturing group keeps a top-level `a|b` together.
+ * @param {string} source
+ */
+export function ruleRegexFilter(source) {
+  return `^(.*(?:${source}).*)$`;
+}
+
+/**
+ * Translates an RE2 / Rust regex source into a JavaScript one with the same meaning for URL matching, or
+ * returns null when it uses syntax that JavaScript would silently read differently (`\pL`, `\Q…\E`,
+ * `\x{…}`, `[[:alpha:]]`). Handles `\A`, `\z`, `(?P<name>` and a leading `(?i)`; other inline flags make
+ * `new RegExp` throw, which compilePattern also reports as null.
+ * @param {string} source
+ * @returns {string | null}
+ */
+function toJsRegexSource(source) {
+  // A leading (?i) repeats what matching does anyway (always case-insensitive).
+  const src = source.startsWith('(?i)') ? source.slice(4) : source;
+  let out = '';
+  for (let i = 0; i < src.length; i += 1) {
+    const c = src[i];
+    if (c === '\\') {
+      const next = src[i + 1];
+      if (next === undefined) return null;
+      i += 1;
+      if (next === 'A') {
+        out += '^';
+      } else if (next === 'z') {
+        out += '$';
+      } else if ('pPQECZ'.includes(next) || (next === 'x' && src[i + 1] === '{')) {
+        return null;
+      } else {
+        out += c + next;
+      }
+    } else if (c === '[' && src[i + 1] === ':') {
+      return null;
+    } else if (c === '(' && src.startsWith('(?P<', i)) {
+      out += '(?<';
+      i += 3;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/** source → compiled RegExp, or null when JavaScript cannot evaluate it faithfully. */
+const compiledPatterns = new Map();
+
+/**
+ * Case-insensitive JavaScript RegExp for a pattern (for checks outside the declarativeNetRequest rules:
+ * already open tabs, same-document navigations, the blocked page). Null when JavaScript cannot run it the
+ * way the browser rule (RE2) does; such a pattern is still enforced by its rule.
+ * @param {string} source
+ * @returns {RegExp | null}
+ */
+export function compilePattern(source) {
+  const cached = compiledPatterns.get(source);
+  if (cached !== undefined) return cached;
+  let regex = null;
+  const translated = typeof source === 'string' ? toJsRegexSource(source) : null;
+  if (translated !== null) {
+    try {
+      regex = new RegExp(translated, 'i');
+    } catch {
+      regex = null;
+    }
+  }
+  if (compiledPatterns.size >= 4 * MAX_PATTERNS) compiledPatterns.clear();
+  compiledPatterns.set(source, regex);
+  return regex;
+}
+
+/**
+ * Some pattern cannot be checked in JavaScript, so "no pattern matched" is not a reliable answer.
+ * @param {readonly string[] | undefined} patterns
+ */
+export function hasUncheckablePatterns(patterns) {
+  return Array.isArray(patterns) && patterns.some((source) => compilePattern(source) === null);
+}
+
+/**
  * Returns the parsed URL when it is an http(s) URL, otherwise null.
  * @param {unknown} raw
  * @returns {URL | null}
@@ -148,13 +274,45 @@ export function matchBlockedDomain(url, domains) {
 }
 
 /**
+ * Returns the first pattern that matches the full http(s) URL (case-insensitive search), or null.
+ * Other schemes never match: the blocked page itself (chrome-extension://…#<url>) must not.
+ * @param {unknown} url
+ * @param {readonly string[] | undefined} patterns
+ * @returns {string | null}
+ */
+export function matchBlockedPattern(url, patterns) {
+  if (!Array.isArray(patterns) || patterns.length === 0) return null;
+  const parsed = parseWebUrl(url);
+  if (parsed === null) return null;
+  for (const source of patterns) {
+    const regex = compilePattern(source);
+    if (regex !== null && regex.test(parsed.href)) return source;
+  }
+  return null;
+}
+
+/**
+ * The blocklist entry that blocks this URL: a domain (host or its subdomain) or a regex pattern.
+ * @param {unknown} url
+ * @param {readonly string[]} domains normalized domains
+ * @param {readonly string[] | undefined} patterns regex sources
+ * @returns {{ kind: 'domain' | 'pattern', entry: string } | null}
+ */
+export function matchBlockedEntry(url, domains, patterns) {
+  const domain = matchBlockedDomain(url, domains);
+  if (domain !== null) return { kind: 'domain', entry: domain };
+  const pattern = matchBlockedPattern(url, patterns);
+  return pattern !== null ? { kind: 'pattern', entry: pattern } : null;
+}
+
+/**
  * Validates the `/v1/state` response body; returns a connected state or null when the shape is wrong.
  * @param {unknown} body
  * @param {number} fetchedAt epoch ms
  */
 export function parseBridgeState(body, fetchedAt) {
   if (body === null || typeof body !== 'object') return null;
-  const { active, blocklist, phase, remainingSecs } = /** @type {Record<string, unknown>} */ (body);
+  const { active, blocklist, patterns, phase, remainingSecs } = /** @type {Record<string, unknown>} */ (body);
   if (typeof active !== 'boolean' || !Array.isArray(blocklist)) return null;
   if (typeof phase !== 'string' || !PHASES.includes(phase)) return null;
   const remaining =
@@ -167,6 +325,8 @@ export function parseBridgeState(body, fetchedAt) {
     phase,
     remainingSecs: remaining,
     blocklist: normalizeBlocklist(blocklist),
+    // Optional (`#[serde(default)]`): an older app sends no patterns.
+    patterns: normalizePatterns(patterns),
     fetchedAt,
     error: null,
   };
@@ -176,11 +336,15 @@ export function parseBridgeState(body, fetchedAt) {
  * Sites are being blocked right now. Only the focus phase blocks: at break start the app switches the
  * phase first and lowers `active` a moment later (shields worker), so a lagging `active` must not keep
  * the rules alive.
- * @param {{ connected: boolean, active: boolean, phase: string | null, blocklist: string[] } | null | undefined} state
+ * @param {{ connected: boolean, active: boolean, phase: string | null, blocklist: string[], patterns?: string[] } | null | undefined} state
  */
 export function isBlocking(state) {
   return Boolean(
-    state && state.connected && state.active && state.phase === 'focus' && state.blocklist.length > 0,
+    state &&
+      state.connected &&
+      state.active &&
+      state.phase === 'focus' &&
+      (state.blocklist.length > 0 || (Array.isArray(state.patterns) && state.patterns.length > 0)),
   );
 }
 

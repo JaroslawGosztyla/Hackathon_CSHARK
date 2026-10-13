@@ -176,6 +176,27 @@ body.blocked {
   overflow-wrap: anywhere;
 }
 
+.card__match {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+.card__entry {
+  display: inline-block;
+  max-width: 100%;
+  margin-left: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(10, 5, 18, 0.35);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--amber-strong);
+  word-break: break-all;
+}
+
 .timer {
   margin: 26px auto 0;
   padding: 16px 20px;

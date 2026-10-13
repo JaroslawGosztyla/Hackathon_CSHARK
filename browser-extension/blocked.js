@@ -7,7 +7,15 @@
 // poll shows the "Przerwa!" card and asks the worker for an immediate second poll (MSG_POLL_NOW, which
 // also drops the blocking rules), and the tab leaves once that one agrees and ~1.5 s have passed.
 
-import { formatClock, hostOf, isBlocking, matchBlockedDomain, parseWebUrl, watchState } from './common.js';
+import {
+  formatClock,
+  hasUncheckablePatterns,
+  hostOf,
+  isBlocking,
+  matchBlockedEntry,
+  parseWebUrl,
+  watchState,
+} from './common.js';
 
 const FOCUS_LINES = [
   'Ta karta poczeka. Twoje zadanie jest teraz ważniejsze.',
@@ -34,6 +42,9 @@ const ui = {
   headline: byId('headline'),
   emoji: byId('headline-emoji'),
   site: byId('site'),
+  match: byId('match'),
+  matchLabel: byId('match-label'),
+  matchEntry: byId('match-entry'),
   timer: byId('timer'),
   timerLabel: byId('timer-label'),
   timerClock: byId('timer-clock'),
@@ -48,6 +59,9 @@ const ui = {
  * when there is no entry that far back).
  */
 const LEAVE_FALLBACK_MS = 1200;
+
+/** Longer blocklist entries (regex patterns) are shortened on the card; the full text is in the tooltip. */
+const MAX_ENTRY_CHARS = 120;
 
 /** How long the "you may open the page" card stays before the tab goes back to the site by itself. */
 const AUTO_RETURN_DELAY_MS = 1500;
@@ -122,10 +136,34 @@ function setText(element, text) {
 function modeFor(state) {
   if (state === null || !state.connected) return 'offline';
   if (state.phase === 'focus') {
-    const siteBlocked = originalUrl === null || matchBlockedDomain(originalUrl, state.blocklist) !== null;
+    // A pattern JavaScript cannot evaluate may still be what the browser rule matched: keep blocking
+    // rather than sending the tab back into the rule.
+    const siteBlocked =
+      originalUrl === null ||
+      matchBlockedEntry(originalUrl, state.blocklist, state.patterns) !== null ||
+      hasUncheckablePatterns(state.patterns);
     return isBlocking(state) && siteBlocked ? 'focus' : 'unblocked';
   }
   return state.phase === 'break' ? 'break' : 'idle';
+}
+
+/**
+ * Shows which line of websiteblacklist.txt blocks the page (focus only; the app sends no list otherwise).
+ * @param {typeof import('./common.js').INITIAL_STATE | null} state
+ * @param {string} mode
+ */
+function renderMatch(state, mode) {
+  const match =
+    mode === 'focus' && state !== null && originalUrl !== null
+      ? matchBlockedEntry(originalUrl, state.blocklist, state.patterns)
+      : null;
+  ui.match.hidden = match === null;
+  if (match === null) return;
+  setText(ui.matchLabel, match.kind === 'domain' ? 'Domena z listy blokowanych:' : 'Wzorzec z listy blokowanych:');
+  const shown =
+    match.entry.length > MAX_ENTRY_CHARS ? `${match.entry.slice(0, MAX_ENTRY_CHARS - 1)}…` : match.entry;
+  setText(ui.matchEntry, shown);
+  ui.matchEntry.title = shown === match.entry ? '' : match.entry;
 }
 
 /**
@@ -187,6 +225,7 @@ function render(view) {
 
   ui.timer.hidden = mode !== 'focus' && mode !== 'break';
   setText(ui.timerClock, clock);
+  renderMatch(view.state, mode);
 
   const canOpen = mode !== 'focus' && originalUrl !== null;
   ui.open.hidden = !canOpen;

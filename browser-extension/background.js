@@ -1,17 +1,22 @@
 // FocusMode extension service worker (Manifest V3).
 //
 // Polls the FocusMode desktop app on the loopback bridge and, while a focus phase is running, redirects
-// navigations to blocked domains to the local "go back to work" page (blocked.html). Nothing is sent
+// navigations to blocked sites to the local "go back to work" page (blocked.html). Nothing is sent
 // anywhere: the only request this extension makes is `GET http://127.0.0.1:47615/v1/state`.
 //
+// The blocklist (websiteblacklist.txt in the app) arrives as `blocklist` (domains, each with its
+// subdomains) and `patterns` (regex sources, RE2 syntax, case-insensitive, searched in the full URL).
+//
 // Blocking layers:
-//  1. A declarativeNetRequest dynamic rule redirects main-frame requests to blocked domains. Preferred
-//     variant: `regexSubstitution` that appends the original URL as the fragment of blocked.html, so the
-//     page can offer it again during the break. Fallback variant: `extensionPath: "/blocked.html"`.
+//  1. declarativeNetRequest dynamic rules redirect main-frame requests: one rule for all domains
+//     (`requestDomains`) and one rule per pattern (`regexFilter`). Preferred variant: `regexSubstitution`
+//     that appends the original URL as the fragment of blocked.html, so the page can offer it again during
+//     the break. Fallback variant: `extensionPath: "/blocked.html"`. Patterns are screened with
+//     isRegexSupported first; refused ones (and ones beyond MAX_NUMBER_OF_REGEX_RULES) are skipped.
 //  2. tabs.onUpdated / onActivated catch pages that did not go through the network (already open when
-//     blocking started, back/forward cache, same-document navigations) and reload them, so the rule
-//     applies and the history entry is replaced. If that does not help, the tab is sent to
-//     blocked.html?u=<url> with tabs.update.
+//     blocking started, back/forward cache, same-document navigations such as YouTube Shorts) and reload
+//     them, so the rule applies and the history entry is replaced. If that does not help, or no rule
+//     covers the entry, the tab is sent to blocked.html?u=<url> with tabs.update.
 // App unreachable, `active: false` or a phase other than focus → all rules are removed on that very poll.
 // The blocked page asks for an immediate poll (MSG_POLL_NOW) as soon as it sees the break, so the rules
 // are gone before it sends the tab back to the original site.
@@ -23,10 +28,12 @@ import {
   MSG_POLL_NOW,
   formatClock,
   isBlocking,
-  matchBlockedDomain,
+  matchBlockedEntry,
+  normalizePatterns,
   parseBridgeState,
   parseWebUrl,
   phaseLabel,
+  ruleRegexFilter,
 } from './common.js';
 
 const ALARM_NAME = 'focusmode-poll';
@@ -35,7 +42,12 @@ const FETCH_TIMEOUT_MS = 2000;
 const UPDATED_THROTTLE_MS = 5000;
 const ACTIVATED_THROTTLE_MS = 1000;
 const PAGE_THROTTLE_MS = 1000;
-const RULE_ID = 1;
+/** The rule for all blocked domains. */
+const DOMAIN_RULE_ID = 1;
+/** Pattern rules get FIRST_PATTERN_RULE_ID, FIRST_PATTERN_RULE_ID + 1, … in list order. */
+const FIRST_PATTERN_RULE_ID = 2;
+/** chrome.declarativeNetRequest.MAX_NUMBER_OF_REGEX_RULES when the browser does not say. */
+const DEFAULT_MAX_REGEX_RULES = 1000;
 /** After reloading a tab, check that the rule really redirected it. */
 const VERIFY_DELAY_MS = 4000;
 /** The same URL showing up again this soon after a reload means the rule does not apply to it. */
@@ -195,7 +207,7 @@ async function fetchBridgeState() {
 
 /** @param {string} error */
 function disconnected(error) {
-  return { ...INITIAL_STATE, blocklist: [], fetchedAt: Date.now(), error };
+  return { ...INITIAL_STATE, blocklist: [], patterns: [], fetchedAt: Date.now(), error };
 }
 
 /**
@@ -204,38 +216,52 @@ function disconnected(error) {
  */
 async function applyState(fetched, reason) {
   const previous = await loadState();
-  const domains = isBlocking(fetched) ? fetched.blocklist : [];
-  const key = domains.join(',');
+  const blocking = isBlocking(fetched);
+  const domains = blocking ? fetched.blocklist : [];
+  const patterns = blocking ? fetched.patterns : [];
+  const key = JSON.stringify([domains, patterns]);
   const keyChanged = previous.rulesKey !== key;
+  const nothingToBlock = domains.length === 0 && patterns.length === 0;
 
-  let rulesMode = previous.rulesMode;
-  let rulesKey = previous.rulesKey;
+  let { rulesMode, rulesKey, patternRules, skippedPatterns } = previous;
   // Not blocking → make sure no rule is left, even when the cached key already says so (a rule that
   // survived a browser or extension restart, a cache out of sync). Costs one getDynamicRules per poll.
-  if (keyChanged || domains.length === 0) {
+  if (keyChanged || nothingToBlock) {
     try {
-      rulesMode = await installRules(domains);
+      const installed = await installRules(domains, patterns);
+      rulesMode = installed.mode;
+      patternRules = installed.patternRules;
+      skippedPatterns = installed.skippedPatterns;
       rulesKey = key;
       if (keyChanged) {
-        console.info(LOG, `rules updated (${reason}): ${domains.length} domain(s), mode ${rulesMode}`);
+        console.info(
+          LOG,
+          `rules updated (${reason}): ${domains.length} domain(s), ${patterns.length} pattern(s) ` +
+            `(${patternRules.length} as rules, ${skippedPatterns.length} skipped), mode ${rulesMode}`,
+        );
       }
     } catch (err) {
       // Blocking still works through the tab listeners; the rules are retried on the next refresh.
       console.error(LOG, 'could not update blocking rules', err);
-      rulesMode = domains.length > 0 ? 'tabs' : 'none';
+      rulesMode = nothingToBlock ? 'none' : 'tabs';
+      patternRules = [];
+      skippedPatterns = [...patterns];
       rulesKey = null;
     }
   }
 
-  const next = { ...fetched, rulesMode, rulesKey };
+  const next = { ...fetched, rulesMode, rulesKey, patternRules, skippedPatterns };
   await saveState(next);
   await updateBadge(next);
 
-  const wasBlocked = isBlocking(previous) ? new Set(previous.blocklist) : new Set();
-  const newlyBlocked = domains.filter((domain) => !wasBlocked.has(domain));
+  const wasBlocking = isBlocking(previous);
+  const oldDomains = new Set(wasBlocking ? previous.blocklist : []);
+  const oldPatterns = new Set(wasBlocking ? previous.patterns : []);
+  const newDomains = domains.filter((domain) => !oldDomains.has(domain));
+  const newPatterns = patterns.filter((pattern) => !oldPatterns.has(pattern));
   let swept = false;
-  if (newlyBlocked.length > 0) {
-    await sweepOpenTabs(newlyBlocked, rulesMode);
+  if (newDomains.length > 0 || newPatterns.length > 0) {
+    await sweepOpenTabs(newDomains, newPatterns, next);
     swept = true;
   }
   return { state: next, swept };
@@ -246,63 +272,150 @@ async function applyState(fetched, reason) {
 // ---------------------------------------------------------------------------
 
 /**
- * Atomically replaces all dynamic rules. Returns the variant in use: 'regex', 'path' or 'none'.
+ * Atomically replaces all dynamic rules. `mode` is the variant in use: 'regex', 'path', 'none' (nothing
+ * to block) or 'tabs' (nothing the browser accepted; the tab listeners block on their own).
  * @param {string[]} domains normalized ASCII domains
+ * @param {string[]} patterns regex sources
+ * @returns {Promise<{ mode: string, patternRules: string[], skippedPatterns: string[] }>}
  */
-async function installRules(domains) {
-  const existing = await chrome.declarativeNetRequest.getDynamicRules();
+async function installRules(domains, patterns) {
+  const dnr = chrome.declarativeNetRequest;
+  const existing = await dnr.getDynamicRules();
   const removeRuleIds = existing.map((rule) => rule.id);
-  if (domains.length === 0) {
+  if (domains.length === 0 && patterns.length === 0) {
     if (removeRuleIds.length > 0) {
-      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
+      await dnr.updateDynamicRules({ removeRuleIds });
       console.info(LOG, `removed ${removeRuleIds.length} blocking rule(s)`);
     }
-    return 'none';
+    return { mode: 'none', patternRules: [], skippedPatterns: [] };
   }
-  try {
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds,
-      addRules: [regexRedirectRule(domains)],
-    });
-    return 'regex';
-  } catch (err) {
-    // updateDynamicRules is atomic: nothing changed, try the simpler rule.
-    console.warn(LOG, 'regexSubstitution redirect rejected, using extensionPath', err);
+
+  // The domain rule's regexFilter (regex variant) counts towards the regex rule limit as well.
+  const { accepted, skipped } = await screenPatterns(patterns, domains.length > 0 ? 1 : 0);
+  if (domains.length === 0 && accepted.length === 0) {
+    if (removeRuleIds.length > 0) await dnr.updateDynamicRules({ removeRuleIds });
+    return { mode: 'tabs', patternRules: [], skippedPatterns: skipped };
   }
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds,
-    addRules: [pathRedirectRule(domains)],
-  });
-  return 'path';
+
+  // updateDynamicRules is atomic: a rejected attempt changes nothing. Prefer the variant that hands the
+  // original URL to the page; if the browser still refuses some pattern rule, keep at least the domains.
+  /** @type {Array<['regex' | 'path', string[]]>} */
+  const attempts = [
+    ['regex', accepted],
+    ['path', accepted],
+  ];
+  if (domains.length > 0 && accepted.length > 0) attempts.push(['regex', []], ['path', []]);
+  let lastError;
+  for (const [mode, withPatterns] of attempts) {
+    try {
+      await dnr.updateDynamicRules({ removeRuleIds, addRules: buildRules(mode, domains, withPatterns) });
+      const notInstalled = accepted.filter((pattern) => !withPatterns.includes(pattern));
+      return { mode, patternRules: withPatterns, skippedPatterns: [...skipped, ...notInstalled] };
+    } catch (err) {
+      lastError = err;
+      console.warn(LOG, `${mode} rules rejected (${withPatterns.length} pattern(s))`, err);
+    }
+  }
+  throw lastError;
 }
 
 /**
- * Redirects to blocked.html#<original url>. `requestDomains` also matches subdomains.
- * @param {string[]} domains
+ * Keeps the patterns the browser can turn into rules, in list order, up to the regex rule limit.
+ * @param {string[]} patterns
+ * @param {number} reserved regex rules already taken by the domain rule
  */
-function regexRedirectRule(domains) {
-  return {
-    id: RULE_ID,
-    priority: 1,
-    action: {
-      type: 'redirect',
-      redirect: { regexSubstitution: `${chrome.runtime.getURL('blocked.html')}#\\1` },
-    },
-    condition: {
-      regexFilter: '^(https?://.*)$',
-      requestDomains: domains,
-      resourceTypes: ['main_frame'],
-    },
-  };
+async function screenPatterns(patterns, reserved) {
+  const max = chrome.declarativeNetRequest.MAX_NUMBER_OF_REGEX_RULES;
+  const limit = Math.max(0, (Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_REGEX_RULES) - reserved);
+  const supported = await Promise.all(patterns.map(isPatternSupported));
+  /** @type {string[]} */
+  const accepted = [];
+  /** @type {string[]} */
+  const skipped = [];
+  patterns.forEach((pattern, index) => {
+    if (supported[index] && accepted.length < limit) {
+      accepted.push(pattern);
+    } else {
+      skipped.push(pattern);
+    }
+  });
+  if (skipped.length > 0) console.warn(LOG, `${skipped.length} pattern(s) skipped`, skipped);
+  return { accepted, skipped };
 }
 
-/** @param {string[]} domains */
-function pathRedirectRule(domains) {
+/**
+ * Asks the browser whether the pattern is valid on its own and whether its rule regex compiles within the
+ * limits (RE2 syntax, 2 KB memory). The first check keeps the wrapper honest: a malformed source such as
+ * `a).*(b` would otherwise balance itself inside ruleRegexFilter and block something else.
+ * When the API is missing or fails, the pattern is kept and updateDynamicRules decides.
+ * @param {string} pattern
+ */
+async function isPatternSupported(pattern) {
+  const dnr = chrome.declarativeNetRequest;
+  if (typeof dnr.isRegexSupported !== 'function') return true;
+  try {
+    const [alone, asRule] = await Promise.all([
+      dnr.isRegexSupported({ regex: pattern, isCaseSensitive: false }),
+      dnr.isRegexSupported({ regex: ruleRegexFilter(pattern), isCaseSensitive: false, requireCapturing: true }),
+    ]);
+    const refused = [alone, asRule].find((result) => !result || result.isSupported !== true);
+    if (refused === undefined) return true;
+    console.warn(LOG, `pattern not supported by the browser (${refused?.reason ?? 'unknown'}):`, pattern);
+    return false;
+  } catch (err) {
+    console.warn(LOG, 'isRegexSupported failed', err);
+    return true;
+  }
+}
+
+/**
+ * @param {'regex' | 'path'} mode
+ * @param {string[]} domains
+ * @param {string[]} patterns
+ */
+function buildRules(mode, domains, patterns) {
+  const rules = [];
+  if (domains.length > 0) rules.push(domainRule(mode, domains));
+  patterns.forEach((pattern, index) => rules.push(patternRule(mode, FIRST_PATTERN_RULE_ID + index, pattern)));
+  return rules;
+}
+
+/** @param {'regex' | 'path'} mode */
+function redirectAction(mode) {
+  return mode === 'regex'
+    ? // blocked.html#<original url>: `\1` is the whole URL in both rule kinds.
+      { type: 'redirect', redirect: { regexSubstitution: `${chrome.runtime.getURL('blocked.html')}#\\1` } }
+    : { type: 'redirect', redirect: { extensionPath: '/blocked.html' } };
+}
+
+/**
+ * `requestDomains` also matches subdomains.
+ * @param {'regex' | 'path'} mode
+ * @param {string[]} domains
+ */
+function domainRule(mode, domains) {
+  const condition =
+    mode === 'regex'
+      ? { regexFilter: '^(https?://.*)$', requestDomains: domains, resourceTypes: ['main_frame'] }
+      : { requestDomains: domains, resourceTypes: ['main_frame'] };
+  return { id: DOMAIN_RULE_ID, priority: 1, action: redirectAction(mode), condition };
+}
+
+/**
+ * @param {'regex' | 'path'} mode
+ * @param {number} id
+ * @param {string} pattern
+ */
+function patternRule(mode, id, pattern) {
   return {
-    id: RULE_ID,
+    id,
     priority: 1,
-    action: { type: 'redirect', redirect: { extensionPath: '/blocked.html' } },
-    condition: { requestDomains: domains, resourceTypes: ['main_frame'] },
+    action: redirectAction(mode),
+    condition: {
+      regexFilter: ruleRegexFilter(pattern),
+      isUrlFilterCaseSensitive: false,
+      resourceTypes: ['main_frame'],
+    },
   };
 }
 
@@ -323,27 +436,44 @@ async function checkTab(tabId, throttleMs) {
   // With a rule installed the browser redirects a pending navigation by itself; reloading the tab now
   // would only start it a second time. A committed blocked page (back/forward cache, same-document
   // navigation, rule not applied) still needs help, and its commit reports the URL through onUpdated.
-  const rulesActive = state.rulesMode === 'regex' || state.rulesMode === 'path';
-  const url = rulesActive ? tab.url || '' : tab.url || tab.pendingUrl || '';
-  if (matchBlockedDomain(url, state.blocklist) !== null) {
-    await redirectTab(tabId, url, state.rulesMode);
+  const url = rulesActive(state) ? tab.url || '' : tab.url || tab.pendingUrl || '';
+  const match = matchBlockedEntry(url, state.blocklist, state.patterns);
+  if (match !== null) {
+    await redirectTab(tabId, url, ruleCovers(state, match));
   }
 }
 
+/** @param {typeof INITIAL_STATE} state */
+function rulesActive(state) {
+  return state.rulesMode === 'regex' || state.rulesMode === 'path';
+}
+
 /**
- * Sends already open tabs of newly blocked domains to the blocked page.
- * @param {string[]} domains
- * @param {string} rulesMode
+ * A declarativeNetRequest rule redirects this entry when the page is loaded from the network.
+ * @param {typeof INITIAL_STATE} state
+ * @param {{ kind: 'domain' | 'pattern', entry: string }} match
  */
-async function sweepOpenTabs(domains, rulesMode) {
+function ruleCovers(state, match) {
+  if (!rulesActive(state)) return false;
+  return match.kind === 'domain' || state.patternRules.includes(match.entry);
+}
+
+/**
+ * Sends already open tabs of newly blocked domains and patterns to the blocked page.
+ * @param {string[]} domains
+ * @param {string[]} patterns
+ * @param {typeof INITIAL_STATE} state the state just applied
+ */
+async function sweepOpenTabs(domains, patterns, state) {
   const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
   for (const tab of tabs) {
     // Discarded tabs are not loaded; the rule catches them when they are reloaded.
     if (tab.id === undefined || tab.discarded) continue;
     const url = tab.url || '';
-    if (matchBlockedDomain(url, domains) === null) continue;
+    const match = matchBlockedEntry(url, domains, patterns);
+    if (match === null) continue;
     try {
-      await redirectTab(tab.id, url, rulesMode);
+      await redirectTab(tab.id, url, ruleCovers(state, match));
     } catch (err) {
       console.warn(LOG, 'could not redirect an open tab', err);
     }
@@ -351,13 +481,13 @@ async function sweepOpenTabs(domains, rulesMode) {
 }
 
 /**
- * Reload lets the redirect rule replace the current history entry (so "back" does not loop); when the
- * rule demonstrably does not apply, navigate to blocked.html?u=<url> instead.
+ * Reload lets the redirect rule replace the current history entry (so "back" does not loop); when no
+ * rule covers the entry, or the rule demonstrably does not apply, navigate to blocked.html?u=<url> instead.
  * @param {number} tabId
  * @param {string} url
- * @param {string} rulesMode
+ * @param {boolean} ruleApplies a declarativeNetRequest rule should redirect this URL on reload
  */
-async function redirectTab(tabId, url, rulesMode) {
+async function redirectTab(tabId, url, ruleApplies) {
   const now = Date.now();
   const last = recentRedirects.get(tabId);
   const sameUrl = last !== undefined && last.url === url;
@@ -365,8 +495,7 @@ async function redirectTab(tabId, url, rulesMode) {
   recentRedirects.set(tabId, { url, at: now });
   await rememberTabUrl(tabId, url);
 
-  const rulesActive = rulesMode === 'regex' || rulesMode === 'path';
-  if (rulesActive && !(sameUrl && now - last.at < REPEAT_WINDOW_MS)) {
+  if (ruleApplies && !(sameUrl && now - last.at < REPEAT_WINDOW_MS)) {
     await chrome.tabs.reload(tabId);
     setTimeout(() => {
       verifyRedirect(tabId, url).catch(logError('verify'));
@@ -386,7 +515,7 @@ async function verifyRedirect(tabId, url) {
   const tab = await getTab(tabId);
   if (tab === null || tab.url !== url) return;
   const state = await loadState();
-  if (!isBlocking(state) || matchBlockedDomain(url, state.blocklist) === null) return;
+  if (!isBlocking(state) || matchBlockedEntry(url, state.blocklist, state.patterns) === null) return;
   recentRedirects.set(tabId, { url, at: Date.now() });
   await chrome.tabs.update(tabId, { url: blockedPageUrl(url) });
 }
@@ -437,13 +566,28 @@ async function loadState() {
     const stored = await chrome.storage.session.get(STORAGE_STATE_KEY);
     const value = stored[STORAGE_STATE_KEY];
     if (value && typeof value === 'object' && Array.isArray(value.blocklist)) {
-      memoryState = value;
-      return value;
+      memoryState = withListDefaults(value);
+      return memoryState;
     }
   } catch (err) {
     console.warn(LOG, 'could not read session storage', err);
   }
-  return { ...INITIAL_STATE, blocklist: [] };
+  return withListDefaults({ ...INITIAL_STATE });
+}
+
+/**
+ * Fresh arrays, and the pattern fields a state stored by an older version of the extension lacks.
+ * @param {typeof INITIAL_STATE} state
+ */
+function withListDefaults(state) {
+  const strings = (value) => (Array.isArray(value) ? value.filter((item) => typeof item === 'string') : []);
+  return {
+    ...state,
+    blocklist: strings(state.blocklist),
+    patterns: normalizePatterns(state.patterns),
+    patternRules: strings(state.patternRules),
+    skippedPatterns: strings(state.skippedPatterns),
+  };
 }
 
 /** @param {typeof INITIAL_STATE} state */

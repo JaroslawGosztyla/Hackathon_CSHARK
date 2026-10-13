@@ -35,12 +35,20 @@
           <dt>Blokowane domeny</dt>
           <dd id="domain-count">—</dd>
         </div>
+        <div class="facts__row">
+          <dt>Wzorce (regex)</dt>
+          <dd id="pattern-count">—</dd>
+        </div>
       </dl>
 
       <details class="domains" id="domains" hidden>
-        <summary>Pokaż blokowane domeny</summary>
+        <summary>Pokaż listę blokowanych</summary>
         <ul class="domains__list" id="domain-list"></ul>
       </details>
+
+      <p class="popup__note">
+        Listę zmieniasz w pliku <code>websiteblacklist.txt</code> — otworzysz go w ustawieniach aplikacji FocusMode.
+      </p>
 
       <button type="button" class="btn btn--ghost popup__refresh" id="refresh">Odśwież</button>
 
