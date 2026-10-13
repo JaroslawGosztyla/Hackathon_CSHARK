@@ -7,6 +7,10 @@
 //! * Presence: `POST /me/presence/setUserPreferredPresence` (`DoNotDisturb`, with an expiration so a crashed app
 //!   never leaves the user in DND forever) and `POST /me/presence/clearUserPreferredPresence`.
 //!   Preferred presence is shown only while the user has a presence session (e.g. Teams is signed in somewhere).
+//! * Current presence: `GET /me/presence` ([`TeamsClient::get_presence`], covered by `Presence.ReadWrite`). The shell
+//!   reads it before focus: a user who appears offline ([`presence_blocks_dnd`]) must not become visible as
+//!   "Do not disturb", and a user who already chose Do not disturb ([`presence_is_user_dnd`]) is left alone
+//!   (we neither set nor clear it, because clearing the preferred presence would also drop the user's own choice).
 //! * Token storage: JSON `{refreshToken, account}` encrypted with DPAPI (current user, `CryptProtectData`) and
 //!   written atomically to [`TeamsSettings::token_path`]. Access tokens live only in memory. On non-Windows
 //!   platforms storage is [`PlatformError::Unsupported`], so Teams is unavailable there.
@@ -97,6 +101,32 @@ pub enum LoginPoll {
     Done { account: Option<String> },
     /// The login ended without success (declined, expired, misconfigured app...). English detail for logs/UI.
     Failed(String),
+}
+
+/// Presence of the signed-in user as Microsoft Graph reports it (`GET /me/presence`).
+///
+/// `availability`: `Available`, `AvailableIdle`, `Away`, `BeRightBack`, `Busy`, `BusyIdle`, `DoNotDisturb`,
+/// `Offline`, `PresenceUnknown`. `activity`: e.g. `Available`, `InACall`, `InAMeeting`, `Presenting`,
+/// `DoNotDisturb`, `Offline`, `OffWork`. Values are kept as Graph sends them (empty when missing).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Presence {
+    pub availability: String,
+    pub activity: String,
+}
+
+/// The user appears offline in Teams ("Appear offline", or not signed in anywhere): Do not disturb must **not**
+/// be set, because it would make an invisible user visible.
+pub fn presence_blocks_dnd(presence: &Presence) -> bool {
+    presence.availability.trim().eq_ignore_ascii_case("Offline")
+}
+
+/// The user is already in Do not disturb (set by themselves, or while presenting / in focus time): do not set it
+/// and do not clear it afterwards.
+pub fn presence_is_user_dnd(presence: &Presence) -> bool {
+    presence
+        .availability
+        .trim()
+        .eq_ignore_ascii_case("DoNotDisturb")
 }
 
 /// Graph client for Teams presence. Blocking; see the module docs for threading rules.
@@ -253,6 +283,18 @@ impl TeamsClient {
         Ok(())
     }
 
+    /// Reads the current presence of the signed-in user (`GET /me/presence`).
+    pub fn get_presence(&mut self) -> Result<Presence, PlatformError> {
+        let body = self.graph_send(reqwest::Method::GET, "/me/presence", None)?;
+        let presence = parse_presence(&body)?;
+        log::debug!(
+            "teams: presence is {}/{}",
+            presence.availability,
+            presence.activity
+        );
+        Ok(presence)
+    }
+
     /// Forgets the stored token (and the in-memory access token).
     pub fn disconnect(&mut self) -> Result<(), PlatformError> {
         self.access = None;
@@ -404,20 +446,40 @@ impl TeamsClient {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<(), PlatformError> {
+        self.graph_send(reqwest::Method::POST, path, body)
+            .map(|_| ())
+    }
+
+    /// Graph request returning the response body; retries once with a refreshed token on 401.
+    fn graph_send(
+        &mut self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<String, PlatformError> {
         self.ensure_configured()?;
         let url = format!("{GRAPH_BASE}{path}");
         for attempt in 0..2 {
             let token = self.access_token()?;
-            let request = self.http()?.post(url.as_str()).bearer_auth(token);
+            let request = self
+                .http()?
+                .request(method.clone(), url.as_str())
+                .bearer_auth(token);
             let request = match body {
                 Some(json) => request.json(json),
                 // IIS-fronted endpoints want an explicit length for an empty POST.
-                None => request.header("Content-Length", "0"),
+                None if method == reqwest::Method::POST => request.header("Content-Length", "0"),
+                None => request,
             };
             let response = request.send().map_err(network_error)?;
             let status = response.status();
             if status.is_success() {
-                return Ok(());
+                return match response.text() {
+                    Ok(text) => Ok(text),
+                    // The change went through; only a body we need (GET) makes a failed read an error.
+                    Err(err) if method == reqwest::Method::GET => Err(network_error(err)),
+                    Err(_) => Ok(String::new()),
+                };
             }
             let text = response.text().unwrap_or_default();
             if status.as_u16() == 401 && attempt == 0 {
@@ -486,6 +548,25 @@ struct MeResponse {
     user_principal_name: Option<String>,
     #[serde(default)]
     mail: Option<String>,
+}
+
+/// Answer of `GET /me/presence` (other fields, e.g. `id` or `outOfOfficeSettings`, are ignored).
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PresenceResponse {
+    #[serde(default)]
+    availability: Option<String>,
+    #[serde(default)]
+    activity: Option<String>,
+}
+
+fn parse_presence(body: &str) -> Result<Presence, PlatformError> {
+    let parsed: PresenceResponse = serde_json::from_str(body)
+        .map_err(|err| PlatformError::Network(format!("invalid presence response: {err}")))?;
+    Ok(Presence {
+        availability: parsed.availability.unwrap_or_default(),
+        activity: parsed.activity.unwrap_or_default(),
+    })
 }
 
 /// Body of `setUserPreferredPresence`.
@@ -1030,6 +1111,80 @@ mod tests {
         );
     }
 
+    fn presence(availability: &str, activity: &str) -> Presence {
+        Presence {
+            availability: availability.into(),
+            activity: activity.into(),
+        }
+    }
+
+    #[test]
+    fn presence_response_parses() {
+        let parsed = parse_presence(
+            r#"{"@odata.context":"https://graph.microsoft.com/v1.0/$metadata#users('x')/presence/$entity",
+                "id":"fa8bf3dc-eca7-46b7-bad1-db199b62afc3","availability":"Offline","activity":"OffWork",
+                "statusMessage":null,"outOfOfficeSettings":{"message":null,"isOutOfOffice":false}}"#,
+        )
+        .expect("parse");
+        assert_eq!(parsed, presence("Offline", "OffWork"));
+
+        let partial = parse_presence(r#"{"availability":null}"#).expect("parse");
+        assert_eq!(partial, presence("", ""));
+        assert!(matches!(
+            parse_presence("<html>"),
+            Err(PlatformError::Network(_))
+        ));
+    }
+
+    #[test]
+    fn offline_blocks_dnd() {
+        assert!(presence_blocks_dnd(&presence("Offline", "OffWork")));
+        assert!(presence_blocks_dnd(&presence("Offline", "Offline")));
+        assert!(presence_blocks_dnd(&presence("offline", "")));
+        for availability in [
+            "Available",
+            "AvailableIdle",
+            "Away",
+            "BeRightBack",
+            "Busy",
+            "BusyIdle",
+            "DoNotDisturb",
+            "PresenceUnknown",
+            "",
+        ] {
+            assert!(
+                !presence_blocks_dnd(&presence(availability, "Available")),
+                "{availability}"
+            );
+        }
+    }
+
+    #[test]
+    fn existing_dnd_is_detected() {
+        assert!(presence_is_user_dnd(&presence(
+            "DoNotDisturb",
+            "DoNotDisturb"
+        )));
+        assert!(presence_is_user_dnd(&presence(
+            "DoNotDisturb",
+            "Presenting"
+        )));
+        assert!(presence_is_user_dnd(&presence("donotdisturb", "")));
+        for availability in [
+            "Available",
+            "Busy",
+            "Away",
+            "Offline",
+            "PresenceUnknown",
+            "",
+        ] {
+            assert!(
+                !presence_is_user_dnd(&presence(availability, "DoNotDisturb")),
+                "{availability}"
+            );
+        }
+    }
+
     #[test]
     fn client_reports_configuration_without_network() {
         let path = unique_temp_path("teams-none.bin");
@@ -1051,6 +1206,10 @@ mod tests {
             Err(PlatformError::Auth(_)) | Err(PlatformError::Unsupported)
         ));
         assert!(client.clear_dnd().is_err());
+        assert!(matches!(
+            client.get_presence(),
+            Err(PlatformError::Auth(_)) | Err(PlatformError::Unsupported)
+        ));
     }
 
     #[test]

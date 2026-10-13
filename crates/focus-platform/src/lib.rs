@@ -3,17 +3,24 @@
 //! * [`foreground`]: which app is in the foreground (process name, window title, idle time).
 //! * [`notifications`]: Windows "Do not disturb" (Windows 11) / "Focus assist" (Windows 10).
 //! * [`power`]: keep the display and the system awake during focus.
-//! * [`teams`]: Microsoft Teams presence "Do not disturb" through Microsoft Graph.
+//! * [`teams`]: Microsoft Teams presence "Do not disturb" through Microsoft Graph, plus the current presence so the
+//!   shell can skip it while the user appears offline or already chose Do not disturb.
 //! * [`logon`]: one-shot command at the next logon (crash-restore of muted notifications).
+//! * [`processes`]: close processes by executable name (game launchers when focus starts).
+//! * [`locale`]: the system UI language tag.
+//! * [`clock`]: local time of day (time-of-day screen tint).
 //!
 //! All per-OS code lives in this crate, gated with `#[cfg(target_os = "...")]`. Every integration has a
 //! `Noop` implementation used on other platforms, so the shell never needs `cfg` of its own.
 //! Nothing here panics; every failure is a [`PlatformError`] and the caller degrades gracefully.
 
+pub mod clock;
 pub mod foreground;
+pub mod locale;
 pub mod logon;
 pub mod notifications;
 pub mod power;
+pub mod processes;
 pub mod teams;
 
 /// Error of a platform integration. The shell maps it to `AppError` / `IntegrationState::Error`
