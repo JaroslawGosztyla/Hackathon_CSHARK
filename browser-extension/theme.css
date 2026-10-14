@@ -1,0 +1,123 @@
+/* Shared tokens and base styles: cozy "lofi night" theme of FocusMode (always dark). */
+
+:root {
+  color-scheme: dark;
+
+  --night-0: #110b1b;
+  --night-1: #1b1229;
+  --night-2: #2a1a35;
+  --dusk: #3a2442;
+  --card: rgba(36, 24, 50, 0.86);
+  --card-solid: #241832;
+  --card-border: rgba(246, 184, 92, 0.2);
+  --line: rgba(246, 234, 219, 0.12);
+
+  --text: #f6eadb;
+  --text-muted: #cbbcae;
+  --text-faint: #a8998f;
+
+  --amber: #f6b85c;
+  --amber-strong: #ffcf86;
+  --amber-ink: #24160a;
+  --mint: #8fdcbf;
+  --rose: #f29a8d;
+
+  --radius-lg: 22px;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --shadow: 0 18px 50px rgba(5, 2, 10, 0.55);
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--night-1);
+}
+
+h1,
+h2,
+p,
+dl,
+dd,
+ul {
+  margin: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 3px solid var(--amber);
+  outline-offset: 3px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  min-height: 44px;
+  padding: 0.6em 1.3em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn--primary {
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
+.btn--primary:hover {
+  background: var(--amber-strong);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.btn--ghost:hover {
+  border-color: var(--amber);
+  color: var(--amber-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

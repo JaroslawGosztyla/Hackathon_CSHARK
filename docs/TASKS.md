@@ -1,9 +1,312 @@
 # FocusMode — Taski i podział pracy
 
-> Wersja 2 — po cross-review (2026-09-27). Decyzje: ADR-008…012 w [DECISIONS.md](DECISIONS.md).
+> Wersja 3 — speedrun (2026-10-12, [ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu); 2026-10-13 uzupełniona o ADR-014, ADR-015, ADR-016, ADR-017 i ADR-018); wersja 2 po cross-review (2026-09-27).
+> Decyzje: ADR-008…018 w [DECISIONS.md](DECISIONS.md).
 
 **Legenda statusu:** `[ ]` do zrobienia · `[~]` w toku · `[x]` zrobione · `[-]` porzucone
 Przy braniu taska wpisz obok statusu kto: `[~] (A)`. Edytuj **tylko swoje linie** (mniej konfliktów).
+
+## Speedrun (ADR-013) — obowiązuje teraz
+
+Termin: **2026-10-13**. Produkt: czasy ustawiane przez użytkownika (domyślnie 45/15 min) w pętli Focus ⇄ Przerwa aż do Stop,
+muzyka w WebView (stream / linki YouTube / folder / szum), dzwonek i toast przy każdej zmianie fazy, osłony skupienia
+(wyciszenie powiadomień Windows, Teams DND, blokada stron, nieusypianie ekranu) zdejmowane w przerwie, wykres produktywności według procesu.
+Całość powstaje w jednej gałęzi `b/speedrun-mvp` (równoległe agenty AI pod nadzorem B). Sekcje M0–M4 niżej są sprzed pivotu:
+zadania z oknami przerwy, ćwiczeniami, ostrzeżeniem, trybem spotkania i gammą są odłożone. Ich statusy zostawiamy do decyzji obu osób.
+Tint wraca w uproszczonej formie jako overlay ([ADR-014](DECISIONS.md#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki), SR-13 zamiast A-07/B-08).
+ADR-014 (2026-10-13) dokłada też zasobnik z okienkami faz, zamykanie launcherów gier, Teams z poszanowaniem statusu użytkownika i wybór języka (SR-12…SR-18).
+Runda 2a ([ADR-015](DECISIONS.md#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia), 2026-10-13) zastępuje overlay
+Oświetleniem nocnym Windows albo gammą (SR-19) i dokłada motywy, animowaną nawigację, dzwonki z własnym plikiem, muzykę w zestawie, przypomnienia,
+porady na przerwę oraz opcje historii (SR-20…SR-29).
+Kalendarze ([ADR-016](DECISIONS.md#adr-016-kalendarze-i-spotkania-w-przerwach), 2026-10-13): Microsoft 365 przez logowanie Teams, Google Calendar i linki ICS;
+spotkanie w czasie przerwy widać na stronie Skupienie przed Start, z wyborem: przedłuż skupienie, wstrzymaj przerwę, ignoruj, przypomnij później (SR-30…SR-33).
+„Co dalej?” ([ADR-017](DECISIONS.md#adr-017-co-dalej--zadania-z-narzędzi-pracy), 2026-10-13): zadania i powiadomienia z GitHub, GitLab, Jira, Azure DevOps i Linear
+(tokeny tylko do odczytu, DPAPI) w kolejności: przypisane do użytkownika → czeka na niego → reszta, z powodami; nowe pozycje czekają do przerwy;
+wybrane zadanie = cel sesji, a podsumowanie pyta „Zrobione?” (SR-34…SR-37).
+Maskotka i poprawki ([ADR-018](DECISIONS.md#adr-018-maskotka-i-poprawki), 2026-10-13): aksolotl w słuchawkach z arkuszy klatek właściciela, bez przerysowywania
+(mruganie, reakcje, ruch ust według samogłosek, „zza krawędzi” w okienkach, pikselowy w motywie 8-bit, `showMascot`); okienka czekają w czasie prezentacji i gry
+na pełnym ekranie; `--demo` przy działającej aplikacji; zgłoszenie wzorców, których przeglądarka nie egzekwuje (`POST /v1/report`); odświeżanie autostartu (SR-38…SR-42).
+
+- [~] **SR-01** (B) Kontrakt IPC od nowa (`crates/focus-core/src/api.rs`): DTO configu (czasy, muzyka, osłony), snapshot sesji, `ShieldStatus`,
+  użycie aplikacji i `SessionSummary`, Teams, most dla rozszerzenia (`BRIDGE_PORT = 47615`), stałe komend i eventów. Bindingi w `src/lib/bindings/`
+  napisane ręcznie w formacie ts-rs. DoD: `cargo test -p focus-core` daje pusty `git diff src/lib/bindings`.
+- [~] **SR-02** (B) `focus-core`: `timing.rs` (45/15, demo 40/20 s), `session.rs` (pętla faz, pauza, pomiń, idempotentny Stop, luka > 90 s → auto-pauza,
+  kolejność efektów), `config.rs` (domyślne wartości + walidacja zakresów), `blocklist.rs` (normalizacja domen, procesy przeglądarek, dopasowanie tytułów),
+  `stats.rs` (sumy per proces, podsumowanie). DoD: testy jednostkowe z ADR-013 zielone.
+- [~] **SR-03** (B) `focus-audio`: `ChimePlayer`, syntetyczne dzwonki BreakStart/FocusStart na wątku rodio, leniwe otwarcie urządzenia, błędy bez paniki.
+- [~] **SR-04** (B) `focus-platform`: aktywne okno + bezczynność, wyciszenie powiadomień Windows (COM `IQuietHoursSettings`, stan sprzed focusa awaryjnie z WNF;
+  DND włączamy tylko, gdy było wyłączone, i potem wyłączamy z powrotem),
+  keep-awake (`PowerSetRequest`), Teams DND przez Graph (device code, token DPAPI), implementacje `Noop` poza Windows.
+- [~] **SR-05** (B) Powłoka `src-tauri/`: aktor sesji, efekty, osłony (wątek z generacją, `shields-restore.json` + RunOnce `--restore-shields`), tracker (próbkowanie + awaryjny nudge),
+  most HTTP `127.0.0.1:47615`, persystencja (`config.json`, `history.jsonl`), tray, Teams, skan folderu muzyki, NSIS per-user z rozszerzeniem jako zasobem.
+- [~] **SR-06** (B) Frontend `src/`: Skupienie (pierścień czasu, sterowanie, edytor czasów z presetami, wybór muzyki), odtwarzacz (YouTube/stream/linki/folder/szum),
+  Podsumowanie (wykres według procesu + historia), Ustawienia (osłony, Teams, blokada stron, dźwięk, autostart), motyw lofi, teksty w `strings.ts`.
+- [~] **SR-07** (B) Rozszerzenie MV3 `browser-extension/`: odpytywanie mostu, reguły `declarativeNetRequest`, strona „Wracaj do pracy”, popup, README.
+- [~] **SR-08** (B) Dokumentacja: ADR-013 (+ statusy ADR-003, 009–012), README (funkcje, instalacja, rozszerzenie, prywatność), CLAUDE.md, ten plik.
+  2026-10-13: ADR-014 (+ poprawki ADR-009, 010, 012, 013), ARCHITECTURE §6 (nowe komendy, eventy, DTO, §6.6 pola configu), README, CLAUDE.md (zasada 6, struktura, teksty).
+  2026-10-13 (runda 2a): ADR-015 (+ poprawki ADR-009, 012, 013, 014), ARCHITECTURE §6 (nowe komendy, §6.7 pola configu i DTO, §9.1/9.2), README (funkcje, muzyka, prywatność), CREDITS.md.
+  Zmiana CLAUDE.md (zasady 6 i 11, struktura) czeka na zatwierdzenie (notatka 2026-10-13).
+  2026-10-13 (kalendarze): ADR-016 (+ poprawki ADR-010, 011, 013, 014), ARCHITECTURE §6 (nowe komendy i event, snapshot, przykłady JSON, §6.8 config, DTO i reguły core),
+  README (funkcja, konfiguracja Microsoft / Google / ICS, prywatność, ograniczenia). Zmiana CLAUDE.md (zasady 2, 6 i 11, struktura) czeka na zatwierdzenie (notatka 2026-10-13, „kalendarze”).
+  2026-10-13 („Co dalej?”): ADR-017, ARCHITECTURE §6 (nowe komendy i event, snapshot, przykłady JSON, §6.9 config, DTO, reguły core, platforma i powłoka),
+  README (funkcja, tokeny krok po kroku dla GitHub / GitLab / Jira / Azure DevOps / Linear, prywatność, pliki danych, ograniczenia).
+  Zmiana CLAUDE.md (zasada 11, struktura) wprowadzona 2026-10-13 (zgodnie z decyzjami właściciela).
+  2026-10-13 (maskotka i poprawki): ADR-018 (+ poprawki ADR-013, 014, 015), ARCHITECTURE §6 (most `POST /v1/report`, `blocklist://changed`, okno `popup`, przykłady JSON,
+  §6.5 `extensionSkipped`, nowy §6.10), README (maskotka, okienka w czasie prezentacji, zgłoszenie wzorców, `--demo` przy działającej aplikacji, autostart, prywatność,
+  ograniczenia, katalogi), CREDITS.md (maskotka: powiększenie Real-ESRGAN i cięcie, bez wektoryzacji; poprawione „wersja wektorowa”).
+  Zmiana CLAUDE.md (zakres, zasady 10 i 11, struktura, komendy) wprowadzona 2026-10-13 (zgodnie z decyzją właściciela o grafice i ADR-018).
+- [ ] **SR-09** (A+B, po merge'u) Zaktualizować DESIGN.md i ARCHITECTURE.md do ADR-013 (tabela faz, wątki, kontrakt, okna). ARCHITECTURE §6 (kontrakt IPC) zaktualizowany 2026-10-13.
+- [~] **SR-10** (B) Okno YouTube jako fallback (ADR-013 pkt 2): gdy YouTube odmawia osadzania (błędy 101/150/153; m.in. live Lofi Girl i część YouTube Music)
+  albo linku nie da się osadzić (`/@kanał/live`, `/channel/<id>/live`, `/@kanał`), link gra w ukrytym oknie Tauri `media` ze stroną YouTube (odtwarzacz w tle, bez uprawnień IPC,
+  sterowany przez powłokę; widoczne tylko do pierwszego wyboru ciasteczek YouTube). Domyślny stream: `@LofiGirl/live`. E2E release 2026-10-13: 12/12 + zgoda 5/5. Kontrakt: `open_media_window` / `control_media_window` / `get_media_window` + `media://window`; dokumentacja: ADR-013, ARCHITECTURE §6, README.
+  DoD: domyślny stream Lofi Girl gra z zainstalowanego buildu; Pauza / Wznów / Stop / głośność działają na okno.
+- [~] **SR-11** (B) Lista stron w pliku `websiteblacklist.txt` (ADR-013 pkt 4): `%APPDATA%\com.focusmode.app\websiteblacklist.txt`, tworzony z domyślnej listy
+  (`crates/focus-core/assets/websiteblacklist.txt`, rozpraszacze PL + EN); domeny + regexy RE2 (bez rozróżniania wielkości liter, w rozszerzeniu do pełnego URL,
+  w nudge'u do tytułu okna), komentarze `#`, auto-przeładowanie po zapisie; w Ustawieniach przyciski „otwórz w edytorze” i „wczytaj ponownie”, liczniki i pominięte linie.
+  Usunięte `config.shields.blocklist`. Kontrakt: `get_blocklist` / `open_blocklist_file` / `reload_blocklist` + `blocklist://changed`, `BridgeState.patterns`;
+  dokumentacja: ADR-013, ARCHITECTURE §6, README, CLAUDE.md.
+  DoD: w Focus `reddit.com` i `youtube.com/shorts/…` → „Wracaj do pracy”, zwykły film YouTube i `poczta.onet.pl` działają; zapis pliku z błędnym regexem → pominięta linia w Ustawieniach, reszta listy działa bez restartu.
+- [~] **SR-12** (B) Zasobnik i okienka faz (ADR-014 pkt 1): `Config.closeToTray` (domyślnie `null`) i `phasePopups` (domyślnie wył.). Pierwsze X → `app://close-requested` →
+  pytanie w UI → `resolve_close { toTray }` („Tak” = zasobnik + okienka, „Nie” = X kończy aplikację). Okno `popup` (`src-tauri/src/popup.rs`, trasa w `src/routes/(overlay)/`):
+  prawy dolny róg, styl aplikacji, zawsze na wierzchu, bez fokusu i paska zadań, samo znika; przyciski `dismiss` / `showMain` / `skipPhase`; `PopupKind`: start przerwy,
+  start focusa, auto-pauza po uśpieniu, zamknięte launchery. Kontrakt: `resolve_close`, `get_popup` / `popup_action` + `popup://show`, `app://close-requested`.
+  DoD: świeży config → pierwsze X pyta; „Tak” → okno w zasobniku, muzyka gra, przy zmianie fazy okienko w rogu nie zabiera fokusu, „Pomiń fazę” z okienka działa;
+  „Nie” → X kończy aplikację, a powiadomienia Windows wracają.
+- [-] **SR-13** (B) **2026-10-13: overlay odrzucony przez właściciela produktu (ADR-015), zastępuje go SR-19**; harmonogram (`focus_core::tint`), `clock.rs` i karta w Ustawieniach przechodzą do SR-19.
+  Odcień ekranu jako overlay (ADR-014 pkt 2, zastępuje A-07/B-08): `focus_core::tint` (poziom 0–100 z minuty doby), `focus-platform/src/clock.rs` (`GetLocalTime`),
+  `src-tauri/src/tint.rs` (przezroczyste, klikalne na wylot okna per monitor, harmonogram, podgląd), karta w Ustawieniach (od–do, siła, przejście, podgląd).
+  Domyślnie wyłączony. Kontrakt: `Config.tint`, `get_tint_status` / `preview_tint` + `tint://changed`.
+  DoD: włączony z harmonogramem obejmującym bieżącą godzinę → ciepła warstwa na każdym monitorze, kliknięcia przechodzą, fokus zostaje; podgląd pokazuje siłę i sam znika;
+  kill procesu → kolory od razu wracają.
+- [~] **SR-14** (B) Zamykanie launcherów gier (ADR-014 pkt 3): `focus_core::launchers` (dokładne nazwy exe), `focus-platform/src/processes.rs` (Toolhelp + `ProcessIdToSessionId` + `TerminateProcess`),
+  powłoka zamyka zaznaczone launchery na każdy start fazy Focus; pola wyboru w Ustawieniach. Kontrakt: `shields.closeLaunchers` / `launchers`, `ShieldStatus.launchers` / `closedLaunchers`.
+  DoD: działający Steam i Epic → Start → `steam.exe`, `steamwebhelper.exe` i `EpicGamesLauncher.exe` zamknięte, `steamservice.exe` nietknięty, okienko lub status pokazuje zamknięte;
+  w przerwie launchery nie wracają; przy wyłączonej osłonie nic się nie dzieje.
+- [~] **SR-15** (B) Teams szanuje status użytkownika (ADR-014 pkt 4): `GET /me/presence` przed DND; przy `Offline` („Wyświetlaj jako offline”) albo `DoNotDisturb`
+  FocusMode nie ustawia DND i potem go nie czyści. Discord odrzucony (brak API do statusu, self-bot łamie regulamin). DoD (jeśli tenant pozwala):
+  „Wyświetlaj jako offline” → Start → przerwa → Stop: status cały czas offline; własne DND zostaje po Stop; zwykły status → DND w Focus, wyczyszczone w przerwie.
+- [~] **SR-16** (B) Języki, krok 1 (ADR-014 pkt 5): `Config.language` (domyślnie `system`), `get_system_language` (`focus-platform/src/locale.rs` + `Language::from_tag`),
+  wybór języka w Ustawieniach; `focus-core` bez polskich tekstów (`BlocklistIssue.code` mapowany w UI na tekst ze `strings.ts`).
+  DoD: Windows po polsku → `get_system_language` = `pl`; Ustawienia pokazują pominięte linie `websiteblacklist.txt` po polsku na podstawie `code`.
+- [ ] **SR-17** (B) Języki, krok 2: przetłumaczyć `src/lib/strings.ts` i `src-tauri/src/texts.rs` na en, pl, de, fr, it, uk, ru, es, zh, ja; przełączanie według `Config.language`
+  (UI, tray, okienka, toasty). Zależy od: SR-16.
+- [ ] **SR-18** (B, `/sync-contract`) Osobny `BlocklistIssueCode` dla linii `*.domena` (np. `wildcardDomain` z domeną w `message`), żeby podpowiedź „wpisz samo facebook.com”
+  dała się przetłumaczyć; dziś to tylko angielski dopisek do szczegółu `invalidRegex`.
+- [~] **SR-19** (B) Ciepło ekranu przez Oświetlenie nocne albo gammę (ADR-015 pkt 1, zastępuje overlay z SR-13): `focus_core::tint` (`kelvin_for_level`, `rgb_gain_for_kelvin`; gotowe),
+  `focus-platform/src/night_light.rs` (Oświetlenie nocne bieżącego użytkownika) i `gamma.rs` (bazowa rampa każdego monitora, `capped`), `src-tauri/src/tint.rs` od nowa
+  (harmonogram, podgląd, mechanizm zastępczy, plik przywracania + RunOnce `FocusModeRestore` / `--restore-shields`), wybór trybu w Ustawieniach.
+  Usunięte: okna `tint-*`, trasa `src/routes/(overlay)/tint`, wpis `tint-*` w `capabilities/overlays.json`. Kontrakt: `TintConfig.mode`, `TintStatus.mode` / `capped`.
+  DoD: harmonogram obejmujący bieżącą godzinę → Oświetlenie nocne włączone z temperaturą według siły, poza godzinami wyłączone; zrzut ekranu ma normalne kolory;
+  własne ustawienia Oświetlenia nocnego wracają po wyłączeniu odcienia, po „Zakończ”, po kill + ponownym starcie i po kill + logowaniu; tryb gamma: cieplej na każdym monitorze,
+  kalibracja wraca po wyłączeniu, zbyt ciepła wartość → `capped`, monitor HDR → komunikat zamiast cichej porażki.
+- [~] **SR-20** (B) Motywy (ADR-015 pkt 2): `Config.theme`, `src/lib/themes/` (Midnight, Vaporwave, fazy księżyca, przytulna jesień, prosty ciemny, prosty jasny, 8-bit),
+  wybór w Ustawieniach, motyw także w okienku `popup`. DoD: zmiana motywu działa od razu i zostaje po restarcie; każdy motyw czytelny (kontrast WCAG AA, także jasny);
+  przy `prefers-reduced-motion` tło się nie animuje.
+- [~] **SR-21** (B) Animowana nawigacja (ADR-015 pkt 3): podświetlenie zakładki płynnie przesuwa się między Skupieniem, Podsumowaniem i Ustawieniami, a tło przesuwa się lekko
+  w lewo albo w prawo według kolejności zakładek (tylko `transform` / `opacity`). DoD: płynnie w obie strony, bez skoku układu; przy `prefers-reduced-motion` bez ruchu.
+- [~] **SR-22** (B) Dźwięki dzwonków (ADR-015 pkt 4): pakiety `midnight`, `vaporwave`, `lunar`, `autumn`, `classic`, `soft`, `chiptune` w `focus-audio` (wariant przerwy i skupienia),
+  własny plik (`import_chime` / `remove_custom_chime`, folder `sounds` w danych aplikacji, mp3/wav/ogg/flac/m4a do 10 MB, gra najwyżej 10 s), lista i „Testuj” w Ustawieniach.
+  DoD: każdy pakiet gra przy zmianie fazy i w „Testuj”; plik z innym rozszerzeniem, za duży albo niedekodowalny → komunikat; usunięcie pliku → gra plik drugiego dzwonka albo `midnight`.
+- [~] **SR-23** (B) Muzyka w zestawie (ADR-015 pkt 5): 12 utworów Open Lo-Fi (CC0) w `src-tauri/resources/music/open-lofi/` + `library.json`, `bundle.resources`,
+  `list_library_tracks`, źródło `library` domyślne w odtwarzaczu; licencja w `CREDITS.md`. DoD: świeża instalacja bez sieci → Start → gra muzyka z zestawu;
+  stary config ze źródłem `stream` zostaje przy streamie.
+- [~] **SR-24** (B) Przypomnienia na kolejne przerwy (ADR-015 pkt 6): edytor listy w Ustawieniach („1. przerwa: …”), `repeatReminders`, `reminder_for_break` w powłoce przy starcie przerwy
+  (gotowe w core), `PopupInfo.reminder` w okienku i na karcie przerwy. DoD: „rozciąganie / woda i spacer z psem / obiad” → kolejne przerwy pokazują kolejne teksty,
+  czwarta nic (albo znowu pierwszy przy włączonym powtarzaniu).
+- [~] **SR-25** (B) Porady na przerwę (ADR-015 pkt 7): `src/lib/tips.ts` (60 porad PL/EN ze źródłami, na krótką / długą / każdą przerwę; 10 porad do pracy; przypis do rozciągania;
+  nota prawna tylko po polsku), wybór z ziarna `sessionId` + numer przerwy. DoD: krótka i długa przerwa pokazują porady z właściwej puli; ta sama porada po odświeżeniu;
+  w tekstach brak obietnic zdrowotnych.
+- [~] **SR-26** (B) **Pomijać w historii skupienia elementy powłoki Windows** (`ShellExperienceHost` i podobne; prośba użytkownika, ADR-015 pkt 8): menu Start, wyszukiwanie,
+  pasek zadań, pulpit, zasobnik, widok zadań. Core gotowy (`focus_core::stats::is_ignored_process` / `is_shell_surface`); zostaje klasa okna w `focus-platform` (`foreground`, `GetClassNameW`)
+  i pomijanie takich sekund w trackerze. DoD: klikanie w menu Start, pasek zadań, zasobnik i pulpit w trakcie Focus → w podsumowaniu brak `ShellExperienceHost.exe`, `SearchHost.exe`
+  i `explorer.exe` za pasek zadań czy pulpit; okno folderu w Eksploratorze nadal liczy się jako `explorer.exe`.
+- [~] **SR-27** (B) **Tytuł okna w podpowiedzi po najechaniu myszą na wykres** (prośba użytkownika, ADR-015 pkt 8): gdy na pierwszym planie jest Eksplorator, przeglądarka itp.,
+  zapamiętać tytuł okna; przełącznik w Ustawieniach (`trackTitles`, domyślnie wł.). Core gotowy (`add_sample` z tytułem, `AppUsage.titles`, najwyżej 5 na aplikację);
+  tracker przekazuje tytuł tylko przy włączonym przełączniku i nigdy go nie loguje, wykres pokazuje podpowiedź. DoD: dwie karty w Chrome → podpowiedź na słupku `chrome.exe`
+  pokazuje oba tytuły z czasem; po wyłączeniu nowe sesje są bez tytułów; w logach nie ma tytułów.
+- [~] **SR-28** (B) **Przycisk „Usuń historię” z potwierdzeniem** (prośba użytkownika, ADR-015 pkt 8): `clear_history` usuwa `history.jsonl` i ostatnie podsumowanie; UI najpierw pyta.
+  DoD: „Usuń historię” → pytanie → „Anuluj” nic nie zmienia; „Usuń” → historia pusta, także po restarcie; trwająca sesja działa dalej.
+- [~] **SR-29** (B) **Opcja „Nie zapisuj historii”** (prośba użytkownika, ADR-015 pkt 8): `Config.keepHistory` (domyślnie wł.); po wyłączeniu podsumowanie po Stop widać,
+  ale nie trafia do `history.jsonl`. DoD: wyłączone → sesja → Stop → podsumowanie widoczne, po restarcie tej sesji nie ma w historii; wcześniejsza historia nietknięta.
+- [~] **SR-30** (B) Kalendarze w `focus-core` (ADR-016 pkt 3–5): `calendar.rs` (`plan_breaks`, `conflicts`, `reminder_schedule`), `MEETING_REMINDER_LEAD_MINUTES` (30/20/10) w `timing.rs`,
+  `CalendarConfig` z walidacją (`horizonHours` 1–24, `is_google_client_id`), w `session.rs` `MeetingHold` + `Input::SetMeetingHolds` (`extend` przesuwa termin focusa na koniec spotkania,
+  `pauseAtBreak` zaczyna przerwę w pauzie z `Notify(BreakHeld)` zamiast `BreakStarted`, tylko przy terminie focusa, raz na blokadę), snapshot `musicMuted` / `meetingHold`,
+  `Session::remaining_ms`. Kontrakt: `Config.calendar`, DTO kalendarza, komendy `get_calendar` / `refresh_calendar` / `set_meeting_choice` / `connect_google` / `disconnect_calendar` /
+  `set_ics_urls` / `get_ics_urls` + `calendar://changed`, `PopupKind.meetingReminder` / `breakHeld`, `PopupInfo.meeting`.
+  DoD: `cargo test -p focus-core` zielone (208 testów, w tym 13 planowania i kolizji, 17 blokad w sesji); bindingi zregenerowane bez ręcznych zmian.
+- [~] **SR-31** (B) Kalendarze w `focus-platform` (ADR-016 pkt 1–2): kalendarz Microsoft przez klienta Teams (zakresy z `Calendars.Read`, wystąpienia spotkań cyklicznych z Graph),
+  `calendar/google.rs` (OAuth dla aplikacji instalowanych: przeglądarka systemowa, loopback `127.0.0.1`, PKCE S256, `state`, zakres tylko do odczytu, odświeżanie tokenu),
+  `calendar/ics.rs` (pobieranie `https` / `webcal`, parser `VEVENT` z `RRULE` / `EXDATE` / `RECURRENCE-ID`, strefy czasowe, pomijanie odwołanych, „wolnych” i całodniowych),
+  `secrets.rs` (pliki szyfrowane DPAPI: `google-token.bin`, `ics-links.bin`; poza Windows `Unsupported`). Tokenów, linków i tematów nie logujemy.
+  DoD: testy parsera ICS (spotkanie cykliczne co tydzień z wyjątkiem i przeniesionym wystąpieniem, `TZID`, UTC, czas bez strefy, wydarzenie całodniowe pominięte);
+  logowanie Google na koncie testowym → token zapisany zaszyfrowany, po restarcie aplikacji kalendarz działa bez ponownego logowania.
+- [~] **SR-32** (B) Kalendarze w powłoce (ADR-016): `src-tauri/src/calendar/` (`model.rs`: łączenie źródeł bez duplikatów, wybory, przypomnienia, walidacja linków ICS;
+  synchronizacja okresowa i `refresh_calendar` poza aktorem, kolizje z `plan_breaks` / `conflicts`,
+  wybory w `meeting-choices.json` (bez tematów), okienka `meetingReminder` według `reminder_schedule`, `Input::SetMeetingHolds` po synchronizacji, zmianie wyboru, Start i Wznów,
+  `calendar://changed`), komendy w `commands.rs`, okienko / toast `breakHeld` (`NotifyKind::BreakHeld` w `effects.rs`, `PopupInfo.meeting` w `popup.rs`), teksty w `texts.rs`.
+  DoD: spotkanie w czasie 1. przerwy (`--demo`, spotkanie dodane na najbliższą minutę) → `extend`: focus trwa do końca spotkania, `musicMuted` w jego trakcie, potem zwykła przerwa;
+  `pauseAtBreak`: przerwa startuje w pauzie z okienkiem `breakHeld`, Wznów ją uruchamia; `remindLater`: okienka 30, 20 i 10 min przed spotkaniem, ostatnie bez „przypomnij później”;
+  w logach brak tematów, linków ICS i tokenów; Pomiń fazę i Stop działają w przedłużonym focusie.
+- [~] **SR-33** (B) Kalendarze w UI (ADR-016 pkt 4): Skupienie: karta kolizji przed Start i w trakcie sesji z czterema wyborami (`MeetingConflicts.svelte`), pasek przedłużonego focusa
+  albo wstrzymanej przerwy (`MeetingHoldBanner.svelte`), stan kalendarza (`src/lib/state/calendar.svelte.ts`: listen → `get_calendar` → nowsza rewizja); odtwarzacz milknie przy `musicMuted`
+  (także okno YouTube); Ustawienia → Kalendarze (`CalendarSettings.svelte`: Microsoft przez konto Teams, Google: identyfikator klienta + „Połącz z Google”, linki ICS, zakres godzin, „Odśwież teraz”);
+  okienko `meetingReminder` z wyborami (bez „przypomnij później” w ostatnim) i `breakHeld`; teksty w `strings.ts`.
+  DoD: Idle z połączonym kalendarzem → kolizje widać przed Start; wybór zostaje po restarcie; `npm run check` zielone; brak tematów spotkań w konsoli.
+- [~] **SR-34** (B) „Co dalej?” w `focus-core` (ADR-017 pkt 3 i 5): `work.rs` (`rank`: czyszczenie, łączenie kopii po `id`, `score` i `reasons`, najwyżej 50;
+  `tier`, `is_in_progress`, `normalize_goal`), `config.rs` (`WorkConfig` z wartościami domyślnymi, `WorkConfig::normalized`, `normalize_work_url`, walidacja e-maila Jira
+  i organizacji Azure DevOps), `session.rs` (`Input::SetGoal`, cel w snapshocie, `SessionTotals.goal` na Stop, `Session::goal()`), `stats.rs` (cel w podsumowaniu).
+  Kontrakt: `Config.work`, DTO `Work*` i `SessionGoal`, `SessionSnapshot.goal`, `SessionSummary.goal` / `goalDone`, `PopupKind.workDigest`, `PopupInfo.workCount`,
+  komendy `get_work` / `refresh_work` / `set_work_token` / `set_session_goal` / `mark_goal_done` + `work://changed`.
+  DoD: `cargo test -p focus-core` zielone (252 testy, w tym niezmiennik progów dla wszystkich kombinacji cech i dokładna kolejność w progu 1); bindingi zregenerowane bez ręcznych zmian.
+- [~] **SR-35** (B) „Co dalej?” w `focus-platform` (ADR-017 pkt 1 i 7): `work/` — klienci GitHub (wyszukiwanie, własne PR: recenzje i CI, powiadomienia z tokenem
+  klasycznym, `If-Modified-Since`, `X-Poll-Interval`), GitLab (`read_api`: przypisane, MR do review, własne MR, To-Do), Jira Cloud (`POST /rest/api/3/search/jql`,
+  token z zakresami przez bramkę `api.atlassian.com` z `cloudId` z `/_edge/tenant_info`) i Data Center (`POST /rest/api/2/search`, `Bearer`); pole sprintu po typie
+  `:gh-sprint`; obserwowane zgłoszenia jako powiadomienia), Azure DevOps (WIQL, `workitemsbatch`, bieżąca iteracja zespołu, PR do głosu i własne z „czeka na autora”)
+  i Linear (GraphQL: przypisane + powiadomienia); tylko zapytania odczytu, przekierowania tylko w obrębie adresu; mapowanie na `WorkItem` (`id` = `<źródło>:<klucz>`,
+  termin bez godziny = koniec dnia lokalnego, priorytet → 0–4 z nazw i etykiet); tokeny przez `secrets.rs`.
+  DoD: testy mapowania na przykładowych odpowiedziach z dokumentacji dostawców; 401 / 403 / 429 → błąd źródła bez tokenu i adresów; w `Debug` klientów nie ma tokenów.
+- [~] **SR-36** (B) „Co dalej?” w powłoce (ADR-017 pkt 2, 4 i 5): `src-tauri/src/work.rs` (+ `work/model.rs`, `work/fetch.rs`: wątek ze stanem, pobieranie w osobnych wątkach
+  co 5 min i na żądanie, ponowienia 1 → 30 min, `X-Poll-Interval`, `rank`, `work-seen.json`, `unseen`, `heldCount` w focusie, okienko `workDigest` / toast na start przerwy
+  i po Stop, `work://changed`), tokeny `work-<źródło>-token.bin` (`validate_token`, `redact`), komendy w `commands.rs`, `Persistence::mark_goal_done` (przepisanie `history.jsonl`),
+  digest w `popup.rs` (czeka na inne okienka), `texts::work_digest_toast`.
+  DoD: token zapisany → po restarcie lista bez ponownego wklejania; nowe pozycje w Focus → brak okienek i toastów do przerwy, potem jedno okienko z liczbą;
+  w logach brak tokenów, tytułów i adresów; zły token → błąd tylko tego narzędzia, sesja i pozostałe narzędzia działają.
+- [~] **SR-37** (B) „Co dalej?” w UI (ADR-017 pkt 5): `NextUp.svelte` (karta na stronie Skupienie: Idle i przerwa, w focusie tylko przy wyłączonym `holdDuringFocus`;
+  powody „Dlaczego teraz”, „nowe”, „Otwórz”, „Ustaw jako cel”), `SessionGoalLine.svelte` (cel pod minutnikiem), `WorkSettings.svelte` (Ustawienia → Narzędzia pracy:
+  włączniki, adresy, tokeny z instrukcją najwęższych uprawnień, stan, „Odśwież teraz”, `holdDuringFocus`), „Zrobione?” w podsumowaniu i znacznik celu w historii,
+  okienko `workDigest`, `src/lib/state/work.svelte.ts`, teksty w `strings.ts`. DoD: `npm run check` zielone; token nie wraca do pola ani do konsoli;
+  „Ustaw jako cel” → cel pod minutnikiem przez całą sesję → Stop → „Zrobione?” → odpowiedź widać w historii także po restarcie.
+- [~] **SR-38** (B) Maskotka (ADR-018 pkt 1–4): klatki z arkuszy właściciela (`art/mascot/` → `tools/mascot/` → `static/mascot/`: atlasy WebP + manifesty; gotowe w `1c28bd8`),
+  `src/lib/mascot/` (manifesty i atlasy, `Axolotl.svelte`: jedna klatka bez skoku układu, sterownik: mruganie co 3–7 s, reakcje na start / przerwę / ukończony cykl /
+  wcześniejszy Stop / nudge / spotkanie / „Co dalej?”, ruch ust według samogłosek, `prefers-reduced-motion`; pikselizacja w motywie `pixel`), miejsca: Skupienie (obok minutnika,
+  dymek z poradą), karta przerwy, Podsumowanie, pasek nudge'a, okienko `popup` (wersja „zza krawędzi”); `Config.showMascot` w Ustawieniach → Wygląd; teksty w `strings.ts`.
+  Kontrakt: `Config.showMascot`. **Grafiki nie przerysowujemy, nie przekolorowujemy ani nie obrysowujemy** (CLAUDE.md, zasada 10).
+  DoD: Idle → maskotka mruga; Start → oczko; przerwa → uśmiech i porada w dymku z ruchem ust; następny focus → radość; Stop przed końcem focusa → smutek;
+  okienko faz z maskotką „zza krawędzi”; motyw 8-bit → pikselowa; ograniczenie animacji w Windows → bez mrugania i ruchu ust; „Pokaż maskotkę” wyłączone → brak maskotki
+  w oknie i okienkach; `npm run check` zielone; brak wycieków timerów przy przełączaniu stron.
+- [~] **SR-39** (B) Okienka czekają w czasie prezentacji (ADR-018 pkt 5): `focus-platform/src/notification_state.rs` (`user_is_presenting()`: `SHQueryUserNotificationState`,
+  import zadeklarowany ręcznie, bo `windows` nie ma `Win32_UI_Shell`), `src-tauri/src/popup.rs` (najnowsze okienko czeka, sprawdzanie co 5 s, po 10 min przepada, kolejka
+  przypomnień i paczek „Co dalej?” jak na ekranie). DoD: gra albo film na pełnym ekranie / tryb prezentacji w trakcie zmiany fazy → okienka brak, po wyjściu z pełnego ekranu
+  pojawia się w ciągu 5 s; ponad 10 min pełnego ekranu → okienko przepada, sesja działa; bez pełnego ekranu okienka jak dotąd.
+- [~] **SR-40** (B) `--demo` przy działającej aplikacji (ADR-018 pkt 6): `on_second_instance` → `ActorCmd::UseDemoProfile`; Idle → profil demo do końca procesu,
+  okno na wierzch; w trakcie sesji toast „Zatrzymaj sesję, aby włączyć tryb prezentacji” (`texts::demo_needs_stop_toast`). DoD: FocusMode w zasobniku →
+  `focusmode.exe --demo` → okno z oznaczeniem demo, Start = 40 s / 20 s; w trakcie sesji → toast, sesja bez zmian.
+- [~] **SR-41** (B, `/sync-contract`) Wzorce, których przeglądarka nie egzekwuje (ADR-018 pkt 7): rozszerzenie wysyła `skippedPatterns` (`POST /v1/report`, nagłówek
+  `X-FocusMode-Extension: 1`, po 2 s spokoju, raz na listę w focusie); most przyjmuje tylko z originu rozszerzenia + nagłówka + loopback `Host`, ≤ 500 pozycji
+  po ≤ 500 znaków, treść ≤ ~1,5 MB (najdłuższa możliwa lista; 204 / 403 / 413 / 400); `BlocklistService::set_extension_skipped` (tylko wzorce z bieżącej listy, `blocklist://changed`); ostrzeżenie w Ustawieniach →
+  Blokuj strony. Kontrakt: `BlocklistInfo.extensionSkipped`. DoD: wzorzec odrzucany przez Chrome w `websiteblacklist.txt` → Start → w Ustawieniach ostrzeżenie z tym wzorcem;
+  `fetch` z originu strony WWW → odrzucone (brak CORS / 403); zgłoszenie z obcym tekstem → Ustawienia go nie pokazują; usunięcie linii z pliku → znika z ostrzeżenia.
+- [~] **SR-42** (B) Odświeżanie autostartu (ADR-018 pkt 8): przy starcie z `launchOnLogin` (poza `--restore-shields`) `refresh_autostart`: tylko gdy `is_enabled()`,
+  `disable` + `enable` (bieżąca ścieżka i `--autostart`); wpis wyłączony w Menedżerze zadań albo usunięty zostaje; błędy tylko w logu. DoD: wpis bez `--autostart`
+  (ręcznie w `HKCU\…\Run`) → start FocusMode → wpis z `--autostart`; wpis wyłączony w Menedżerze zadań → po starcie nadal wyłączony; logowanie → FocusMode w zasobniku.
+
+- [x] **SR-43** (B) Git LFS dla plików binarnych (muzyka, grafiki maskotki, ikony): `.gitattributes` → `filter=lfs` dla png/jpg/gif/ico/icns/webp/ogg/mp3/flac/wav/woff/ttf,
+  pliki w gałęzi zamienione na wskaźniki LFS (bez przepisywania historii: `main` nie ma tych plików, squash merge wnosi tylko wskaźniki);
+  `scripts/setup-windows.ps1` instaluje Git LFS, robi `git lfs install` i `git lfs pull`.
+- [ ] **SR-44** (B) Mikser dźwięków otoczenia: warstwy deszczu, tłumu/kawiarni, burzy i podobnych, każda z własną głośnością, obok muzyki
+  (tylko pliki CC0/CC-BY z wpisem w `CREDITS.md` albo dźwięki syntetyczne; bez obietnic zdrowotnych). **Na później** (decyzja właściciela 2026-10-13).
+- [~] **SR-45** (B) Panel prywatności „Prywatność i dane” (ADR-020, priorytet 2 właściciela): `focus-core/src/privacy.rs` (plan usuwania, KiB, eksport bez
+  sekretów), `src-tauri/src/privacy.rs` (raport pozycja po pozycji, skan co 3 s i po eventach modułów, `privacy://changed`; eksport do jednego JSON poza
+  folderami aplikacji; usuwanie przez istniejące ścieżki po zatrzymaniu sesji i zejściu osłon; „Usuń wszystko” + `Config::default()`), UI
+  `PrivacySettings.svelte` w Ustawieniach (grupy, rozmiary, liczby, potwierdzenia, lista w „Usuń wszystko”). Teksty w 10 językach.
+  DoD (fizyczny Windows): panel pokazuje config, historię (z „tytułami okien” przy `trackTitles`), tokeny tylko jako „Zapisane”; eksport → plik JSON bez
+  `googleClientSecret`, tokenów i linków ICS; usunięcie historii w trakcie skupienia → sesja kończy się, powiadomienia Windows wracają, aplikacja zostaje
+  w Ustawieniach; „Wyczyść” dane przeglądarki → YouTube wylogowany; „Usuń wszystko” → ustawienia domyślne, brak wpisu autostartu, `shields-restore.json` nietknięty.
+- [~] **SR-46** (B) Logowanie do YouTube dla Premium (ADR-021, priorytet 3 właściciela): `src-tauri/src/youtube_account.rs` (okno `youtube-login` ze stroną
+  Google, bez skryptu i `eval`; wykrycie po samych nazwach ciasteczek youtube.com; odmowa Google po `/signin/rejected`; wylogowanie bez `SOCS`/`CONSENT`;
+  przeładowanie okna `media` przy zmianie konta), komendy `get_youtube_account` / `youtube_sign_in` / `youtube_sign_out` + `youtube://account`;
+  UI: wiersz „Konto YouTube” w Ustawieniach → Dźwięk, linijka w wyborze muzyki, po zalogowaniu cały YouTube w oknie `media` (`engine.ts`). Teksty w 10 językach.
+  DoD (fizyczny Windows, konto z Premium): zalogowanie → okno samo się zamyka, „Zalogowano” → Lofi Girl i zwykły link YouTube grają w oknie `media` bez
+  reklam; wylogowanie → „Nie zalogowano”, przy następnym oknie YouTube nie ma znów pytania o ciasteczka; w logach brak nazw kont i wartości ciasteczek.
+- Funkcje beta: iskierki, seria i małe kroki ([ADR-022](DECISIONS.md#adr-022-funkcje-beta-iskierki-seria-i-małe-kroki), 2026-10-13; wszystko za
+  `Config.betaFeatures`, domyślnie wyłączone; bez bety aplikacja działa jak wcześniej):
+  - [x] **R-00** (B, `/sync-contract`) Kontrakt: `RewardsConfig` i enumy, DTO nagród i kroków, 6 komend, `rewards://changed`, pola snapshotu / podsumowania / okienka,
+    `PrivacyItemKind::Rewards`, testy formatu, bindingi.
+  - [x] **R-01** (B) `timing.rs` (`sparkUnitSecs` / `rewardMinBlockSecs` w profilu, stałe `REWARD_DAY_START_MINUTE`, `FULL_BLOCK_PERCENT`, `BREAK_TAKEN_PERCENT`);
+    `config.rs` (`RewardsConfig::normalized`: dni wolne bez powtórzeń, pon..niedz, najwyżej 6; `rewards_active` / `steps_active` / `streak_counting`).
+  - [x] **R-02** (B) `session.rs`: małe kroki (`normalize_steps`, `SetSteps`, `SetStepDone`, przeniesienie otwartych kroków po Stop), `Effect::Progress`
+    w miejscach z ADR-022 (testy `old_effects_keep_their_order` i dokładnej kolejności każdego przejścia); `stats::summarize` kopiuje kroki.
+  - [x] **R-03** (B) `focus-core/src/rewards.rs`: iskierki z limitami, cel dnia, poziomy, seria z dniami wolnymi, wstrzymaniem i dniami oddechu, powrót,
+    niespodzianki z gwarancją perły, „skupienie jest święte”, widok, naklejki (P1); testy wszystkich 19 grup ze specyfikacji.
+  - [x] **R-04** (B) `clock::local_date_time` (`GetLocalTime`) + test pól; `Chime::Pop` / `Sparkle` / `Fanfare` w każdym pakiecie (syntetyczne) + testy.
+  - [x] **R-05** (B) Powłoka: `src-tauri/src/rewards.rs` (wczytanie z naprawą, wątek zapisu, podgląd demo, `pending`, rewizja, zmiana dnia, bramka dźwięków),
+    `effects.rs` (`Progress`, `NotifyContext`, linia nagród i następny krok w okienkach, `SessionSummary.sparks`), `session_actor.rs` (kroki, czyszczenie planu
+    po wyłączeniu, zmiana dnia co 60 s, flush przy wyjściu), `commands.rs` (6 komend, `store_config`, `mark_goal_done`), próbki okienek w `dev.rs`
+    (+ `dev_sample_next_step` w 10 językach), panel prywatności przez usługę nagród.
+  - [x] **R-06** (B) Dokumentacja: ADR-022 (status, powłoka, odstępstwa), ARCHITECTURE §6.14 (tabela faktów, reguły, usługa, `rewards.json`), ten plik.
+    Zmiana CLAUDE.md (zakres „ADR-013 … ADR-022”, struktura, zasada 11) czeka na zatwierdzenie (notatka 2026-10-13, „funkcje beta”).
+  - [~] **R-07…R-13** (B) UI: stan i choreografia, komponenty nagród, miejsca w Skupieniu / Podsumowaniu / historii / okienku / Ustawieniach, maskotka, tokeny
+    w 7 motywach, teksty w 10 językach, sekcja Deweloper; P1: album naklejek, nastrój „razem”, plakietka w nawigacji (równoległa runda).
+  - [~] **R-14…R-15** (B) Atlas póz (`tools/mascot/poses-atlas.*`, `static/mascot/poses-*`, tylko skalowanie) i wyświetlanie póz (równoległa runda).
+
+- Statystyki tygodnia i heatmapy ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 3, 2026-10-13):
+  - [x] **W-01** (B) Rdzeń: `focusSpans` w `Session` / `SessionTotals` / `summarize` (zegar kalendarzowy, bez pauz i luk, najwyżej 256),
+    `stats::WeekAggregator` (tygodnie ISO, czas lokalny z przesunięciem dla każdej godziny, heatmapa tygodnia i 8 tygodni, top aplikacji, kategorie)
+    + testy (zmiana czasu, stare linie bez przedziałów, uszkodzone dane, remisy).
+  - [x] **W-02** (B) Powłoka: `weekly.rs` (`get_weekly_stats`, `history://changed`), `Persistence::scan_history` (strumieniowo, ostatnie 64 MB),
+    `clock::utc_offset_minutes_at` (Windows), zdarzenie po zapisie sesji, „Zrobione?”, usunięciu historii (też w panelu prywatności) i zmianie etykiet / `keepHistory`.
+  - [x] **W-03** (B) UI: sekcja „Ten tydzień” na Podsumowaniu (`src/lib/components/week/`, `state/weekly.svelte.ts`, `src/lib/week.ts`), chipy etykiet,
+    teksty w 10 językach (`week`, `errors.codes["stats.week"]`, `errors.areas.stats`, `fields.appCategories`), „Sample week” na stronie Deweloper, ADR-023 i §6.15.
+
+- Wyjątki odcienia i harmonogram słońca ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 1, 2026-10-13):
+  - [x] **TX-01** (B) Rdzeń: `sun.rs` (NOAA, `CITIES` 43, `utc_offset_minutes`, `utc_date`), w `tint.rs` `tint_window` / `window_level`,
+    `is_pause_app` / `pause_reason`, `TintExceptions` (`PAUSE_RELEASE_MS`, `PAUSE_FADE_MS`) + testy (znane wschody i zachody ±2 min, polarne, histereza, przejścia).
+  - [x] **TX-02** (B) Powłoka: `tint.rs` (okno dnia z daty lokalnej i przesunięcia, `Watch`: próbkowanie okna na pierwszym planie ≤ 1 Hz w wątku odcienia
+    tylko w ciepłym oknie, pełny ekran z `notification_state`, przejście co 100 ms, ten sam poziom ponownie co 30 s) + testy na fałszywej sondzie;
+    `list_sun_cities` działa.
+  - [x] **TX-03** (B) UI: karta odcienia (harmonogram, miejsce, współrzędne, dzisiejszy zachód i wschód, wyjątki, status wstrzymania), walidacja lokalna,
+    teksty w 10 językach, próbka na stronie Deweloper, ADR-023 i §6.15.
+
+- Kreator pierwszego uruchomienia ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 4, 2026-10-13):
+  - [x] **FR-01** (B) Rdzeń i powłoka: `Config::first_run()` (`onboardingDone: false`) tylko przy braku `config.json` (`Persistence::load_config`; także po resecie
+    fabrycznym), uszkodzony plik i „Usuń wszystko” bez kreatora; testy w `config.rs` i `persistence.rs`.
+  - [x] **FR-02** (B) UI: `state/onboarding.svelte.ts` + `components/onboarding/` (4 kroki na istniejących komponentach Ustawień, poza z „boing” i dymek
+    litera po literze, Enter / Esc z potwierdzeniem / Tab uwięziony, sesja z zasobnika widoczna ze Stop), `CloseButtonSetting` wspólny z Ustawieniami,
+    `mascot-boing` w `app.css`, teksty w 10 językach, „Show first-run wizard” na stronie Deweloper, §6.15. Sprawdzone w przeglądarce z atrapą IPC
+    (960 × 640, 7 motywów); DoD na fizycznym Windows: świeża instalacja (albo reset fabryczny) → kreator; istniejący config → brak kreatora.
+
+- Inteligentne planowanie przerw ([ADR-023](DECISIONS.md#adr-023-wyjątki-odcienia-inteligentne-przerwy-statystyki-tygodnia-i-kreator-pierwszego-uruchomienia), część 2, 2026-10-13):
+  - [x] **SB-01** (B) Rdzeń: `calendar::fit_break` / `plan_smart_breaks` / `FirstBreak` / `smart_break_view`, granice w `timing.rs`,
+    `Input::SetSmartMeetings` i dopasowanie bieżącego bloku w `session.rs` + testy (bez spotkania, w środku focusu, w środku przerwy, jedno po drugim,
+    całodniowe, z wyborem, zmiana czasu, profil demo, pauza i luka snu, Pomiń / Stop, blok stały).
+  - [x] **SB-02** (B) Powłoka: lista spotkań do aktora (`ActorCmd::SetSmartMeetings`), plan kolejnych bloków (`SessionPlan::smart_plan`),
+    `CalendarStatus.smartBreaks` / `smartOptOuts`, `set_smart_break_opt_out` (`optOuts` w `meeting-choices.json`) + testy w `calendar/model.rs`.
+  - [x] **SB-03** (B) UI: przełącznik w karcie „Czas”, linia pod zegarem z „Zapytaj mnie”, przesunięte przerwy w karcie spotkań, teksty w 10 językach,
+    próbka na stronie Deweloper, ADR-023 i §6.15. DoD na fizycznym Windows z połączonym kalendarzem: spotkanie w przerwie → przerwa przesunięta,
+    „Zapytaj mnie” → zwykłe pytanie.
+
+- [x] **INT-23** (B) Runda integracji ADR-023 (2026-10-13): wszystkie bramki na połączonym drzewie (fmt, clippy, testy, `npm run check`, `npm run build`),
+  rejestracja komend i `names.ts` zgodne, układ Skupienia w 960 × 640 (przełącznik inteligentnych przerw przy czasach, maskotka, pasek „Dziś”);
+  panel prywatności liczy też wpisy „Zapytaj mnie” (`optOuts`) w „Odpowiedziach o spotkania”; karta świętowania po bloku, który nic nie dał,
+  pokazuje sam podpis bez „+0” (`recapPlain` / `sessionPlain` w 10 językach); dokumentacja: status ADR-023, §6 / §6.15, CLAUDE.md (zakres i Struktura).
+
+**Bramka speedrunu** (na zainstalowanym buildzie, fizyczny Windows): ✅/❌
+- [ ] `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` zielone; bindingi zregenerowane bez różnic; `npm run check` zielone
+- [ ] `--demo`: Start → 40 s → dzwonek + toast, osłony w dół, muzyka gra dalej → 20 s → dzwonek, osłony w górę → Stop → podsumowanie z wykresem
+- [ ] Pauza / Wznów / Pomiń fazę / Stop z UI i z traya; dwukrotny Stop = jedno podsumowanie; schowanie okna do zasobnika nie przerywa muzyki
+- [ ] muzyka: stream Lofi Girl (w oknie YouTube), link YouTube Music, playlista, folder z mp3, szum; link YouTube bez zgody na osadzanie → okno YouTube; link nieodtwarzalny → następny + komunikat
+- [ ] rozszerzenie w Chrome i Edge: `reddit.com` w Focus → „Wracaj do pracy”, w przerwie otwiera się normalnie; bez rozszerzenia (brak odpytania mostu przez 90 s) → nudge po tytule okna
+- [ ] powiadomienia Windows: wyciszone w Focus, włączone z powrotem w przerwie, po Stop, po „Zakończ”, po kill + ponownym starcie i po kill + ponownym logowaniu (RunOnce); DND włączone przed focusem zostaje nietknięte
+- [ ] Teams (jeśli tenant pozwala): logowanie kodem, DND w Focus, wyczyszczone w przerwie i po Stop
+- [ ] uśpienie laptopa w Focus i w przerwie → auto-pauza, czas luki nie liczy się do skupienia
+- [ ] instalator NSIS: instalacja per-user poza repo, skrót, start bez sieci (szum/folder), folder rozszerzenia otwiera się z Ustawień, autostart startuje zminimalizowany do zasobnika
+- [ ] pierwsze X pyta o zasobnik; „Tak” → okienka przy zmianie fazy (bez kradzieży fokusu, także przy włączonym „Nie przeszkadzać”); „Nie” → X kończy aplikację i osłony schodzą
+- [ ] ciepło ekranu (ADR-015): domyślnie wyłączone; Oświetlenie nocne według harmonogramu i w podglądzie, zrzut ekranu w normalnych kolorach; własne ustawienia
+  Oświetlenia nocnego wracają po wyłączeniu, po „Zakończ”, po kill + starcie i po kill + logowaniu; tryb gamma na każdym monitorze, kalibracja wraca
+- [ ] świeża instalacja bez sieci: domyślnie gra muzyka z zestawu (Open Lo-Fi); motywy, animowana nawigacja i dzwonki (także własny plik) działają; przy przerwie przypomnienie i porada
+- [ ] historia: bez elementów powłoki Windows (menu Start, pasek zadań, pulpit); tytuły okien w podpowiedzi wykresu i bez nich po wyłączeniu; „Nie zapisuj historii”; „Usuń historię” z potwierdzeniem
+- [ ] launchery: Steam/Epic zamknięte na start focusa (także w drugim cyklu), usługi nietknięte, w przerwie nie wracają
+- [ ] Teams (jeśli tenant pozwala): „Wyświetlaj jako offline” i własne DND zostają nietknięte przez całą sesję
+- [ ] kalendarze (ADR-016): Microsoft (jeśli tenant pozwala na `Calendars.Read`), Google (konto testowe) i link ICS ze spotkaniem cyklicznym → kolizje na stronie Skupienie przed Start;
+  `extend` (focus do końca spotkania, muzyka wyciszona), `pauseAtBreak` (przerwa w pauzie do Wznów), `ignore`, `remindLater` (okienka 30 / 20 / 10 min, ostatnie bez „przypomnij później”);
+  Pomiń fazę i Stop działają w przedłużonym focusie; po restarcie Google i ICS działają bez ponownego logowania; w `config.json` i w logach brak tokenów, linków ICS i tematów
+- [ ] „Co dalej?” (ADR-017): GitHub (token fine-grained), GitLab, Jira Cloud, Azure DevOps i Linear z tokenami tylko do odczytu → przypisane zadania zawsze nad
+  prośbami o review i wzmiankami, a te nad powiadomieniami, z powodami; nowe pozycje w trakcie focusa nie dają okienek ani toastów, w przerwie jedno okienko z liczbą;
+  „Ustaw jako cel” → cel pod minutnikiem → Stop → „Zrobione?” zapisane w historii; w `config.json` i w logach brak tokenów i tytułów zadań; zły token → błąd tylko tego narzędzia
+- [ ] maskotka (ADR-018): mruga, reaguje na start / przerwę / cykl / wcześniejszy Stop / nudge, „mówi” poradę w przerwie; w okienku wygląda zza krawędzi; 8-bit pikselowy;
+  ograniczenie animacji → bez ruchu; wyłączona w Ustawieniach → nigdzie jej nie ma; grafika bez zmian względem `static/mascot/`
+- [ ] gra / film na pełnym ekranie albo tryb prezentacji w trakcie zmiany fazy → okienko czeka i pojawia się po wyjściu z pełnego ekranu; `focusmode.exe --demo` przy działającej
+  aplikacji w Idle → tryb demo, w trakcie sesji → toast; wzorzec odrzucany przez Chrome → ostrzeżenie w Ustawieniach; autostart po starcie ma `--autostart`
 
 ## Role
 
@@ -157,3 +460,188 @@ Nowa maszyna: `scripts\setup-windows.ps1`.
   - `productName`/tytuł okna = `FocusMode`, identyfikator `com.focusmode.app`; profil `release` przeniesiony do root `Cargo.toml` (workspace).
   - `npm audit`: 3 × low (cookie w SvelteKit, dotyczy serwera; my jesteśmy statycznym SPA) — świadomie bez `audit fix --force` (SvelteKit 3 = breaking).
 - [2026-10-05] Na VM (VirtualBox) `npm install` potrafi paść na `Assertion failed: new_time >= loop->time` (libuv + niestabilny zegar). Objaw: brak `package-lock.json` albo uszkodzony plik `.node` („not a valid Win32 application”). Lekarstwo: `rm -rf node_modules` i ponowny `npm install`.
+- [2026-10-12] (B→A) **Pivot produktu: speedrun, termin jutro** ([ADR-013](DECISIONS.md#adr-013-speedrun-pivot-produktu), sekcja „Speedrun” na górze tego pliku). Co się zmieniło:
+  - Nowy zakres od właściciela produktu: czasy ustawia użytkownik (domyślnie 45/15) w pętli Focus ⇄ Przerwa do Stop; muzyka ze streamu (Lofi Girl na YouTube), linków YouTube/YouTube Music, folderu albo szumu; na czas focusa osłony (wyciszenie powiadomień Windows, Teams DND, blokada stron przez rozszerzenie przeglądarki, nieusypianie), zdejmowane w przerwie; muzyka w przerwie gra dalej; wykres produktywności według procesu po Stop.
+  - Odpadają (odłożone): pełnoekranowe okna przerwy, ćwiczenia i planer, ostrzeżenie, tryb spotkania, tint/gamma, gatunki w rodio. Muzyka gra w WebView, rodio zostaje tylko do dzwonków.
+  - **Crate'y `focus-core`, `focus-audio`, `focus-platform` i twoje moduły w `src-tauri/src/` (`session_actor.rs`, `effects.rs`, `persistence.rs`) zostały zaimplementowane w gałęzi `b/speedrun-mvp`**, razem z nowym `api.rs`. Kontrakt nie poszedł osobnym PR-em (wyjątek opisany w ADR-013). Proszę o review, zwłaszcza `session.rs` (tabela faz i kolejność efektów), DND Windows (COM `IQuietHoursSettings` + odczyt WNF) w `focus-platform/src/notifications.rs` i Teams.
+  - Nowe zależności (już w manifestach i lockfile'ach): `windows` 0.62 + `reqwest` 0.13 w `focus-platform`; pluginy Tauri dialog/notification/single-instance/autostart/log, `tokio`, `tiny_http`, `anyhow`, `log` w `src-tauri`; pluginy JS dialog/notification/autostart/log.
+  - **Kompilacja nie jest zweryfikowana**: na maszynie B moduł antywirusa ESET (`ebehmoni.dll`) wywala procesy przy wyjściu, w tym build scripty cargo. Po pullu uruchom `/check` (fmt, clippy, testy); `cargo test -p focus-core` zregeneruje `src/lib/bindings/` (na razie pisane ręcznie w formacie ts-rs), więc `git diff src/lib/bindings` powinien być pusty.
+  - Do wspólnej decyzji: statusy starych tasków M0–M4 (porzucić albo przenieść po demo) i aktualizacja DESIGN/ARCHITECTURE (SR-09).
+- [2026-10-13] (B→A) Kontrakt: okno YouTube — komendy open_media_window / control_media_window / get_media_window, event media://window (MediaWindowStatus z rewizją); powód: Lofi Girl i część YouTube Music odmawia osadzania (błąd 150).
+- [2026-10-13] (B→A) Kontrakt: websiteblacklist.txt — komendy get_blocklist / open_blocklist_file / reload_blocklist, event blocklist://changed (BlocklistInfo z rewizją), BridgeState.patterns, usunięte shields.blocklist z Config.
+- [2026-10-13] (B→A) Kontrakt: resolve_close, get_system_language, get_popup/popup_action + popup://show, get_tint_status/preview_tint + tint://changed, app://close-requested; Config: language, closeToTray, phasePopups, tint, shields.closeLaunchers/launchers; ShieldStatus.launchers/closedLaunchers; BlocklistIssue.code.
+- [2026-10-13] (B→A) Kontrakt, runda 2a (ADR-015): komendy import_chime / remove_custom_chime / list_library_tracks / clear_history (bez nowych eventów); Config: theme, chimeSound, customChimes, breakReminders, repeatReminders, trackTitles, keepHistory; TintConfig.mode (TintMode: nightLight | gamma); TintStatus.mode / capped; PopupInfo.reminder; AppUsage.titles (TitleUsage); MusicSourceKind.library (nowe domyślne źródło). Zmiana API w core: `UsageAccumulator::add_sample(process, title, idle, ms)` oraz nowe `is_ignored_process` / `is_shell_surface`, `reminder_for_break`, `kelvin_for_level` / `rgb_gain_for_kelvin`.
+- [2026-10-13] (B→A) Overlay odcienia odrzucony przez właściciela produktu (ADR-015). Ciepło daje Oświetlenie nocne Windows (domyślnie, nieudokumentowany zapis ustawień użytkownika w rejestrze) albo gamma ramp z kopią bazowej rampy każdego monitora, czyli wersja S-02 zgodna z R08. Proszę o review `focus-platform/src/night_light.rs` i `gamma.rs` oraz powrotu kolorów po kill (plik przywracania + RunOnce). S-02 i A-07 to twoje linie: zdecyduj, czy oznaczyć je jako zastąpione przez SR-19.
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-015 („Co zmienia”: zasada 6 — odcień tylko przez Oświetlenie nocne albo gammę, nigdy overlay; zasada 11 — tytuły okien tylko przy `trackTitles`, lokalnie, nigdy w logach; Struktura — nowe moduły) czeka na zatwierdzenie przez użytkownika. Do tego czasu CLAUDE.md opisuje stan z ADR-014, a przy różnicy wygrywa ADR-015.
+- [2026-10-13] (B→A) Kontrakt, kalendarze (ADR-016): komendy `get_calendar` / `refresh_calendar` / `set_meeting_choice { meetingId, choice }` / `connect_google` / `disconnect_calendar { source }` /
+  `set_ics_urls { urls }` / `get_ics_urls`, event `calendar://changed` (`CalendarStatus` z rewizją); DTO `CalendarConfig`, `CalendarSource`, `MeetingChoice`, `Meeting`, `MeetingConflict`,
+  `CalendarSourceStatus`, `CalendarStatus`, `MeetingHoldView`; `Config.calendar`; `SessionSnapshot.musicMuted` / `meetingHold` (`#[serde(default)]`); `PopupKind.meetingReminder` / `breakHeld`;
+  `PopupInfo.meeting` (`#[serde(default)]`). Zmiany API w core (twoje pliki, proszę o review `session.rs`): nowy moduł `calendar.rs` (`plan_breaks`, `conflicts`, `reminder_schedule`,
+  `BreakWindow`, `MAX_PLANNED_BREAKS`); `timing::MEETING_REMINDER_LEAD_MINUTES`; `config::CalendarConfig::normalized` / `horizon_ms`, `is_google_client_id`;
+  `session::MeetingHold` + `MeetingHold::from_meeting`, `Input::SetMeetingHolds`, `NotifyKind::BreakHeld { subject }` (**`NotifyKind` nie jest już `Copy`**),
+  `Session::remaining_ms` / `meeting_holds`. Tabela faz z ADR-013 ma nowy wiersz (Tick po terminie w Focus z blokadą spotkania, ADR-016 pkt 5); Pomiń fazę nigdy nie stosuje blokad.
+  Logowanie Teams prosi teraz też o `Calendars.Read`: rejestracja w Entra ID potrzebuje tego uprawnienia, a stare połączenie trzeba odnowić.
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-016 („Co zmienia”) czeka na zatwierdzenie przez użytkownika; do tego czasu przy różnicy wygrywa ADR-016. Proponowany tekst:
+  - zasada 2, dopisek: „Wyjątek: pory przypomnień o spotkaniach (`MEETING_REMINDER_LEAD_MINUTES` w `timing.rs`, 30/20/10 min) i przedłużenie focusa do końca spotkania (ADR-016).”
+  - zasada 6, pierwsze zdanie: „**Bez pełnoekranowych okien przerwy i ręcznego trybu spotkania** („Jestem na spotkaniu”) — odłożone (ADR-013). Spotkania z kalendarza
+    zmieniają sesję tylko według wyboru użytkownika (`extend`, `pauseAtBreak`), tylko gdy focus dochodzi do terminu, i nigdy nie blokują Pomiń fazę ani Stop (ADR-016).”
+  - zasada 11, pierwsze zdanie: „nic nie opuszcza komputera poza ruchem, który wybrał użytkownik (muzyka, opcjonalnie Graph dla Teams i kalendarza Microsoft, Google Calendar, linki ICS).”
+    i nowe zdanie: „Kalendarze tylko do odczytu. Token Google i linki ICS tylko w plikach szyfrowanych DPAPI (`focus-platform/src/secrets.rs`), nigdy w `config.json` ani w logach;
+    tematy spotkań tylko lokalnie, nigdy w logach, historii, moście ani rozszerzeniu (ADR-016).”
+  - Struktura: `focus-core` — „`calendar.rs` (planowane przerwy, kolizje ze spotkaniami, pory przypomnień 30/20/10)”, a przy `session.rs` „blokady spotkań `MeetingHold`”;
+    `focus-platform` — „`calendar/` (`google.rs`: OAuth loopback + PKCE i Calendar API; `ics.rs`: pobieranie i parser iCalendar ze spotkaniami cyklicznymi),
+    `secrets.rs` (pliki szyfrowane DPAPI), `teams` także z kalendarzem Microsoft (`Calendars.Read`)”; powłoka — „`calendar/` (synchronizacja kalendarzy, w `model.rs` czysta logika: łączenie źródeł, wybory, przypomnienia; kolizje,
+    wybory w `meeting-choices.json`, okienka `meetingReminder`, `Input::SetMeetingHolds`, `calendar://changed`)”; `src/` — „`src/lib/state/calendar.svelte.ts`,
+    komponenty `MeetingConflicts.svelte` (Skupienie), `MeetingHoldBanner.svelte` i `CalendarSettings.svelte` (Ustawienia → Kalendarze)”.
+- [2026-10-13] (B→A) Kontrakt, kalendarze — poprawki: `CalendarConfig.googleClientSecret` (string, domyślnie `""`, stary config wczytuje się bez zmian; walidacja w core `is_google_client_secret`: przycięty, najwyżej 100 znaków `[A-Za-z0-9_-]`, pole błędu `calendar.googleClientSecret`; leży w `config.json`, bo Google dokumentuje sekret klienta „Desktop app” jako niepoufny, ale nie trafia do logów) i `MeetingConflict.tooLong` (bool, `#[serde(default)]`). Bez nowych komend i eventów; zmienione zachowanie: `teams_connect` prosi o `Calendars.Read` tylko przy włączonym `calendar.microsoft` (platforma: `TeamsClient::begin_login(calendar: bool)`, `teams::login_scopes`), a `disconnect_calendar(microsoft)` nie usuwa już tokenu Teams, tylko wyłącza `calendar.microsoft` (zapis jak `update_config`) i czyści spotkania Microsoft. Zmiany w core (twoje pliki, proszę o review `session.rs`): `timing::MAX_MEETING_HOLD_MS` (4 h), `calendar::meeting_hold_allowed`, `MeetingHold::is_usable` / `from_meeting` odrzucają spotkania dłuższe niż 4 h (na obu zegarach), więc nie przedłużają focusa, nie wstrzymują przerwy i nie wyciszają muzyki; test `meeting_holds_with_extreme_values_never_panic` przepisany pod ten limit, nowy `meetings_longer_than_4_hours_never_hold_the_session`. Nowy kod błędu powłoki `calendar.meetingTooLong` (`set_meeting_choice` z `extend` / `pauseAtBreak` dla takiego spotkania).
+- [2026-10-13] (B→A) Kontrakt, „Co dalej?” (ADR-017): komendy `get_work` / `refresh_work` / `set_work_token { source, token | null }` / `set_session_goal { goal | null }` /
+  `mark_goal_done { sessionId, done }`, event `work://changed` (`WorkStatus` z rewizją); DTO `WorkConfig`, `WorkSource`, `WorkItemKind`, `WorkReason`, `WorkItem`,
+  `WorkSourceStatus`, `WorkStatus`, `SessionGoal`; `Config.work` (stary config: narzędzia wyłączone); `SessionSnapshot.goal`, `SessionSummary.goal` / `goalDone`,
+  `PopupInfo.workCount` (wszystkie `#[serde(default)]`, więc stara historia się wczytuje); `PopupKind.workDigest`. Zmiany w core (twoje pliki, proszę o review `session.rs`):
+  nowy moduł `work.rs` (`rank`, `tier`, `is_in_progress`, `normalize_goal`, stałe `MAX_ITEMS` itd.; kolejność progów 1 > 2 > 3 sprawdzona testem na wszystkich kombinacjach cech);
+  `config::WorkConfig::normalized` (w `Config::normalized`) i `normalize_work_url`, stałe `DEFAULT_GITLAB_URL`, `MAX_WORK_URL_LEN`, `MAX_JIRA_EMAIL_LEN`, `MAX_AZURE_ORG_LEN`;
+  `session::Input::SetGoal` (w każdej fazie, bez efektów — tabela faz z ADR-013 bez zmian), `Session::goal()`, nowe pole `SessionTotals.goal` (ustawiane na Stop);
+  `stats::summarize` przenosi cel do podsumowania z `goal_done: None`. Powłoka (twoje `persistence.rs` i `session_actor.rs`): `Persistence::mark_goal_done` przepisuje
+  `history.jsonl` atomowo, `work_token_path` / `work-seen.json`; aktor przyjmuje `ActorCmd::SetGoal` i zgłasza zmiany fazy do `crate::work` (wstrzymywanie nowych pozycji w focusie).
+  Nowe pliki w danych aplikacji: `work-<github|gitlab|jira|azure-devops|linear>-token.bin` (DPAPI) i `work-seen.json` (same identyfikatory).
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-017 („Co zmienia”) czeka na zatwierdzenie przez użytkownika; do tego czasu przy różnicy wygrywa ADR-017. Proponowany tekst:
+  - zasada 11, pierwsze zdanie (razem z propozycją z notatki „kalendarze”): „nic nie opuszcza komputera poza ruchem, który wybrał użytkownik (muzyka, opcjonalnie Graph
+    dla Teams i kalendarza Microsoft, Google Calendar, linki ICS, narzędzia pracy: GitHub, GitLab, Jira, Azure DevOps, Linear).” i nowe zdanie: „Narzędzia pracy
+    tylko do odczytu; tokeny tylko w plikach szyfrowanych DPAPI (`work-<źródło>-token.bin`), nigdy w `config.json` ani w logach; tytuły zadań tylko lokalnie,
+    nigdy w logach, moście ani rozszerzeniu, a toast podaje tylko liczbę. Kolejność „Co dalej?” liczy `focus-core` lokalnie; nic nie trafia do modeli AI (ADR-017).”
+  - Struktura: `focus-core` — „`work.rs` (kolejność „Co dalej?”: progi przypisane → czeka na ciebie → powiadomienia, wynik, powody, cel sesji)”, a przy `session.rs`
+    „cel sesji `Input::SetGoal`”; `focus-platform` — „`work/` (klienci GitHub, GitLab, Jira, Azure DevOps i Linear, tylko odczyt)”; powłoka — „`work.rs`
+    (+ `work/model.rs`: czysta logika, `work/fetch.rs`: pobieranie w osobnych wątkach; synchronizacja co 5 min, `work-seen.json`, wstrzymywanie nowych pozycji
+    w focusie i okienko `workDigest`, `work://changed`)”, a przy `persistence.rs` „`mark_goal_done`”; `src/` — „`src/lib/state/work.svelte.ts`, komponenty
+    `NextUp.svelte` (Skupienie: „Co dalej?”), `SessionGoalLine.svelte` (cel pod minutnikiem) i `WorkSettings.svelte` (Ustawienia → Narzędzia pracy)”.
+
+- [2026-10-13] (B) Zmiany CLAUDE.md z propozycji ADR-015, ADR-016 i ADR-017 (zasady 2, 6, 11 i Struktura) wprowadzone — wynikają wprost z decyzji właściciela produktu (tytuły okien, kalendarze, narzędzia pracy).
+- [2026-10-13] (B→A) Kontrakt, maskotka i poprawki (ADR-018): `Config.showMascot` (bool, domyślnie `true`, stary config → `true`; bez walidacji)
+  i `BlocklistInfo.extensionSkipped` (`string[]`, `#[serde(default)]`). Bez nowych komend i eventów (`extensionSkipped` idzie przez `get_blocklist` + `blocklist://changed`).
+  **Most nie jest już tylko do odczytu**: `POST /v1/report` (`{ "skipped": string[] }`) tylko z originu rozszerzenia + nagłówka `X-FocusMode-Extension: 1` + loopback `Host`,
+  ≤ 500 pozycji po ≤ 500 znaków (treść ≤ ~1,5 MB, czyli najdłuższa możliwa lista); aplikacja zostawia tylko wzorce z bieżącej listy (`blocklist.rs::kept_skipped`). Proszę o review `bridge.rs` (zabezpieczenia)
+  i `popup.rs` (czekanie w czasie prezentacji: `held`, `merge_held`, 5 s / 10 min). Nowe w `focus-platform`: `notification_state::user_is_presenting()`
+  (`SHQueryUserNotificationState`); **`windows` nie ma funkcji `Win32_UI_Shell`**, więc import jest zadeklarowany ręcznie (`windows::core::link!`, `TODO(hackathon)`);
+  po dodaniu tej funkcji do `Cargo.toml` można przejść na `windows::Win32::UI::Shell::SHQueryUserNotificationState`. Aktor (twój `session_actor.rs`):
+  `ActorCmd::UseDemoProfile` (drugie uruchomienie z `--demo`; Idle → profil demo do końca procesu, w sesji toast). Tabela faz z ADR-013 bez zmian.
+- [2026-10-13] (B) Zmiana CLAUDE.md według ADR-018 wprowadzona: zakres (ADR-013…018, maskotka), zasada 10 (maskotki nie przerysowujemy, nie przekolorowujemy,
+  nie obrysowujemy ani nie wektoryzujemy — decyzja właściciela), zasada 11 (most tylko udostępnia stan, z wyjątkiem `POST /v1/report`), Struktura
+  (`src/lib/mascot/`, `static/mascot/`, `art/mascot/`, `tools/mascot/`, `notification_state`, `/v1/report`, czekanie okienek, `--demo` i autostart w `lib.rs`), Komendy.
+- [2026-10-13] (B→A) Kontrakt, tryb dewelopera (ADR-019): `Config.developerMode` (bool, domyślnie `false`, stary config → `false`; bez walidacji),
+  `PopupInfo.sticky` (bool, `#[serde(default)]`; `true` tylko dla przykładowych okienek bez timeoutu), komenda `dev_trigger { action: DevAction } -> ()`,
+  `DevAction` z tagiem `type`: `popup { kind, leadMinutes: number | null, sticky }` | `toast { phase }` | `setRemaining { secs }`. Bez nowych eventów.
+  Na razie komenda to zaślepka (`developerModeOff` przy wyłączonym trybie, inaczej `notImplemented`). Do zrobienia w core (twój `session.rs`, proszę o review):
+  `Input::DevSetRemaining` — faza kończy się za `secs` (1..=długość fazy), zegar monotoniczny i tabela faz ADR-013 bez zmian; w Idle błąd `notRunning` w powłoce.
+  Próbki tylko w pamięci: nic do `history.jsonl` ani `meeting-choices.json` (spotkania `dev-sample-…` → no-op), zero ruchu sieciowego.
+- [2026-10-13] (B→A) Tryb dewelopera, część Rust (ADR-019), proszę o review: w core (twój `session.rs`) `Input::DevSetRemaining { secs }` — przesuwa tylko termin bieżącej fazy
+  (1 s..=długość fazy z przedłużeniem spotkania; w pauzie zamrożony czas do Wznów), bez efektów: faza kończy się na Ticku z efektami z tabeli ADR-013;
+  `Session::check_dev_set_remaining()` → `notRunning` w Idle; 7 nowych testów. Aktor (twój `session_actor.rs`): `ActorCmd::DevSetRemaining` z odpowiedzią
+  (sprawdzenie i input w aktorze, potem nowy plan dla kalendarza). Powłoka: `dev_trigger` w `commands.rs`, próbki w nowym `src-tauri/src/dev.rs`
+  (spotkanie `dev-sample-meeting`, teksty próbek w `texts`), `popup.rs`: `PopupRequest.sample` / `sticky` (próbki od razu, także w czasie prezentacji,
+  nigdy nie czekają; sticky bez timeoutu po załadowaniu strony; „Pomiń fazę” na próbce tylko zamyka), `set_meeting_choice` dla `dev-sample-…` → no-op.
+- [2026-10-13 13:05] (B→A) Git LFS: po `git pull` uruchom raz `git lfs install` i `git lfs pull` (albo `scripts/setup-windows.ps1`), inaczej muzyka, grafiki i ikony będą plikami-wskaźnikami i build Tauri się nie uda.
+- [2026-10-13] (B→A) Kontrakt, panel prywatności (ADR-020) i logowanie do YouTube (ADR-021), na razie same zaślepki `notImplemented` w `commands.rs`:
+  komendy `get_privacy_report -> PrivacyReport`, `open_data_folder`, `export_privacy_data { path }`, `delete_privacy_data { kinds: PrivacyItemKind[] } -> Config`,
+  `delete_all_data -> Config`, `get_youtube_account -> YoutubeAccount`, `youtube_sign_in`, `youtube_sign_out`; eventy `privacy://changed` (`PrivacyReport`)
+  i `youtube://account` (`YoutubeAccount`), oba z rewizją. DTO: `PrivacyItemKind` (18 rodzajów, w core `ALL`, `is_deletable()`, `work_source()`),
+  `PrivacyItem { kind, present, sizeKib: u32 | null, count, deletable, includesTitles }`, `PrivacyReport { revision, folders, items, busy }`,
+  `YoutubeAccount { revision, known, signedIn, signInOpen, browserRejected }`. Bez zmian w `Config`, `session.rs` i tabeli faz. Do zrobienia w powłoce
+  (twoje `persistence.rs` / `session_actor.rs`, proszę o review): usuwanie najpierw zatrzymuje sesję i czeka na zejście osłon (zasada 7), pliki przywracania
+  nigdy nie są usuwane wprost, eksport bez sekretów (`googleClientSecret` puste, bez tokenów i linków ICS). W `api.ts` nowy `pickSaveFile` (okno zapisu,
+  `dialog:default` już je obejmuje). Szczegóły: ARCHITECTURE §6.12–6.13.
+- [2026-10-13] (B→A) Panel prywatności (ADR-020, SR-45) wdrożony: nowe `focus-core/src/privacy.rs` i `src-tauri/src/privacy.rs` (`AppState.privacy`),
+  zaślepki prywatności w `commands.rs` zastąpione (`store_config` jest teraz `pub(crate)`). W twoich plikach małe dodatki do review: `persistence.rs`
+  (`files()`, `clear_meeting_choices`, `clear_work_seen`, `remove_config_leftovers`, testowy `with_test_dirs`), `calendar.rs` (`ClearChoices`),
+  `work.rs` + `work/model.rs` (`ClearSeen`, `Announcer::remember`), `blocklist.rs` (`restore_default`). `session_actor.rs` bez zmian: usuwanie wysyła
+  `ActorCmd::Stop` i czeka (do 8 s) na Idle i `ShieldStatus.active == false`, potem 0,5 s na dopisanie historii. Propozycja do CLAUDE.md (struktura + zasada 11) w ADR-020.
+- [2026-10-13] (B→A) Logowanie do YouTube (ADR-021, SR-46) wdrożone: nowy moduł `src-tauri/src/youtube_account.rs` (`AppState.youtube`), zaślepki
+  YouTube w `commands.rs` zastąpione. W `media_window.rs`: `MediaWindow::reload` (przy zmianie konta), strażnik nawigacji przepuszcza też
+  `accounts.google.<kraj>`, a otwieranie linków w przeglądarce przeszło do `window_util::open_link_externally` (wspólne z oknem logowania).
+  Dla panelu prywatności (`browserData`): `state.youtube.close_sign_in_window(&app)` przed `clear_all_browsing_data()`, potem
+  `state.youtube.refresh(&app, true)`. Proszę o review strażnika nawigacji i usuwania ciasteczek (ARCHITECTURE §6.13).
+- [2026-10-13] (B→A) Utwardzenie mostu (ADR-018, „Uzupełnienie: utwardzenie mostu”; ARCHITECTURE §6.10 „Ochrona HTTP mostu”): `tiny_http` zastąpiony własnym
+  minimalnym serwerem HTTP/1.1 (`src-tauri/src/bridge/http.rs`, Tokio `net` + `io-util`, bez nowych crate'ów; z `Cargo.lock` znikają `tiny_http`, `ascii`, `chunked_transfer`,
+  `httpdate`). Powód: `tiny_http` przy odrzuceniu zapytania „dopijał” zadeklarowaną treść z buforem jej wielkości (2 GB = 2 GB pamięci, `u64::MAX` = panika → abort aplikacji),
+  bez limitów nagłówków i czasu, a błąd `accept` kończył nasłuch. Zachowanie dla rozszerzenia bez zmian (poza `Connection: close`). Testy na gniazdach: `bridge/server_tests.rs`
+  (w testach powłoki jest `#[global_allocator]` liczący największą alokację — tylko `#[cfg(test)]`). Po weryfikacji: nowe połączenie ma 100 ms na zapytanie, zanim nowsze mogą je zamknąć
+  (twardo najwyżej 1024 otwarte; zalew połączeń nie zamyka już nieprzeczytanego zapytania rozszerzenia), jedno przyjęcie na obrót runtime, błąd `accept` samego połączenia
+  bez przerwy i pozwolenie na treść trzymane do końca obsługi zgłoszenia. Proszę o review `bridge/http.rs`.
+- [2026-10-13] (B→A) Kontrakt, funkcje beta: iskierki, seria i małe kroki (ADR-022, R-00; komendy na razie zaślepki `notImplemented` w `commands.rs`):
+  komendy `get_rewards -> RewardsStatus`, `ack_reward_moments { upTo }`, `reset_rewards -> RewardsStatus`, `play_reward_sound { sound: RewardSound }`,
+  `set_session_steps { steps: StepDraft[] }`, `set_step_done { id, done }`; event `rewards://changed` (`RewardsStatus` z rewizją). DTO: `RewardsConfig`, `Weekday`,
+  `DailyGoal`, `CelebrationLevel`, `MicroStep` / `StepDraft` (ręczny `Debug` bez tekstu), `PopupRewards`, `RewardsStatus`, `LevelView`, `TodayView`, `StreakView`,
+  `StreakState`, `DayCell`, `DayMark`, `SessionSparks`, `RewardLine`, `RewardKind`, `Collection`, `SurpriseOdds`, `Rarity`, `StickerId`, `RewardMoment`, `MomentKind`,
+  `RewardSound`. `Config.betaFeatures` (domyślnie `false`) i `Config.rewards` (stary config wczytuje się z wyłączoną betą); `SessionSnapshot.steps`
+  (`#[serde(default)]`, na razie zawsze puste), `SessionSummary.steps` / `sparks` (`#[serde(default, skip_serializing_if)]`: linia historii bez bety bez zmian,
+  w TS `steps?` / `sparks?`), `PopupInfo.rewards` / `nextStep` (na razie `null`). `PrivacyItemKind::Rewards` zaraz po `History` (`ALL` = 19): raport
+  (`rewards.json` + `.bak`, `count` = dni), usuwanie przez nowe `Persistence::clear_rewards` (R-05 przełączy je na `reset_rewards`), eksport z polem `rewards`
+  tylko, gdy plik istnieje (`focus_core::privacy::Export` ma czwarty parametr). UI: pozycja widoczna, gdy plik istnieje albo beta jest włączona; teksty w 10 językach.
+  Uwaga dla R-03: w `api.rs` nazwa `StreakState` to enum widoku (`first | alive | waiting | paused`), więc struktura serii w księdze potrzebuje innej nazwy
+  (np. `StreakLedger`). `Config::normalized` przepuszcza `rewards` bez zmian (`TODO(hackathon)` dla R-01). Szczegóły: ARCHITECTURE §6.14, szkielet ADR-022.
+- [2026-10-13 14:11] (B→A) Kontrakt, strona Deweloper (ADR-019, uzupełnienie): `DevAction` ma dwa nowe warianty, `presentationMode { on }` i `factoryReset`
+  (`dev_trigger` dostaje też `AppHandle`, wywołanie z UI bez zmian). Tryb prezentacji = `TimingProfile::demo()` w działającym procesie (`ActorCmd::SetPresentationMode`,
+  wspólny kod z `UseDemoProfile`; bez zapisu, w trakcie sesji od następnego Startu). Reset fabryczny = `privacy::delete_all` + `Persistence::remove_for_first_start`
+  (`config.json`, pusty `sounds`) + `request_fresh_restart` w `lib.rs` (przez zwykłe wyjście, więc `shutdown` przywraca osłony i kolory; restart bez `--autostart` / `--restore-shields`, czyli z oknem). Druga zmiana: `Config.phasePopups`
+  domyślnie `true` (zapisany wybór zostaje, brak pola = nowa wartość domyślna), a okienko, którego strona się nie załadowała, po limicie bezpieczeństwa
+  pokazuje toast, który zastępuje (`popup.rs`, nigdy oba). Do tego „Inna porada” na karcie „Dobra praktyka” (nowy `src/lib/state/workingTip.svelte.ts`, klucz `idleTips.anotherTip` w 10 językach).
+  Kolejka mowy maskotki (`src/lib/mascot/speech.svelte.ts`): wiadomość niepilna czeka nie tylko na odstęp 8 s, ale też aż bieżąca pokaże ostatnią literę (nie ucina odsłaniania).
+- [2026-10-13] (B→A) Funkcje beta (ADR-022), rdzeń i powłoka (R-01…R-06) wdrożone: zaślepki `notImplemented` usunięte, komendy działają.
+  Rdzeń: `TimingProfile.spark_unit_secs` / `reward_min_block_secs` (literały `TimingProfile { .. }` potrzebują `..normal()`), `Effect::Progress` w
+  wektorach efektów (stare efekty w tej samej kolejności), `Input::SetSteps` / `SetStepDone`, `SessionTotals.steps`, nowy `focus-core/src/rewards.rs`
+  (księga: struktura serii nazywa się `StreakLedger`). Powłoka: `AppState.rewards` / `Effects.rewards` (`RewardsHandle`), `NotifyContext` zamiast `held`
+  w `Effects::dispatch`, `PopupRequest.rewards` / `next_step`, `PopupCmd::Show(Box<PopupRequest>)` (clippy `large_enum_variant`), `ChimeHandle::play_reward`
+  i `reward_sound_wait`, `texts::sample_next_step` (pole `dev_sample_next_step` w 10 plikach `texts/*.rs`). Usuwanie `rewards` w panelu prywatności idzie przez
+  `RewardsHandle::delete_files` (wątek zapisu nagród), `Persistence::clear_rewards` usuwa też `rewards.unreadable-*.json`. Proszę o review `rewards.rs` (rdzeń).
+  Propozycja do CLAUDE.md (do zatwierdzenia przez właściciela): zakres „ADR-013 + ADR-014…022”; w Strukturze `rewards.rs` (iskierki, cel dnia, poziomy,
+  seria, niespodzianki, „skupienie jest święte”), małe kroki w `session.rs`, `src-tauri/src/rewards.rs` (usługa, `rewards.json`, wątek zapisu, podgląd demo),
+  `src/lib/components/rewards/`, `src/lib/rewards/`, `src/lib/state/rewards.svelte.ts`, `static/mascot/poses-*`, `tools/mascot/poses-atlas.*`;
+  zasada 11: `rewards.json` tylko liczby, numery dni i id sesji (także przy wyłączonym `keepHistory`), teksty kroków jak tytuły celów sesji.
+- [2026-10-13 16:43] (B→A) Kontrakt ADR-023 (wyjątki odcienia, inteligentne przerwy, statystyki tygodnia, kreator pierwszego uruchomienia; sam kontrakt,
+  szczegóły w ARCHITECTURE §6.15): komendy-zaślepki (`notImplemented`) `list_sun_cities -> SunCity[]`, `set_smart_break_opt_out { meetingId, optOut } -> CalendarStatus`,
+  `get_weekly_stats { weekStart } -> WeeklyStats`; event `history://changed` (`HistoryChanged { revision }`, jeszcze nie wysyłany). Config: `smartBreaks` (false),
+  `appCategories` (`BTreeMap<String, AppCategory>`, klucze małymi literami), `onboardingDone` (domyślnie **true**, także przy braku pola; nowe
+  `Config::first_run()` z `false` — powłoka ma go użyć tylko, gdy `config.json` nie istnieje: to jeszcze do zrobienia w `persistence.rs` przy kreatorze).
+  `TintConfig`: `schedule` (`fixed | sun`), `location: Option<TintLocation>` (`f64`, więc `TintConfig` nie ma już `Eq`), `pauseForApps` (true), `pauseApps`
+  (`tint::DEFAULT_PAUSE_APPS`, 17 nazw; „lightroom.exe (Classic)” to ten sam wpis co `Lightroom.exe`, bo porównanie jest bez wielkości liter), `pauseForFullscreen` (false);
+  walidacja w `config.rs` (`tint.pauseApps`, `tint.location.latitude` / `longitude` / `city`, `appCategories`). `TintStatus`: `pausedBy`, `schedule`
+  (`TintScheduleState`), `windowStartMinutes` / `windowEndMinutes` (na razie stałe godziny). `CalendarStatus.smartBreaks` / `smartOptOuts` (puste),
+  `SessionSnapshot.smartBreak` (`None`; literały `SessionSnapshot { .. }` potrzebują tego pola), `SessionSummary.focusSpans` (`skip_serializing_if`, w TS opcjonalne;
+  `stats::summarize` na razie zostawia puste). Stałe: `stats::RECENT_WEEKS` (8), `stats::TOP_APPS_PER_WEEK` (10), `config::MAX_PAUSE_APPS` / `MAX_PROCESS_NAME_CHARS` /
+  `MAX_CITY_ID_CHARS` / `MAX_APP_CATEGORIES` / `LATITUDE_RANGE` / `LONGITUDE_RANGE`. TS: `api.ts` ma `listSunCities`, `setSmartBreakOptOut`, `getWeeklyStats`,
+  `onHistoryChanged` i `watchWeeklyStats` (protokół ADR-012 dla gettera z parametrem); `IDLE_SNAPSHOT` i próbka kalendarza dostały nowe pola. Szkielet ADR-023 w DECISIONS.
+- [2026-10-13] (B→A) Statystyki tygodnia (ADR-023 cz. 3) wdrożone: `get_weekly_stats` działa, `history://changed` jest wysyłany. Rdzeń: `SessionTotals.focus_spans`
+  (literały `SessionTotals { .. }` potrzebują pola), `stats::WeekAggregator` / `weekly_stats` / `parse_local_date` / `iso_week`, `stats::MAX_FOCUS_SPANS`;
+  `rewards::days_from_civil` / `civil_from_days` / `days_in_month` są teraz `pub(crate)`. Platforma: `clock::utc_offset_minutes_at` (nowa cecha crate'u
+  `windows`: `Win32_System_Time`, bez nowej zależności). Proszę o review `stats.rs` (część tygodniowa) i `record_focus_span` w `session.rs`.
+- [2026-10-13] (B→A) Wyjątki odcienia i harmonogram słońca (ADR-023 cz. 1) wdrożone. Rdzeń: nowy moduł `focus_core::sun` (NOAA, `CITIES`, `utc_offset_minutes`,
+  `utc_date`); w `tint.rs` `tint_window` / `window_level` (`tint_level` zostaje dla stałych godzin), `pause_reason`, `TintExceptions`, stałe `PAUSE_RELEASE_MS` /
+  `PAUSE_FADE_MS`. Powłoka: wątek odcienia sam próbkuje okno na pierwszym planie (≤ 1 Hz, tylko w ciepłym oknie z włączonym wyjątkiem; tracker próbkuje tylko
+  w focusie) i woła `Engine::set` ponownie przy tym samym poziomie najwyżej co 30 s. `list_sun_cities` zwraca listę. Proszę o review `sun.rs` i `Watch` w `src-tauri/src/tint.rs`.
+- [2026-10-13] (B→A) Kreator pierwszego uruchomienia (ADR-023 cz. 4) wdrożony, bez nowych komend: `Persistence::load_config` zwraca `Config::first_run()`
+  tylko przy braku `config.json`, flaga trafia na dysk z pierwszym zapisem configu. UI: `src/lib/state/onboarding.svelte.ts`, `src/lib/components/onboarding/`,
+  wspólny `CloseButtonSetting.svelte` (Ustawienia → Okno używa go teraz też), animacja `mascot-boing` przeniesiona z `FocusMascot.svelte` do `app.css`,
+  `data-session-controls` na grupie przycisków Skupienia (kreator ustawia tam fokus). Propozycja do CLAUDE.md (do zatwierdzenia przez właściciela):
+  w Strukturze `src/lib/components/onboarding/` i `src/lib/state/onboarding.svelte.ts` (kreator pierwszego uruchomienia, ADR-023).
+- [2026-10-13] (B→A) Inteligentne przerwy (ADR-023 cz. 2) wdrożone. Rdzeń: `calendar::fit_break` liczy dolną granicę jako `min(smart_min_focus_ms, focus)`
+  (focus krótszy niż 10 min może się tylko wydłużyć); nowe `Input::SetSmartMeetings(Vec<SmartMeeting>)` i pola `Active::smart_delta_ms` / `smart_view` /
+  `smart_fixed` w `session.rs` (dopasowanie przesuwa tylko termin bieżącego bloku, efekty bez zmian). Powłoka: `SessionPlan` ma pole `smart` i nie jest już
+  `Copy`; `PlanKey` w aktorze też nie; nowe `ActorCmd::SetSmartMeetings`, `CalendarCmd::SetSmartOptOut`; `StoredChoices.optOuts` (serde default, pomijane,
+  gdy puste); `SessionPlan::breaks` jest teraz tylko testowe (plan idzie przez `smart_plan`). Usunięty pomocnik `not_implemented` w `commands.rs`
+  (żadna komenda ADR-023 już go nie używa). Proszę o review `fit_break` i `Active::refit_smart`.
+- [2026-10-13] (B→A) Kontrakt ADR-024 (kolekcja beta: motywy i dźwięki tła do odblokowania, R24-00). Nowe DTO w `api.rs`: `RewardTheme`, `AmbienceLayer`,
+  `Season`, `AmbienceConfig`, `AmbienceMix`, `UnlockRule`, `UnlockState`, `UnlockProgress`, `SeasonWindow`, `ThemeUnlock`, `AmbienceUnlock`, `UnlocksView`;
+  pola `Config.rewardTheme` / `ambience`, `RewardsStatus.unlocks`, `RewardMoment.unlockedThemes` / `unlockedAmbiences` (wszystkie `serde(default)`);
+  nowy moduł `focus-core/src/unlocks.rs` (katalog z regułami, `easter_sunday`, `season_window`, `window_month`, `view_stub`). Bez nowych komend i eventów.
+  Do zrobienia w części A: pola księgi `unlocks` / `seasons` w `rewards.json` (id jako tekst), ocena odblokowań przy każdym fakcie (nie w podglądzie),
+  prawdziwy widok zamiast `view_stub`, momenty z odblokowaniami, odrzucenie zablokowanego `rewardTheme` w `update_config` i `rewardTheme = null` po
+  `reset_rewards` / usunięciu `rewards` w panelu prywatności. UI: motyw na ekranie liczy `effectiveTheme` (`src/lib/themes/catalog.ts`) w obu oknach;
+  okienko `popup` czyta `get_rewards` tylko do odczytu.
+- [2026-10-13] (B→A) ADR-024 część A (rdzeń + powłoka) wdrożona, kontrakt bez zmian. Rdzeń: `Ledger.unlocks` / `seasons` (`UnlockRecord`,
+  `SeasonProgress`, `MAX_UNLOCK_RECORDS`, `MAX_SEASON_RECORDS`), w `unlocks.rs`: `Unlockable`, `key` / `parse_key`, `season_on`, `window_view`,
+  `record_goal_day`, `evaluate`, `view(ledger, today, level)` (poziom pokazany w statusie, nie z sumy: w focusie nic nie wychodzi wcześniej),
+  `check_reward_theme`, `normalize`; `view_stub` usunięty. `rewards::catch_up(state, today) -> usize` (bez `rules`: powłoka woła ją tylko przy
+  włączonych nagrodach). Powłoka: nadrabianie przy wczytaniu, `RewardsHandle::is_theme_unlocked`, `commands::clear_reward_theme` (reset i panel
+  prywatności). Dla części D: `reset_rewards` zwraca tylko status, więc po `rewards.reset()` UI powinno zrobić
+  `config.applyStored((c) => (c.rewardTheme = null))`, inaczej następny zapis configu z nieaktualnym motywem dostanie `config.invalid` (`rewardTheme`).
+  Pokaz (`showcase.rs`): księga pokazu idzie trybem `Preview`, który w rdzeniu (zgodnie ze specyfikacją) nigdy nie odblokowuje; odblokowanie
+  „na scenie” musi więc robić sam pokaz na swojej księdze w pamięci (publiczne `unlocks::evaluate` / `record_goal_day`), nigdy na prawdziwej.

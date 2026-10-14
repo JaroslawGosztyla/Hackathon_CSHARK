@@ -1,0 +1,98 @@
+/*
+ * Summer (beta collection, ADR-024): a warm sunset over the sea, palm silhouettes and slow waves.
+ * The sky glows only in a narrow band above the horizon (56–66 % of the window, between the timer and the cards,
+ * where --text-muted would drop to about 3.2:1); text sits on the dark violet sky, the dark sea or the surfaces.
+ *
+ * Contrast (WCAG 2.x, measured on these tokens; --surface composited over --bg-1):
+ *   --text       on surface-solid 15.6 · surface-raised 14.2 · bg-1 16.4 · surface 15.9
+ *   --text-2     on surface-solid 12.1 · surface-raised 11.1 · bg-1 12.8 · surface 12.3
+ *   --text-muted on surface-solid 7.3 · surface-raised 6.7 · bg-1 7.7 · surface 7.4
+ *   --accent-ink on --accent 8.7 · --break-ink on --break 9.1 · --danger on surface-solid 7.9
+ *   on surface: --reward-ink 12.5 · --reward 11.9 · --bubble 11.7 · confetti ≥ 8.6
+ *   --quiet-mark on surface-solid 3.5 · --focus-ring on bg-0 15.3
+ */
+
+:root[data-theme="summer"],
+[data-theme="summer"]:not(:root) {
+  color-scheme: dark;
+
+  --bg-0: #130b1d;
+  --bg-1: #1f122b;
+  --glow-warm: #7a3a3c;
+  --glow-cool: #1c2a4c;
+
+  --surface: rgba(38, 22, 42, 0.84);
+  --surface-solid: #27172c;
+  --surface-raised: #311d37;
+  --surface-inset: rgba(255, 230, 208, 0.05);
+  --surface-hover: rgba(255, 230, 208, 0.1);
+  --border: rgba(255, 210, 170, 0.12);
+  --border-strong: rgba(255, 210, 170, 0.26);
+  --border-hover: rgba(255, 210, 170, 0.38);
+
+  --text: #fff4ea;
+  --text-2: #efd6c4;
+  --text-muted: #c4a493;
+
+  --accent: #ffa064;
+  --accent-strong: #ffbd8c;
+  --accent-soft: rgba(255, 160, 100, 0.16);
+  --accent-ink: #2f1203;
+  --accent-line: rgba(255, 160, 100, 0.45);
+
+  --break: #6fd8cf;
+  --break-strong: #9de6df;
+  --break-soft: rgba(111, 216, 207, 0.16);
+  --break-ink: #05292a;
+  --break-line: rgba(111, 216, 207, 0.45);
+
+  --danger: #ff92a2;
+  --danger-soft: rgba(255, 146, 162, 0.14);
+  --danger-line: rgba(255, 146, 162, 0.45);
+  --ok: #6fd8cf;
+  --muted-mark: #745d72;
+
+  --focus-ring: #ffe39a;
+
+  --track: rgba(255, 230, 208, 0.07);
+  --track-strong: rgba(255, 230, 208, 0.13);
+  --knob-fill: #fffaf3;
+  --scrim: rgba(12, 5, 16, 0.64);
+  --dock-bg: rgba(33, 19, 38, 0.94);
+  --shadow-color: rgba(10, 3, 14, 0.48);
+  --shadow-sm:
+    0 6px 16px rgba(10, 3, 14, 0.52),
+    0 1px 3px rgba(10, 3, 14, 0.42);
+  --logo-bg: rgba(255, 160, 100, 0.16);
+  --logo-moon: #ffa064;
+  --logo-star: #ffe39a;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23efd6c4' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Beta rewards (ADR-022). */
+  --quiet-mark: #846b80;
+  --reward: #ffd166;
+  --reward-ink: #ffd773;
+  --bubble: #8fe0ff;
+  --confetti-1: #ffd166;
+  --confetti-2: #8fe0ff;
+  --confetti-3: #ffa064;
+  --confetti-4: #f5a8d4;
+
+  /* Violet dusk on top, a warm band at the horizon (66 %), the darkening sea below it. */
+  --app-bg:
+    radial-gradient(1100px 300px at 76% 66%, rgba(255, 168, 96, 0.42) 0%, transparent 70%),
+    linear-gradient(
+      180deg,
+      #160d26 0%,
+      #2a1638 26%,
+      #52224c 46%,
+      #8c3a52 58%,
+      #c8624e 64%,
+      #e08850 66%,
+      #3c2a4e 66.1%,
+      #251a3a 76%,
+      #150f24 100%
+    );
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  --header-line: rgba(255, 210, 170, 0.1);
+}

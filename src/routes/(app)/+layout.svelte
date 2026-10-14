@@ -1,0 +1,523 @@
+<script lang="ts">
+  // Shell of the main window. The overlay window (/popup) uses the (overlay) group instead, so the
+  // music player, the subscriptions and the toasts run in exactly one window.
+  import "../../app.css";
+  import { onMount, untrack, type Snippet } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
+  import { goto, onNavigate } from "$app/navigation";
+  import { page } from "$app/state";
+  import AppLogo from "$lib/components/AppLogo.svelte";
+  import Background from "$lib/components/Background.svelte";
+  import ClosePrompt from "$lib/components/ClosePrompt.svelte";
+  import NudgeBanner from "$lib/components/NudgeBanner.svelte";
+  import FirstRunWizard from "$lib/components/onboarding/FirstRunWizard.svelte";
+  import RewardsPill from "$lib/components/rewards/RewardsPill.svelte";
+  import Toasts from "$lib/components/Toasts.svelte";
+  import { formatClock } from "$lib/format";
+  import { followLanguage } from "$lib/i18n/index.svelte";
+  import MusicPlayer from "$lib/player/MusicPlayer.svelte";
+  import { initAppState } from "$lib/state/app";
+  import { config } from "$lib/state/config.svelte";
+  import { dev, useDevRequests } from "$lib/state/dev.svelte";
+  import { music } from "$lib/state/music.svelte";
+  import { onboarding } from "$lib/state/onboarding.svelte";
+  import { rewards } from "$lib/state/rewards.svelte";
+  import { session } from "$lib/state/session.svelte";
+  import { strings } from "$lib/strings";
+  import { applyTheme, DEFAULT_THEME, effectiveTheme, isTheme, isThemeId, readCachedTheme, type ThemeId } from "$lib/themes";
+
+  let { children }: { children: Snippet } = $props();
+
+  onMount(() => initAppState());
+
+  // ---------------------------------------------------------------------------
+  // First-run wizard (ADR-023): a fresh install's first config opens it once. While it is open it covers the window:
+  // the page is not rendered (its settings live in the wizard then), the header and the music bar are inert (the
+  // player keeps running: music must never stop because of it), and the shell carries on as usual (tray, popups).
+  // ---------------------------------------------------------------------------
+
+  $effect(() => {
+    const cfg = config.value;
+    untrack(() => onboarding.follow(cfg));
+  });
+
+  interface NavLink {
+    href: string;
+    readonly label: string;
+  }
+
+  const BASE_LINKS: readonly NavLink[] = [
+    {
+      href: "/",
+      get label() {
+        return strings.nav.focus;
+      },
+    },
+    {
+      href: "/summary",
+      get label() {
+        return strings.nav.summary;
+      },
+    },
+    {
+      href: "/settings",
+      get label() {
+        return strings.nav.settings;
+      },
+    },
+  ];
+
+  /** The 4th tab, only in developer mode (ADR-019) and not while "Clean screenshots" hides it. */
+  const DEV_LINK: NavLink = {
+    href: "/dev",
+    get label() {
+      return strings.nav.developer;
+    },
+  };
+
+  /** In tab order: the highlight, the background pan and the page slide all follow this order. */
+  const links = $derived<readonly NavLink[]>(dev.tabVisible ? [...BASE_LINKS, DEV_LINK] : BASE_LINKS);
+
+  const path = $derived(page.url.pathname);
+
+  // ---------------------------------------------------------------------------
+  // Developer mode (ADR-019)
+  // ---------------------------------------------------------------------------
+
+  /** Developer mode was on in this window (so switching it off resets the page's memory once). */
+  let devWasOn = false;
+
+  // Switched off (in Settings, or a config without it): stop the samples, and leave the Developer page.
+  $effect(() => {
+    if (!config.ready) return;
+    if (dev.enabled) {
+      devWasOn = true;
+      return;
+    }
+    if (devWasOn) {
+      devWasOn = false;
+      untrack(() => dev.reset());
+    }
+    if (path === "/dev" || path.startsWith("/dev/")) void goto("/settings", { replaceState: true });
+  });
+
+  // Banners and toasts asked for by the Developer page, once Skupienie is shown.
+  useDevRequests("layout", (request) => request.run());
+
+  /** Ctrl+Shift+D brings the Developer tab back after "Clean screenshots" and opens it. */
+  function onKeydown(event: KeyboardEvent): void {
+    const shortcut = event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.code === "KeyD";
+    if (!shortcut || !dev.enabled) return;
+    event.preventDefault();
+    void dev.showTab();
+  }
+
+  const reserveVideo = $derived(music.videoVisible && music.videoExpanded);
+  const reducedMotion = new MediaQuery("(prefers-reduced-motion: reduce)");
+
+  // ---------------------------------------------------------------------------
+  // Theme: config.theme on <html data-theme>; until the config arrives, the theme of the last run. With the beta on, an
+  // unlocked collection theme (config.rewardTheme, ADR-024) replaces it; a Developer-page theme sample wins over both.
+  // ---------------------------------------------------------------------------
+
+  const startTheme: ThemeId = readCachedTheme() ?? DEFAULT_THEME;
+  applyTheme(startTheme);
+
+  const theme = $derived.by((): ThemeId => {
+    if (dev.themePreview !== null) return dev.themePreview;
+    const cfg = config.value;
+    if (!cfg) return startTheme;
+    const base: ThemeId = isTheme(cfg.theme) ? cfg.theme : startTheme;
+    const shown = effectiveTheme(cfg, rewards.real?.unlocks);
+    return isThemeId(shown) ? shown : base;
+  });
+
+  $effect.pre(() => applyTheme(theme));
+
+  // ---------------------------------------------------------------------------
+  // Language: config.language (`system` = the OS UI language); until the config arrives, the language of the last run
+  // (`$lib/i18n` applies it before the first paint). A switch in Settings applies here at once.
+  // ---------------------------------------------------------------------------
+
+  const languageChoice = $derived(config.value?.language);
+  $effect.pre(() => followLanguage(languageChoice));
+
+  // ---------------------------------------------------------------------------
+  // Navigation: one sliding highlight, a background pan by tab index, page slides (View Transitions).
+  // ---------------------------------------------------------------------------
+
+  function tabIndexOf(pathname: string | undefined): number {
+    if (pathname === undefined) return -1;
+    return links.findIndex((l) => (l.href === "/" ? pathname === "/" : pathname.startsWith(l.href)));
+  }
+
+  const activeIndex = $derived(tabIndexOf(path));
+  const panIndex = $derived(Math.max(0, activeIndex));
+
+  interface HighlightBox {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    /** Animate into place (the active tab changed); window resizes and font changes jump instead. */
+    slide: boolean;
+  }
+
+  let highlight = $state<HighlightBox | null>(null);
+  let navEl: HTMLElement | null = null;
+  let placedIndex = -1;
+
+  /** Moves the highlight under the active link (measured, so it follows any label width or wrapping). */
+  function placeHighlight(index: number): void {
+    const link = navEl?.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!navEl || !link || index < 0) {
+      highlight = null;
+      placedIndex = -1;
+      return;
+    }
+    const navBox = navEl.getBoundingClientRect();
+    const box = link.getBoundingClientRect();
+    // The highlight is positioned inside the nav's border; computed widths keep sub-pixel borders exact.
+    const navStyle = getComputedStyle(navEl);
+    const slide = placedIndex !== -1 && placedIndex !== index;
+    placedIndex = index;
+    highlight = {
+      x: box.left - navBox.left - (parseFloat(navStyle.borderLeftWidth) || 0),
+      y: box.top - navBox.top - (parseFloat(navStyle.borderTopWidth) || 0),
+      w: box.width,
+      h: box.height,
+      slide,
+    };
+  }
+
+  let navObserver: ResizeObserver | null = null;
+
+  // After the DOM shows the new aria-current, and after the Developer tab came or went (the links moved).
+  $effect(() => {
+    const index = activeIndex;
+    // Read so the effect re-runs when the tab count changes; a new link is measured too (observing an observed
+    // element again is a no-op).
+    const tabCount = links.length;
+    if (tabCount > 0 && navEl && navObserver) {
+      for (const link of navEl.querySelectorAll("a")) navObserver.observe(link);
+    }
+    placeHighlight(index);
+  });
+
+  /** Re-measures when the nav or a link changes size (window width, theme font, wrapping on small screens). */
+  function observeNav(nav: HTMLElement): () => void {
+    navEl = nav;
+    const observer = new ResizeObserver(() => placeHighlight(tabIndexOf(page.url.pathname)));
+    navObserver = observer;
+    observer.observe(nav);
+    for (const link of nav.querySelectorAll("a")) observer.observe(link);
+    return () => {
+      observer.disconnect();
+      navObserver = null;
+      navEl = null;
+    };
+  }
+
+  /** Longest SvelteKit waits for the transition to take its "before" snapshot. */
+  const VIEW_TRANSITION_START_TIMEOUT_MS = 1000;
+  let activeTransition: ViewTransition | null = null;
+
+  // The page content slides in the direction of the tab order; the header and the music bar stay in place
+  // (app.css names them only while `data-nav-transition` is set).
+  onNavigate((navigation) => {
+    if (reducedMotion.current || typeof document.startViewTransition !== "function") return;
+    // E.g. `goto("/summary")` while the window sits in the tray: nothing to animate, do not wait for a frame.
+    if (document.visibilityState !== "visible") return;
+    const from = tabIndexOf(navigation.from?.url.pathname);
+    const to = tabIndexOf(navigation.to?.url.pathname);
+    if (from < 0 || to < 0 || from === to) return;
+
+    const root = document.documentElement;
+    root.dataset.navTransition = to > from ? "forward" : "back";
+
+    return new Promise<void>((resolve) => {
+      // Never block the navigation, whatever happens to the transition.
+      const fallback = setTimeout(resolve, VIEW_TRANSITION_START_TIMEOUT_MS);
+      let transition: ViewTransition;
+      try {
+        transition = document.startViewTransition(async () => {
+          clearTimeout(fallback);
+          resolve();
+          await navigation.complete;
+        });
+      } catch {
+        clearTimeout(fallback);
+        delete root.dataset.navTransition;
+        resolve();
+        return;
+      }
+      activeTransition = transition;
+      const finish = () => {
+        // A newer navigation replaced this transition and owns the attribute now.
+        if (activeTransition !== transition) return;
+        activeTransition = null;
+        delete root.dataset.navTransition;
+      };
+      // A skipped transition (aborted navigation, hidden window) rejects these; nothing to report.
+      transition.ready.catch(() => {});
+      transition.updateCallbackDone.catch(() => {});
+      transition.finished.then(finish, finish);
+    });
+  });
+</script>
+
+<svelte:window onkeydown={onKeydown} />
+
+<Background {theme} pan={panIndex} steps={links.length - 1} />
+
+<div class="app" class:with-video={reserveVideo} inert={onboarding.open}>
+  <header class="top">
+    <a class="brand" href="/">
+      <span class="logo" aria-hidden="true"><AppLogo /></span>
+      <span class="brand-text">
+        <span class="name">{strings.appName}</span>
+        <span class="tagline">{strings.tagline}</span>
+      </span>
+    </a>
+
+    <nav aria-label={strings.nav.label} class:measured={highlight !== null} {@attach observeNav}>
+      {#if highlight}
+        <span
+          class="highlight"
+          class:slide={highlight.slide}
+          style:width="{highlight.w}px"
+          style:height="{highlight.h}px"
+          style:transform="translate({highlight.x}px, {highlight.y}px)"
+          aria-hidden="true"
+        ></span>
+      {/if}
+      {#each links as link, i (link.href)}
+        <a href={link.href} aria-current={i === activeIndex ? "page" : undefined}>{link.label}</a>
+      {/each}
+    </nav>
+
+    {#if !session.isIdle && path !== "/"}
+      <a class="phase-pill tabular" class:break={session.phase === "break"} href="/">
+        <span class="dot" aria-hidden="true"></span>
+        {strings.phase[session.phase]}
+        {formatClock(session.snapshot.remainingSecs)}
+        {#if session.paused}
+          <span class="sr-only">({strings.timer.paused})</span>
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <rect x="3" y="2.5" width="3.5" height="11" rx="1" fill="currentColor" />
+            <rect x="9.5" y="2.5" width="3.5" height="11" rx="1" fill="currentColor" />
+          </svg>
+        {/if}
+      </a>
+    {:else if rewards.active && rewards.view}
+      <!-- Beta rewards (P1, ADR-022): level and streak at a glance (the phase pill has the place during a session). -->
+      <RewardsPill status={rewards.view} />
+    {/if}
+  </header>
+
+  <main>
+    <NudgeBanner />
+    <!-- Not under the first-run wizard: its steps show the same settings (one copy of each id and radio group). -->
+    {#if !onboarding.open}
+      {@render children()}
+    {/if}
+  </main>
+</div>
+
+<div class="dock-host" inert={onboarding.open}>
+  <MusicPlayer />
+</div>
+{#if onboarding.open}
+  <FirstRunWizard {theme} />
+{/if}
+<Toasts />
+<ClosePrompt />
+<p class="sr-only" aria-live="polite" aria-atomic="true">{session.announcement}</p>
+
+<style>
+  .app {
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    padding: 0 var(--gutter) calc(var(--dock-h) + 32px);
+    /* The header's full-width backdrop (`.top::before`) is sized with vw, which counts the vertical scrollbar, so it
+       sticks out on the right by about half a scrollbar and the page could scroll sideways. `clip` cuts that off at
+       the window edge without making a scroll container, so the sticky header keeps working. */
+    overflow-x: clip;
+  }
+
+  .app.with-video {
+    padding-bottom: calc(var(--dock-h) + 250px);
+  }
+
+  /* Pinned: logo + navigation stay visible while the page scrolls under them. */
+  .top {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    max-width: 1040px;
+    margin: 0 auto 4px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 16px 0;
+  }
+
+  /* Full-window-width backdrop behind the centred header, so scrolled content never shows through. */
+  .top::before {
+    content: "";
+    position: absolute;
+    inset: 0 calc(50% - 50vw);
+    z-index: -1;
+    background: var(--header-bg);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--header-line);
+  }
+
+  /* View Transitions (app.css): only while a tab change animates, so the header keeps its live backdrop blur. */
+  :global(html[data-nav-transition]) .top {
+    view-transition-name: app-header;
+  }
+
+  :global(html[data-nav-transition]) main {
+    view-transition-name: page;
+  }
+
+  /* The music bar (MusicPlayer's root <section class="dock">) stays above the sliding page. */
+  :global(html[data-nav-transition] section.dock) {
+    view-transition-name: music-dock;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+    text-decoration: none;
+    margin-right: auto;
+  }
+
+  .logo {
+    display: grid;
+  }
+
+  .brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+  }
+
+  .name {
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tagline {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  nav {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    border: var(--border-w) solid var(--border);
+  }
+
+  /* One highlight for the whole nav: it slides to the active tab instead of each link lighting up. */
+  .highlight {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: -1;
+    border-radius: var(--radius-pill);
+    background: var(--nav-highlight);
+    pointer-events: none;
+  }
+
+  .highlight.slide {
+    transition:
+      transform var(--nav-slide-ms) var(--ease-slide),
+      width var(--nav-slide-ms) var(--ease-slide),
+      height var(--nav-slide-ms) var(--ease-slide);
+  }
+
+  :global([data-theme="pixel"]) .highlight {
+    box-shadow: 2px 2px 0 0 var(--shadow-color);
+  }
+
+  nav a {
+    padding: 7px 14px;
+    border-radius: var(--radius-pill);
+    color: var(--text-2);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.92rem;
+    transition:
+      background-color 0.15s ease,
+      color var(--nav-slide-ms) var(--ease-slide);
+  }
+
+  nav a:hover {
+    color: var(--text);
+    background: var(--surface-inset);
+  }
+
+  nav a[aria-current="page"] {
+    color: var(--nav-highlight-ink);
+  }
+
+  /* The highlight sits behind the active link; until it is measured, the link lights up by itself. */
+  nav.measured a[aria-current="page"],
+  nav.measured a[aria-current="page"]:hover {
+    background: transparent;
+  }
+
+  nav:not(.measured) a[aria-current="page"] {
+    background: var(--nav-highlight);
+  }
+
+  .phase-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-weight: 700;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+
+  .phase-pill.break {
+    background: var(--break-soft);
+    color: var(--break);
+  }
+
+  .phase-pill .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  main {
+    max-width: 1040px;
+    margin: 0 auto;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .highlight.slide,
+    nav a {
+      transition: none;
+    }
+  }
+</style>

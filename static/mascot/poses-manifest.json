@@ -1,0 +1,71 @@
+{
+ "frameWidth": 558,
+ "frameHeight": 466,
+ "columns": 4,
+ "anchorX": 296,
+ "anchorY": 460,
+ "poseScale": 0.3491,
+ "webpQuality": 0.9,
+ "source": "art/mascot/poses",
+ "reference": {
+  "main": "blink-1",
+  "pose": "05-look-up"
+ },
+ "frames": {
+  "01-point-excited": {
+   "x": 0,
+   "y": 0,
+   "scale": 1
+  },
+  "02-clasped-hands-heart": {
+   "x": 558,
+   "y": 0,
+   "scale": 1
+  },
+  "03-thinking": {
+   "x": 1116,
+   "y": 0,
+   "scale": 1
+  },
+  "04-lying-awake": {
+   "x": 1674,
+   "y": 0,
+   "scale": 1
+  },
+  "05-look-up": {
+   "x": 0,
+   "y": 466,
+   "scale": 1
+  },
+  "06-amazed-sparkles": {
+   "x": 558,
+   "y": 466,
+   "scale": 1
+  },
+  "07-sleeping": {
+   "x": 1116,
+   "y": 466,
+   "scale": 1
+  },
+  "08-back-view": {
+   "x": 1674,
+   "y": 466,
+   "scale": 1
+  },
+  "09-lying-look-up": {
+   "x": 0,
+   "y": 932,
+   "scale": 1
+  },
+  "10-holding-heart": {
+   "x": 558,
+   "y": 932,
+   "scale": 1
+  },
+  "11-point-happy": {
+   "x": 1116,
+   "y": 932,
+   "scale": 1
+  }
+ }
+}

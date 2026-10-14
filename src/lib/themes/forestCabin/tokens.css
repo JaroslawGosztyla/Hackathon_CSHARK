@@ -1,0 +1,87 @@
+/*
+ * Forest cabin (beta collection, ADR-024): a pine forest at nightfall, a cabin with a warm window, chimney smoke
+ * and fireflies. Deep green-teal, ember accent, moss green for breaks.
+ *
+ * Contrast (WCAG 2.x, measured on these tokens; --surface composited over --bg-1):
+ *   --text       on surface-solid 14.6 · surface-raised 13.1 · bg-1 16.0 · surface 15.2
+ *   --text-2     on surface-solid 11.1 · surface-raised 10.0 · bg-1 12.2 · surface 11.6
+ *   --text-muted on surface-solid 6.7 · surface-raised 6.0 · bg-1 7.3 · surface 7.0
+ *   --accent-ink on --accent 8.6 · --break-ink on --break 9.5 · --danger on surface-solid 8.0
+ *   on surface: --reward-ink 12.9 · --reward 12.9 · --bubble 10.8 · confetti ≥ 8.4
+ *   --quiet-mark on surface-solid 3.7 · --focus-ring on bg-0 15.2
+ */
+
+:root[data-theme="forestCabin"],
+[data-theme="forestCabin"]:not(:root) {
+  color-scheme: dark;
+
+  --bg-0: #081110;
+  --bg-1: #0e1b1a;
+  --glow-warm: #3a2a17;
+  --glow-cool: #10302c;
+
+  --surface: rgba(19, 33, 30, 0.84);
+  --surface-solid: #142420;
+  --surface-raised: #1b2d29;
+  --surface-inset: rgba(220, 245, 228, 0.05);
+  --surface-hover: rgba(220, 245, 228, 0.1);
+  --border: rgba(214, 238, 220, 0.12);
+  --border-strong: rgba(214, 238, 220, 0.26);
+  --border-hover: rgba(214, 238, 220, 0.38);
+
+  --text: #eef6ef;
+  --text-2: #c9dbcc;
+  --text-muted: #96ad9b;
+
+  --accent: #f0a85a;
+  --accent-strong: #ffc285;
+  --accent-soft: rgba(240, 168, 90, 0.16);
+  --accent-ink: #2b1503;
+  --accent-line: rgba(240, 168, 90, 0.45);
+
+  --break: #9fd8a8;
+  --break-strong: #bce6c2;
+  --break-soft: rgba(159, 216, 168, 0.16);
+  --break-ink: #0c2a13;
+  --break-line: rgba(159, 216, 168, 0.45);
+
+  --danger: #ff9d8c;
+  --danger-soft: rgba(255, 157, 140, 0.14);
+  --danger-line: rgba(255, 157, 140, 0.45);
+  --ok: #9fd8a8;
+  --muted-mark: #566e5d;
+
+  --focus-ring: #ffe2a0;
+
+  --track: rgba(220, 245, 228, 0.07);
+  --track-strong: rgba(220, 245, 228, 0.13);
+  --knob-fill: #fbfff8;
+  --scrim: rgba(3, 8, 7, 0.66);
+  --dock-bg: rgba(17, 30, 27, 0.94);
+  --shadow-color: rgba(1, 5, 4, 0.5);
+  --shadow-sm:
+    0 6px 16px rgba(1, 5, 4, 0.55),
+    0 1px 3px rgba(1, 5, 4, 0.45);
+  --logo-bg: rgba(240, 168, 90, 0.16);
+  --logo-moon: #f0a85a;
+  --logo-star: #ffe2a0;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23c9dbcc' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Beta rewards (ADR-022). */
+  --quiet-mark: #64806c;
+  --reward: #ffe07a;
+  --reward-ink: #ffe07a;
+  --bubble: #9fd8f0;
+  --confetti-1: #ffe07a;
+  --confetti-2: #9fd8f0;
+  --confetti-3: #f0a85a;
+  --confetti-4: #cde37a;
+
+  /* Night sky over the trees: deep teal above, a little lighter toward the treeline (the scene draws the forest). */
+  --app-bg:
+    radial-gradient(900px 420px at 78% 92%, rgba(240, 168, 90, 0.12) 0%, transparent 70%),
+    radial-gradient(1000px 520px at 20% -10%, var(--glow-cool) 0%, transparent 65%),
+    linear-gradient(180deg, #071012 0%, #0c1b1d 45%, #15302f 80%, #1b3a35 100%);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  --header-line: rgba(214, 238, 220, 0.1);
+}

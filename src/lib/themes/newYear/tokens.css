@@ -1,0 +1,86 @@
+/*
+ * New Year (beta collection, ADR-024): midnight blue over a city skyline, champagne gold, gentle fireworks.
+ *
+ * Contrast (WCAG 2.x, measured on these tokens; --surface composited over --bg-1):
+ *   --text       on surface-solid 15.3 · surface-raised 13.9 · bg-1 16.4 · surface 15.8
+ *   --text-2     on surface-solid 11.3 · surface-raised 10.3 · bg-1 12.2 · surface 11.7
+ *   --text-muted on surface-solid 6.9 · surface-raised 6.3 · bg-1 7.5 · surface 7.2
+ *   --accent-ink on --accent 10.7 · --break-ink on --break 9.6 · --danger on surface-solid 8.6
+ *   on surface: --reward-ink 13.1 · --reward 12.8 · --bubble 10.4 · confetti ≥ 9.4
+ *   --quiet-mark on surface-solid 3.6 · --focus-ring on bg-0 15.7
+ */
+
+:root[data-theme="newYear"],
+[data-theme="newYear"]:not(:root) {
+  color-scheme: dark;
+
+  --bg-0: #060a1a;
+  --bg-1: #0c1330;
+  --glow-warm: #2c2350;
+  --glow-cool: #0f2148;
+
+  --surface: rgba(17, 24, 52, 0.84);
+  --surface-solid: #131a3a;
+  --surface-raised: #1a2248;
+  --surface-inset: rgba(220, 228, 255, 0.05);
+  --surface-hover: rgba(220, 228, 255, 0.1);
+  --border: rgba(236, 214, 160, 0.12);
+  --border-strong: rgba(236, 214, 160, 0.26);
+  --border-hover: rgba(236, 214, 160, 0.38);
+
+  --text: #f6f3ea;
+  --text-2: #cfd2e6;
+  --text-muted: #9ea4c6;
+
+  --accent: #efc86c;
+  --accent-strong: #ffdb94;
+  --accent-soft: rgba(239, 200, 108, 0.16);
+  --accent-ink: #241a04;
+  --accent-line: rgba(239, 200, 108, 0.45);
+
+  --break: #8fd6cf;
+  --break-strong: #afe5e0;
+  --break-soft: rgba(143, 214, 207, 0.16);
+  --break-ink: #08262a;
+  --break-line: rgba(143, 214, 207, 0.45);
+
+  --danger: #ff9e9e;
+  --danger-soft: rgba(255, 158, 158, 0.14);
+  --danger-line: rgba(255, 158, 158, 0.45);
+  --ok: #8fd6cf;
+  --muted-mark: #5c6489;
+
+  --focus-ring: #ffe3a3;
+
+  --track: rgba(220, 228, 255, 0.07);
+  --track-strong: rgba(220, 228, 255, 0.13);
+  --knob-fill: #fffaf0;
+  --scrim: rgba(3, 5, 16, 0.66);
+  --dock-bg: rgba(15, 21, 46, 0.94);
+  --shadow-color: rgba(2, 3, 12, 0.5);
+  --shadow-sm:
+    0 6px 16px rgba(2, 3, 12, 0.55),
+    0 1px 3px rgba(2, 3, 12, 0.45);
+  --logo-bg: rgba(239, 200, 108, 0.16);
+  --logo-moon: #efc86c;
+  --logo-star: #fff0c8;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23cfd2e6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Beta rewards (ADR-022). */
+  --quiet-mark: #6a7299;
+  --reward: #ffd86e;
+  --reward-ink: #ffdb7d;
+  --bubble: #9fcbff;
+  --confetti-1: #ffd86e;
+  --confetti-2: #9fcbff;
+  --confetti-3: #f6a6c8;
+  --confetti-4: #8fd6cf;
+
+  /* Deep night above, a warm city glow along the skyline (the scene draws the buildings and fireworks). */
+  --app-bg:
+    radial-gradient(1200px 360px at 50% 104%, rgba(214, 150, 92, 0.2) 0%, transparent 70%),
+    radial-gradient(900px 520px at 85% -10%, var(--glow-cool) 0%, transparent 65%),
+    linear-gradient(180deg, #050816 0%, #0a1130 46%, #191c45 80%, #2a2350 100%);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  --header-line: rgba(236, 214, 160, 0.1);
+}

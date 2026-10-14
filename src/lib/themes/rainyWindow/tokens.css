@@ -1,0 +1,87 @@
+/*
+ * Rainy window (beta collection, ADR-024): a night city seen through wet glass. Cool blue-grey, lilac accent, warm
+ * city lights as soft bokeh.
+ *
+ * Contrast (WCAG 2.x, measured on these tokens; --surface composited over --bg-1):
+ *   --text       on surface-solid 14.9 · surface-raised 13.5 · bg-1 15.8 · surface 15.3
+ *   --text-2     on surface-solid 10.7 · surface-raised 9.7 · bg-1 11.4 · surface 11.1
+ *   --text-muted on surface-solid 6.5 · surface-raised 5.9 · bg-1 6.9 · surface 6.7
+ *   --accent-ink on --accent 9.4 · --break-ink on --break 9.3 · --danger on surface-solid 8.3
+ *   on surface: --reward-ink 12.7 · --reward 12.7 · --bubble 10.2 · confetti ≥ 9.2
+ *   --quiet-mark on surface-solid 3.5 · --focus-ring on bg-0 15.3
+ */
+
+:root[data-theme="rainyWindow"],
+[data-theme="rainyWindow"]:not(:root) {
+  color-scheme: dark;
+
+  --bg-0: #0a0e18;
+  --bg-1: #111826;
+  --glow-warm: #2e2632;
+  --glow-cool: #142538;
+
+  --surface: rgba(21, 28, 42, 0.84);
+  --surface-solid: #161e2e;
+  --surface-raised: #1d2639;
+  --surface-inset: rgba(214, 228, 255, 0.05);
+  --surface-hover: rgba(214, 228, 255, 0.1);
+  --border: rgba(200, 216, 245, 0.12);
+  --border-strong: rgba(200, 216, 245, 0.26);
+  --border-hover: rgba(200, 216, 245, 0.38);
+
+  --text: #eef2fa;
+  --text-2: #c7d0e0;
+  --text-muted: #95a2b8;
+
+  --accent: #c3b4ff;
+  --accent-strong: #ddd3ff;
+  --accent-soft: rgba(195, 180, 255, 0.16);
+  --accent-ink: #1b1240;
+  --accent-line: rgba(195, 180, 255, 0.45);
+
+  --break: #86d2d6;
+  --break-strong: #aae2e4;
+  --break-soft: rgba(134, 210, 214, 0.16);
+  --break-ink: #06252a;
+  --break-line: rgba(134, 210, 214, 0.45);
+
+  --danger: #ff9d92;
+  --danger-soft: rgba(255, 157, 146, 0.14);
+  --danger-line: rgba(255, 157, 146, 0.45);
+  --ok: #86d2d6;
+  --muted-mark: #566278;
+
+  --focus-ring: #ffe2a8;
+
+  --track: rgba(214, 228, 255, 0.07);
+  --track-strong: rgba(214, 228, 255, 0.13);
+  --knob-fill: #f7f9ff;
+  --scrim: rgba(4, 6, 12, 0.66);
+  --dock-bg: rgba(19, 26, 39, 0.94);
+  --shadow-color: rgba(2, 4, 10, 0.5);
+  --shadow-sm:
+    0 6px 16px rgba(2, 4, 10, 0.55),
+    0 1px 3px rgba(2, 4, 10, 0.45);
+  --logo-bg: rgba(195, 180, 255, 0.16);
+  --logo-moon: #c3b4ff;
+  --logo-star: #ffe2a8;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23c7d0e0' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Beta rewards (ADR-022). */
+  --quiet-mark: #67738a;
+  --reward: #ffd98a;
+  --reward-ink: #ffd98a;
+  --bubble: #9cccff;
+  --confetti-1: #ffd98a;
+  --confetti-2: #9cccff;
+  --confetti-3: #c3b4ff;
+  --confetti-4: #86d2d6;
+
+  /* Night through glass: dark above, a faint warm city haze low down (the scene draws lights, rain and the frame). */
+  --app-bg:
+    radial-gradient(900px 380px at 22% 92%, rgba(240, 168, 110, 0.12) 0%, transparent 70%),
+    radial-gradient(900px 380px at 80% 86%, rgba(190, 150, 230, 0.1) 0%, transparent 70%),
+    linear-gradient(180deg, #0a0e18 0%, #0f1624 50%, #172034 100%);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  --header-line: rgba(200, 216, 245, 0.1);
+}

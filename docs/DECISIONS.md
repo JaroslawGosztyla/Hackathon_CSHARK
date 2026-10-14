@@ -6,6 +6,43 @@ Nowa decyzja = nowy wpis na końcu; starych nie przepisujemy, tylko zmieniamy st
 **Stan na 2026-09-27:** ADR-008…010 przyjął zespół (decyzje po review). Pozostałe są proponowane i
 **zatwierdzamy je razem w M0 (T0-4)**. Druga osoba też musi je zobaczyć.
 
+**Stan na 2026-10-12 (speedrun):** [ADR-013](#adr-013-speedrun-pivot-produktu) zmienia zakres produktu i częściowo zastępuje
+ADR-003, 009, 010, 011 i 012. Tam, gdzie DESIGN.md lub ARCHITECTURE.md mówią co innego, wygrywa ADR-013 i `api.rs`.
+
+**Stan na 2026-10-13:** [ADR-014](#adr-014-zasobnik-i-okienka-faz-odcień-ekranu-overlay-zamykanie-launcherów-gier-języki) dokłada do ADR-013
+zasobnik z okienkami faz, odcień ekranu (tylko overlay, domyślnie wyłączony), zamykanie launcherów gier, Teams z poszanowaniem statusu użytkownika
+i wybór języka. Zmienia przy tym ADR-009, 010, 012 i 013 (szczegóły w „Co zmienia”).
+
+**Stan na 2026-10-13 (runda 2a):** [ADR-015](#adr-015-runda-2a-ciepło-ekranu-bez-overlayu-motywy-dźwięki-muzyka-przerwy-i-historia) usuwa overlay odcienia
+(ciepło ekranu daje teraz Oświetlenie nocne Windows albo gamma ramp) i dokłada motywy, animowaną nawigację, pakiety dzwonków z własnym plikiem,
+muzykę w zestawie (Open Lo-Fi, CC0) jako domyślne źródło, przypomnienia na kolejne przerwy, porady na przerwę ze źródłami
+oraz opcje historii (pomijanie powierzchni powłoki Windows, tytuły okien w podpowiedzi wykresu, „nie zapisuj historii”, „usuń historię”).
+Zmienia ADR-009, 012, 013 i 014.
+
+**Stan na 2026-10-13 (kalendarze):** [ADR-016](#adr-016-kalendarze-i-spotkania-w-przerwach) dokłada kalendarze (Microsoft 365 przez logowanie Teams,
+Google Calendar, linki ICS dla pozostałych) i pytanie, co zrobić ze spotkaniem, które wypada w przerwie: przedłużyć skupienie, wstrzymać przerwę,
+zignorować albo przypomnieć później (30, 20 i 10 minut przed spotkaniem). Zmienia ADR-010, 011, 013 i 014.
+
+**Stan na 2026-10-13 („Co dalej?”):** [ADR-017](#adr-017-co-dalej--zadania-z-narzędzi-pracy) dokłada listę „Co dalej?” z narzędzi pracy
+(GitHub, GitLab, Jira, Azure DevOps, Linear; tokeny tylko do odczytu, szyfrowane DPAPI): najpierw zadania przypisane do użytkownika, potem to, co czeka
+na niego (review, zmiany, nieudane testy, wzmianki), na końcu pozostałe powiadomienia, z powodami przy każdej pozycji. Nowe pozycje czekają do przerwy
+i nie przerywają skupienia. Wybrane zadanie staje się celem sesji, a podsumowanie pyta „Zrobione?”. Zmienia ADR-013 i 014.
+
+**Stan na 2026-10-13 (maskotka i poprawki):** [ADR-018](#adr-018-maskotka-i-poprawki) dokłada maskotkę: aksolotla w słuchawkach z arkuszy klatek właściciela,
+**bez przerysowywania** (mruganie, reakcje na sesję, ruch ust według samogłosek, „wyglądanie” zza krawędzi okienek, pikselowa wersja w motywie 8-bit, `showMascot`).
+Do tego poprawki: okienka czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie; `--demo` przy działającej aplikacji przełącza ją w tryb demo;
+rozszerzenie zgłasza wzorce, których przeglądarka nie przyjęła jako reguł (`POST /v1/report`, jedyny zapis do mostu); wpis autostartu jest odświeżany przy starcie.
+Zmienia ADR-013, 014 i 015.
+
+**Stan na 2026-10-13 (tryb dewelopera):** [ADR-019](#adr-019-tryb-dewelopera) dokłada wyłączony domyślnie tryb dewelopera: zakładkę „Deweloper”
+z przyciskami wywołującymi okienka, toasty, maskotkę i skrócenie fazy, do zrzutów ekranu na prezentację. Próbki nie są zapisywane i nic nie opuszcza komputera
+(przyciski wyglądu i okna to skróty do prawdziwych ustawień); strona Deweloper jest tylko po angielsku, a jej okienka nie czekają na koniec prezentacji. Zmienia ADR-014 i 018.
+
+**Stan na 2026-10-13 (prywatność i YouTube):** [ADR-020](#adr-020-panel-prywatności) dokłada panel „Prywatność i dane”: co aplikacja trzyma na komputerze
+(pozycja po pozycji, z plików szyfrowanych tylko obecność), eksport do JSON bez sekretów, usuwanie pojedyncze i „Usuń wszystko” (sesja najpierw się kończy,
+osłony wracają). [ADR-021](#adr-021-logowanie-do-youtube) dokłada logowanie do YouTube na stronie Google w oknie aplikacji, żeby Premium działało:
+po zalogowaniu YouTube gra w oknie `media`, a aplikacja nie widzi hasła ani wartości ciasteczek. Oba są wdrożone (powłoka, UI, testy). Zmienia ADR-013.
+
 Źródło poprawek z review: [reviews/codex-crosscheck-2026-09-27.md](reviews/codex-crosscheck-2026-09-27.md) (F01–F16).
 
 ---
@@ -46,7 +83,7 @@ Efekty wykonuje powłoka.
 ---
 
 ## ADR-003: Audio w Ruście (rodio) na dedykowanym wątku
-**Status:** Proponowana
+**Status:** Częściowo zastąpiona przez ADR-013 (2026-10-12): rodio tylko do dzwonków, muzyka w WebView
 
 **Decyzja:** rodio, jeden dedykowany wątek jako właściciel urządzenia wyjściowego, komunikacja kanałami.
 
@@ -62,6 +99,9 @@ Po błędzie urządzenia rodio samo się nie łączy ponownie; robi to nasz wąt
 niezależny od istnienia urządzenia. Reconnect odtwarza ten stan i nie wysyła nowego `Play`, więc po Pause, Stop albo w przerwie muzyka nie wraca.
 
 **Plan B:** `<audio>` w trwałym, ukrytym WebView. Wymaga osobnego sprawdzenia po ukryciu okna, uśpieniu i odłączeniu urządzenia.
+
+**Poprawka (ADR-013, 2026-10-12):** muzyka (YouTube, stream, linki, folder, szum) gra w WebView okna głównego, więc plan B staje się planem A.
+rodio i dedykowany wątek zostają tylko dla syntetycznych dzwonków (`focus-audio::ChimePlayer`). Gatunki, fade i docelowy stan odtwarzania (R04) odpadają.
 
 ---
 
@@ -106,7 +146,7 @@ CI buduje na 3 OS. Ograniczenia pozostałych platform są jawnie opisane (DESIGN
 ---
 
 ## ADR-009: Tint przez overlay; gamma ramp tylko jako eksperyment
-**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F01/F02)
+**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F01/F02); zakres odłożony przez ADR-013 (2026-10-12); overlay przywrócony przez ADR-014 (2026-10-13); **zastąpiona przez ADR-015** (2026-10-13: overlay odrzucony, ciepło przez Oświetlenie nocne albo gamma)
 
 **Kontekst:** Microsoft odradza `SetDeviceGammaRamp` (może zwrócić sukces bez efektu, HDR jest niezdefiniowany, system może nadpisać).
 Drop, panic hook ani handler wyjścia nie wykonają się po zabiciu procesu, więc gamma nie daje gwarancji powrotu kolorów.
@@ -120,10 +160,20 @@ a naprawa po kill następuje przy następnym starcie.
 Poprawny S-02 wymagałby kopii bazowej rampy per monitor i polityki konfliktu. **Rekomendacja: nie wdrażać S-02 na hackathonie**,
 bo overlay pokrywa funkcję.
 
+**Poprawka (ADR-013, 2026-10-12):** tint (overlay i gamma) wypada z zakresu speedrunu. Jeśli wróci, obowiązuje ta decyzja: overlay, nie gamma.
+
+**Poprawka (ADR-014, 2026-10-13):** tint wraca na prośbę właściciela produktu, **tylko jako overlay**, domyślnie wyłączony,
+z harmonogramem według pory dnia (od–do, siła, przejście) i podglądem w Ustawieniach. Gamma ramp (S-02) nadal nie wchodzi.
+
+**Poprawka (ADR-015, 2026-10-13):** właściciel produktu odrzucił overlay („półprzezroczysta warstwa koloru to nie jest odcień”), więc ta decyzja
+przestaje obowiązywać. Ciepło ekranu daje teraz **Oświetlenie nocne Windows** (domyślnie) albo **gamma ramp** (do wyboru). Obawy z kontekstu
+i z R08 rozwiązuje ADR-015: stan sprzed zmiany (ustawienia Oświetlenia nocnego albo bazowa rampa każdego monitora, a nie liniowa) jest zapisywany
+zaraz po zmianie i przywracany przy wyjściu, przy następnym starcie albo najpóźniej przy następnym logowaniu (jak osłony, zasada 7).
+
 ---
 
 ## ADR-010: Ręczny tryb spotkania w MVP; Teams DND jako Could, bez wykrywania rozmów
-**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F06)
+**Status:** Przyjęta (2026-09-27, decyzja zespołu po review F06); w części zastąpiona przez ADR-013 (2026-10-12); spotkania wracają z kalendarza przez ADR-016 (2026-10-13)
 
 **Kontekst:** Graph daje pierwszeństwo preferowanemu statusowi użytkownika, więc po ustawieniu własnego DND zagregowany
 `/me/presence` nie wykrywa wiarygodnie rozmowy. Zmiana ikony w Teams może trwać minuty. `clearUserPreferredPresence`
@@ -139,10 +189,23 @@ kasuje także ręczny status użytkownika. Firmowy tenant może blokować zgodę
 nie dowodzi, że aktualny status jest nasz, a odczyt przed czyszczeniem nie jest atomowy. DND ma krótkie wygaśnięcie (10 min) odnawiane
 w trakcie Focus. Po Stop, Pause i w przerwie odnawianie się kończy i status wygasa sam. Czyszczenie statusu jest wyłącznie ręczne (przycisk w UI).
 
+**Poprawka (ADR-013, 2026-10-12):** ręczny tryb spotkania odpada (nie ma wymuszonych okien przerwy, więc nie ma czego przesuwać; jest Pauza i „Pomiń fazę”).
+Teams DND staje się opcjonalną osłoną skupienia: `setUserPreferredPresence` z `expirationDuration` = długość focusa + 5 min,
+a na przerwę i po Stop **automatyczne** `clearUserPreferredPresence`. To uchyla R07 na wyraźne życzenie właściciela produktu; ryzyko opisuje ADR-013.
+Wykrywanie rozmów przez Graph nadal Won't.
+
+**Poprawka (ADR-014, 2026-10-13):** przed ustawieniem DND powłoka czyta bieżący status (`GET /me/presence`). Gdy użytkownik jest „offline”
+(m.in. „Wyświetlaj jako offline”) albo ma już „Nie przeszkadzać”, FocusMode statusu nie zmienia i w przerwie ani po Stop go nie czyści.
+Część ryzyka R07 znika: nie kasujemy już DND ani niewidoczności ustawionych przez użytkownika przed focusem.
+
+**Poprawka (ADR-016, 2026-10-13):** ręczny tryb spotkania nadal odpada, ale spotkania wracają z kalendarza (Microsoft 365, Google, linki ICS):
+dla spotkania, które wypada w przerwie, użytkownik wybiera przedłużenie skupienia, wstrzymanie przerwy, „ignoruj” albo przypomnienie później.
+Logowanie Teams prosi dodatkowo o delegowane `Calendars.Read` (ten sam token czyta kalendarz Microsoft). Wykrywanie rozmów przez status Teams nadal Won't.
+
 ---
 
 ## ADR-011: Model czasu — profil czasów, ostrzeżenie w focusie, dwa zegary
-**Status:** Proponowana (z review F04/F07)
+**Status:** Proponowana (z review F04/F07); w części zastąpiona przez ADR-013 (2026-10-12); reguła spotkania wraca w innej postaci przez ADR-016 (2026-10-13)
 
 **Decyzja:**
 - Jeden `TimingProfile` (`normal()`/`demo()`) zasila core, UI i testy. Ostrzeżenie zawiera się w czasie focusa.
@@ -159,10 +222,18 @@ w trakcie Focus. Po Stop, Pause i w przerwie odnawianie się kończy i status wy
   Pause/Resume mają efekty audio i ostrzeżenia (tabela w ARCHITECTURE §5.4).
 - Walidacja configu (zakresy) i planer z `min_walk_secs`: plan zawsze mieści się w `break_secs`, a przy krótkiej przerwie ma mniej ćwiczeń, nie krótsze.
 
+**Poprawka (ADR-013, 2026-10-12):** zostają `TimingProfile` (`normal()` = 45/15 min, `demo()` = 40/20 s, `from_config`), dwa zegary i heurystyka luki.
+Próg luki to 90 s, a luka w Focus **i** w Break kończy się automatyczną pauzą (nie Idle). Odpadają ostrzeżenie w focusie, Postpone, reguły spotkania,
+plan przerwy i wyniki przerwy. Sesja jest pętlą Focus ⇄ Break aż do Stop; tabela faz jest w ADR-013.
+
+**Poprawka (ADR-016, 2026-10-13):** reguła R01 („spotkanie blokuje przerwę”) wraca w innej postaci: tylko dla spotkań z kalendarza i tylko według wyboru
+użytkownika. Przy `extend` focus trwa do końca spotkania, a przy `pauseAtBreak` przerwa zaczyna się w pauzie. Blokady sprawdzamy tylko wtedy,
+gdy tick osiąga termin focusa, w zegarze monotonicznym (godziny spotkań przelicza powłoka). Ostrzeżenie w focusie i Postpone nie wracają.
+
 ---
 
 ## ADR-012: Okna odtwarzają stan ze snapshotu; protokół gotowości
-**Status:** Proponowana (z review F05/F11)
+**Status:** Proponowana (z review F05/F11); w części zastąpiona przez ADR-013 (2026-10-12); okna zmienione przez ADR-014 i ADR-015 (2026-10-13)
 
 **Decyzja:** `SessionSnapshot` zawiera wszystko, czego potrzebuje dowolne okno (z aktywnym planem przerwy i `break_id`) oraz `revision`.
 Okno: listen → `get_snapshot` → stosuj tylko nowszą rewizję → `window_ready`. Okna przerwy tworzone są ukryte i pokazywane po gotowości,
@@ -177,3 +248,1676 @@ Aktor nie czeka na wolne efekty; ich wyniki są oznaczone `session_id`, a spóź
   jest ścieżką wyjścia niezależną od WebView. Zawieszenie całego procesu nie jest objęte gwarancją.
 - Każdy stan okna ma getter + event z rewizją (`get_snapshot`, `get_now_playing`, `get_tint_state`). Okna `tint-*` mają tylko odczyt
   (`get_tint_state`, `window_ready`), żadnych komend zmieniających stan.
+
+**Poprawka (ADR-013, 2026-10-12):** zostaje jedno okno główne. Obowiązują dalej: snapshot z `revision` (także `ShieldStatus` i `TeamsStatus`),
+wzorzec listen → getter → stosuj tylko nowszą rewizję oraz wykonawcy efektów z R02 (aktor nie czeka, jeden wykonawca na zasób, docelowy stan z generacją).
+Odpadają okna przerwy, ostrzeżenia i `tint-*`, `window_ready`, heartbeat, watchdog i `break_id`.
+
+**Poprawka (ADR-014, 2026-10-13):** wracają okna overlay odcienia (jedno na monitor) i dochodzi małe okno `popup` (okienko faz).
+Oba stany mają parę getter + event z rewizją: `get_tint_status` + `tint://changed` (`TintStatus`) i `get_popup` + `popup://show` (`PopupInfo`).
+Okna overlay tylko czytają stan, a okno `popup` dodatkowo wysyła `popup_action`. Protokół gotowości, heartbeat, watchdog i `break_id` nie wracają.
+
+**Poprawka (ADR-015, 2026-10-13):** okna overlay odcienia (`tint-*`) i trasa `/tint` znikają. Para `get_tint_status` + `tint://changed` zostaje,
+ale `TintStatus` opisuje teraz Oświetlenie nocne albo gamma ramp (nowe pola `mode` i `capped`), a czyta go tylko okno główne.
+Poza oknem głównym zostają okno `popup` i okno YouTube `media`.
+
+---
+
+## ADR-013: Speedrun: pivot produktu
+**Status:** Przyjęta (2026-10-12, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); uzupełniona 2026-10-13 o okno YouTube (pkt 2) i listę stron w pliku `websiteblacklist.txt` (pkt 4); w części zmieniona przez ADR-014 (2026-10-13: pkt 4, 6 i 7), ADR-015 (2026-10-13: pkt 2, 3 i 5), ADR-016 (2026-10-13: pkt 1, 4 i 7) i ADR-018 (2026-10-13: pkt 4, zgłoszenie `POST /v1/report` do mostu)
+
+**Kontekst:** termin oddania to **jutro** (2026-10-13). Po T0-2/T0-3 nie było jeszcze kontraktu (T0-4), maszyny stanów ani okien przerwy,
+a plan M1–M4 zakładał jeszcze ok. 10 dni pracy. Równocześnie właściciel produktu zmienił wymagania:
+- czasy ustawia użytkownik (domyślnie **45 min skupienia / 15 min przerwy**), a sesja kręci się w pętli aż do Stop;
+- muzyka z **folderu**, z **listy linków** (YouTube, YouTube Music, playlisty, bezpośrednie URL-e audio) albo ze **streamu** (np. Lofi Girl na YouTube);
+- na czas skupienia aplikacja „wycisza świat”: powiadomienia Windows, status Teams, rozpraszające strony w przeglądarce.
+  W przerwie wszystko wraca, a **muzyka gra dalej**;
+- dzwonek i powiadomienie przy każdej zmianie fazy; Pauza i Stop w dowolnej chwili;
+- na koniec sesji wykres produktywności według aktywnego procesu.
+
+Plan z ADR-009…012 (pełnoekranowe okna przerwy na każdym monitorze, protokół gotowości okien, tint, tryb spotkania) jest za drogi na jeden dzień
+i nie odpowiada na nowe wymagania. rodio nie odtworzy YouTube ani streamu bez pobierania strumienia zewnętrznymi narzędziami.
+
+**Opcje — muzyka:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Odtwarzacz w WebView** (osadzony player YouTube, `<audio>`, WebAudio) | YouTube / YouTube Music / live przez oficjalny player; folder przez asset protocol; szum offline; bez nowych zależności | gra tylko, dopóki żyje WebView okna głównego (zamknięcie okna = ukrycie); część filmów blokuje osadzanie (błędy 101/150); polityka autoplay |
+| rodio + `yt-dlp` / `ffmpeg` | jeden silnik audio w Ruście | pobieranie strumienia łamie regulamin YouTube; duże binarki; psuje się przy każdej zmianie YouTube |
+| rodio dla folderu, YouTube w przeglądarce użytkownika | prosto | brak kontroli nad pauzą i przerwą; dwa osobne światy |
+
+**Opcje — blokada stron („wstrzyknięcie się” w przeglądarkę):**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Rozszerzenie MV3 + lokalny most HTTP** | oficjalne API (`declarativeNetRequest`, `tabs`); Chrome, Edge, Brave, Opera, Vivaldi; adres strony nie opuszcza przeglądarki | użytkownik raz ładuje rozszerzenie ręcznie (tryb dewelopera); brak Firefoksa w MVP |
+| Wstrzyknięcie DLL / hook w proces przeglądarki | nic do instalowania | alarm antywirusa, niestabilne, zachowanie typowe dla malware; **odrzucone** |
+| `--remote-debugging-port` (CDP) | pełna kontrola kart | restart przeglądarki z flagą; otwarty port debugowania to dziura bezpieczeństwa |
+| Plik `hosts` / proxy / PAC | każda przeglądarka | prawa administratora albo zmiana systemowa; nie wraca po crashu; psuje inne aplikacje |
+| Tylko tytuł okna przeglądarki | zero instalacji | wykrywa, ale nie blokuje; zależy od tytułu strony |
+
+**Decyzja:**
+
+1. **Pętla faz.** Idle → Focus (cykl 1) → Break → Focus (cykl 2) → … aż do Stop. Czasy z `TimingProfile::from_config`
+   (domyślnie 45/15 min, presety 25/5, 45/15, 50/10, 90/20; zakresy 1–240 i 1–120 min). Demo (`--demo` / `FOCUSMODE_DEMO=1`): 40 s / 20 s.
+   Pauza zamraża pozostały czas w Focus i w Break. „Pomiń fazę” działa w obie strony (pominięty Focus liczy się jako ukończony cykl).
+   Stop jest idempotentny w każdej fazie i zawsze daje dokładnie jedno `SessionEnded`.
+
+   | Faza | Start | Pause | Resume | Stop | SkipPhase | Tick po terminie |
+   |---|---|---|---|---|---|---|
+   | Idle | → Focus 1: osłony ↑, śledzenie ↑, dzwonek FocusStart | – | – | – | – | – |
+   | Focus | – | → pauza: śledzenie ↓, osłony zostają | – | → Idle: śledzenie ↓, osłony ↓, podsumowanie | → Break (jak po terminie) | → Break: śledzenie ↓, osłony ↓, dzwonek BreakStart, toast |
+   | Break | – | → pauza | – | → Idle, podsumowanie | → Focus n+1 | → Focus n+1: dzwonek FocusStart, toast, osłony ↑, śledzenie ↑ |
+   | Focus/Break w pauzie | – | – | → bieg, `deadline = now + remaining` (w Focus śledzenie ↑) | → Idle, podsumowanie | → następna faza, bez pauzy | czas stoi |
+
+   Kolejność efektów należy do kontraktu: przy przejściu do przerwy osłony schodzą **przed** toastem (inaczej wyciszone powiadomienia
+   połknęłyby komunikat o przerwie), a przy powrocie do skupienia toast idzie **przed** podniesieniem osłon.
+   Luka zegara > 90 s (uśpienie, hibernacja, skok zegara kalendarzowego) daje automatyczną pauzę z `remaining` liczonym od ostatniego zaufanego ticka
+   i `Notify(Interrupted)`. Czasu luki nie liczymy ani jako skupienia, ani jako przerwy.
+2. **Muzyka w WebView, nie w rodio.** Źródła: `stream` (domyślnie publiczny live Lofi Girl na YouTube: tylko link, bez ich grafik i marki),
+   `links`, `folder`, `noise` (brown/pink/white w WebAudio, offline) i `none`. Odtwarzacz żyje w layoucie okna głównego. Zamknięcie okna je ukrywa,
+   a WebView2 dostaje `--autoplay-policy=no-user-gesture-required`. Muzyka gra w Focus i w Break (chyba że włączono `pauseDuringBreak`),
+   stoi w pauzie i zatrzymuje się po Stop. Asset protocol dopuszcza tylko pliki audio znalezione przy skanie folderu wybranego przez użytkownika
+   (nie cały folder). YouTube gra w osadzonym iframe sterowanym przez `postMessage`, bez ładowania skryptów Google (`iframe_api`) do aplikacji,
+   a okno ma ustawione CSP (`app.security.csp`). Link YouTube, który odmawia osadzania, gra w osobnym oknie YouTube (niżej);
+   inny link, którego nie da się odtworzyć, jest pomijany z komunikatem.
+
+   **Okno YouTube (fallback, 2026-10-13).**
+   - *Dlaczego:* test end-to-end zainstalowanej aplikacji pokazał, że ówczesny domyślny stream (live Lofi Girl, `watch?v=jfKfPfyJRdk`) w osadzonym playerze
+     kończy się błędem 150. Na stronie YouTube okazało się, że ta transmisja już się skończyła („Nagranie tej transmisji jest niedostępne”):
+     identyfikatory transmisji Lofi Girl się zmieniają, więc domyślny adres to teraz `https://www.youtube.com/@LofiGirl/live` (zawsze bieżąca transmisja kanału). Sprawdzone 2026-10-13: tak samo z https://example.com i dla
+     `/embed/live_stream?channel=…`, a zwykłe filmy w naszym embedzie grają. Osadzania odmawia też wiele utworów YouTube Music (kanały „Topic”).
+   - *Jak:* gdy player zgłosi `onError` 101, 150 albo 153 albo link youtube.com / music.youtube.com / youtu.be nie daje się osadzić
+     (np. `/@kanał/live`, `/channel/<id>/live`, `/@kanał`), odtwarzacz woła `open_media_window`. Powłoka otwiera osobne okno Tauri `media`,
+     które ładuje stronę YouTube jako stronę najwyższego poziomu (jak zwykła karta przeglądarki). Okno nie ma żadnych uprawnień IPC.
+     Powłoka steruje nim (`control_media_window`: play, pause, głośność, pokaż, zamknij) przez `eval` wstrzykniętego kontrolera,
+     a stan (otwarte, adres, tytuł) wysyła jako `media://window` z rewizją (getter `get_media_window`). Nawigacja jest ograniczona do domen YouTube i Google,
+     a inne linki otwierają się w przeglądarce systemowej. Okno dzieli profil WebView2 z oknem głównym, więc zgoda YouTube na ciasteczka zostaje zapamiętana.
+     **Okno jest ukrytym odtwarzaczem w tle** (decyzja właściciela produktu: nie zaśmiecać ekranu): tworzone jako niewidoczne, X tylko je chowa
+     (muzyka gra dalej), a aplikacja niszczy je dopiero przy zmianie źródła. Wyjątek: dopóki YouTube nie zapisał wyboru dotyczącego ciasteczek
+     (ciasteczko `SOCS` z niezerowym pierwszym polem; przy pierwszej wizycie YouTube ustawia `SOCS` z zerem), okno pojawia się na środku ekranu,
+     bo YouTube nic nie odtwarza, dopóki użytkownik nie wybierze opcji. Po zapisaniu wyboru okno chowa się samo. Aplikacja nie klika zgody za użytkownika.
+   - *Konsekwencje:* ciasteczka YouTube/Google trafiają do profilu WebView2 aplikacji. W tym trybie aplikacja nie przechodzi sama do następnego linku
+     po końcu utworu. Sprawdzone 2026-10-13 na buildzie release: ukryte okno odtwarza (WebView2 nie odkłada mediów w ukrytym oknie Tauri), pauza, głośność i przerwa działają.
+     W oknie `media` działają skrypty YouTube (w oknie głównym nadal nie).
+3. **rodio tylko do dzwonków.** `focus-audio::ChimePlayer` gra syntetyczny dzwonek (BreakStart opadający, FocusStart rosnący) na dedykowanym wątku.
+   Urządzenie otwiera leniwie i ponownie po błędzie. Brak urządzenia = log + `app://error`, sesja trwa.
+4. **Osłony skupienia** podnosimy na czas Focus (także w pauzie), a opuszczamy w przerwie, po Stop i przy wyjściu z aplikacji.
+   Każdą włącza się osobno w ustawieniach. Wykonawcą jest jeden wątek powłoki (`shields.rs`) z docelowym stanem i generacją (zgodnie z R02).
+
+   | Osłona | Mechanizm | Domyślnie | Powrót |
+   |---|---|---|---|
+   | Powiadomienia Windows | „Nie przeszkadzać” (Windows 11) / Focus Assist „Tylko priorytetowe” (Windows 10) przez nieudokumentowaną klasę COM bieżącego użytkownika `QuietHoursSettings` (`IQuietHoursSettings::put_UserSelectedProfile`, tej samej używa centrum powiadomień), bez praw administratora, bez rejestru i restartu Explorera. Stan sprzed focusa czytamy przez `get_UserSelectedProfile`, a awaryjnie ze stanu WNF `WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED` (tylko odczyt). DND włączamy tylko wtedy, gdy był wyłączony | wył. | w przerwie, po Stop i przy wyjściu DND jest wyłączany z powrotem, ale tylko jeśli włączył go FocusMode (włączonego wcześniej nie ruszamy). Zaraz po włączeniu `MuteToken` trafia do `shields-restore.json`, a w `HKCU\…\RunOnce` powstaje wpis `FocusModeRestore` (FocusMode z `--restore-shields`). Po crashu albo kill powiadomienia przywraca następny start aplikacji, a jeśli nikt jej nie uruchomi, następne logowanie |
+   | Teams „Nie przeszkadzać” | Microsoft Graph `setUserPreferredPresence` (delegowane `Presence.ReadWrite`, device code flow, własna rejestracja aplikacji w Entra ID, token odświeżania szyfrowany DPAPI) z `expirationDuration` = focus + 5 min | wył. | `clearUserPreferredPresence` na przerwę i po Stop; gdy aplikacja zginie, status sam wygasa |
+   | Blokada stron | rozszerzenie MV3 pyta `GET http://127.0.0.1:47615/v1/state` (co 30 s, przy zmianie karty i nawigacji) i przekierowuje strony z listy `websiteblacklist.txt` (domeny i regexy, niżej) na swoją stronę „Wracaj do pracy”. Awaryjnie, zawsze gdy rozszerzenie nie odpytało mostu w ostatnich 90 s (np. nie jest zainstalowane), tracker porównuje tytuł okna przeglądarki z listą → `focus://nudge`, toast i okno FocusMode na wierzch | wł. | most zwraca `active: false`, rozszerzenie zdejmuje reguły; strona blokady w przerwie pokazuje link do oryginału |
+   | Nie usypiaj | `PowerCreateRequest` + `PowerSetRequest` (ekran + system) | wł. | `PowerClearRequest`; żądanie znika razem z procesem |
+
+   Most HTTP słucha tylko na loopbacku, obsługuje tylko odczyt stanu (`GET`) i wysyła nagłówki CORS tylko originom rozszerzeń.
+   Adresy odwiedzanych stron nie trafiają do aplikacji: rozszerzenie dopasowuje je u siebie.
+
+   **Lista stron w pliku `websiteblacklist.txt` (2026-10-13).**
+   - *Dlaczego:* właściciel produktu chce listy, którą edytuje się jak zwykły plik tekstowy, z obsługą wyrażeń regularnych
+     i od razu wypełnionej popularnymi rozpraszaczami dla polskich i anglojęzycznych użytkowników (kwejk, jbzd, reddit, facebook…).
+     Same domeny nie wystarczą, gdy trzeba zablokować tylko część serwisu (YouTube Shorts, tablica LinkedIn, strona główna portalu z pocztą).
+   - *Gdzie:* `websiteblacklist.txt` w katalogu konfiguracji aplikacji (na Windows `%APPDATA%\com.focusmode.app\websiteblacklist.txt`).
+     Przy pierwszym starcie (brak pliku) powłoka tworzy go z domyślnej listy wbudowanej w aplikację (`crates/focus-core/assets/websiteblacklist.txt`).
+     **Plik to jedyne źródło listy**: pole `config.shields.blocklist` zostało usunięte, a `shields.blockSites` zostaje jako włącznik osłony.
+     Stary `config.json` z tym polem nadal się wczytuje, a pole jest ignorowane.
+   - *Format:* jedna pozycja w linii; linia zaczynająca się od `#` to komentarz, puste linie są pomijane.
+     Zwykła linia to domena (normalizowana: bez schematu, ścieżki, portu i początkowego `www.`), która blokuje siebie i wszystkie subdomeny.
+     Linia ujęta w ukośniki `/…/` (co najmniej 3 znaki) to regex ze środka. Linia zawierająca któryś ze znaków `\ ^ $ * + ? ( ) [ ] { } |`
+     to regex w całości (sama kropka nie robi z linii regexu, więc `kwejk.pl` jest domeną). Wklejony adres ze znakiem `?`
+     (np. `https://www.youtube.com/watch?v=…`) byłby regexem, który nie pasuje nawet do samego siebie, więc trafia do `issues` z podpowiedzią (sama domena albo `\?`).
+     Regexy mają składnię RE2 (wspólną dla crate'u `regex` i Chrome: bez lookaround i odwołań wstecznych) i są dopasowywane bez rozróżniania
+     wielkości liter: **w rozszerzeniu do pełnego adresu URL karty**, a **w awaryjnym nudge'u do tytułu okna przeglądarki**.
+   - *Jak:* `focus-core` (`blocklist.rs`) parsuje tekst czystą funkcją, bez I/O. Linie z błędem (niepoprawna domena, niepoprawny albo zbyt złożony regex,
+     przekroczony limit) są pomijane i trafiają do `issues` z numerem linii i polskim opisem, a reszta listy działa.
+     Powłoka (`src-tauri/src/blocklist.rs`) wczytuje plik przy starcie, **automatycznie po każdym zapisie** i na żądanie (`reload_blocklist`).
+     Zmiana wyniku daje `blocklist://changed` (`BlocklistInfo` z rewizją, getter `get_blocklist`), a most od razu podaje nowe `blocklist` i `patterns` (rozszerzenie bierze je przy następnym odpytaniu, najpóźniej po 30 s).
+     Gdy pliku nie da się przeczytać, `BlocklistInfo.error` opisuje błąd, a w użyciu zostaje poprzednia lista (albo domyślna).
+   - *UI:* w Ustawieniach (blokada stron) przycisk otwiera plik w **domyślnym edytorze tekstu systemu** (`open_blocklist_file`), drugi wczytuje go
+     ponownie. Obok są liczba domen i wzorców, ścieżka pliku i lista pominiętych linii.
+   - *Domyślna lista:* polskie i anglojęzyczne rozpraszacze w sekcjach (memy, media społecznościowe i fora, plotki, sport, wideo i streaming, gry, zakupy).
+     LinkedIn jest blokowany tylko na tablicy (`linkedin\.com/feed`), a YouTube tylko w Shorts (cały YouTube jest zakomentowany).
+     Portale (onet, wp, interia, o2, gazeta) są blokowane **tylko na stronie głównej** regexem `^https?://(www\.)?(onet|wp|interia|o2|gazeta)\.pl/?(\?.*)?$`,
+     więc ich poczta i inne usługi działają dalej. Wiadomości i komunikatory są zakomentowane, do włączenia przez usunięcie `#`.
+   - *Konsekwencje:* regexy wykonują się w czasie liniowym (RE2 / `regex`), więc wzorzec z pliku nie zawiesi aplikacji ani przeglądarki.
+     Wzorce pisane pod adres URL (np. z `^https?://`) nie pasują do tytułu okna, więc bez rozszerzenia nudge łapie głównie domeny.
+     Prywatność się nie zmienia: rozszerzenie dostaje listę z mostu i dopasowuje adres lokalnie, a tytułów okien nie zapisujemy.
+     Nowa zależność: `regex` w `focus-core` (czysta biblioteka, więc zasada „core bez I/O” zostaje).
+5. **Śledzenie aktywnej aplikacji.** Co 1 s w trakcie biegnącego Focus (nie w pauzie i nie w przerwie) pobieramy nazwę procesu okna na pierwszym planie
+   i czas bezczynności (`GetLastInputInfo`; próg 120 s, w demo 30 s). Zapisujemy tylko sumy sekund per proces oraz „Bezczynność” i „Nieznane”.
+   Tytułów okien nie zapisujemy. Po Stop `SessionSummary` trafia do `history.jsonl` i na ekran podsumowania z wykresem słupkowym według procesu.
+   Śledzenie można wyłączyć (`trackApps`).
+6. **Okno i tray.** Jedno okno główne (Skupienie / Podsumowanie / Ustawienia) i tray (Start, Pauza/Wznów, Pomiń fazę, Stop, Pokaż okno, Zakończ),
+   którego pozycje idą kanałem aktora, niezależnie od WebView. Toasty z `tauri-plugin-notification`, single-instance, opcjonalny autostart
+   (przy logowaniu aplikacja startuje zminimalizowana do zasobnika).
+   Instalator NSIS per-user z rozszerzeniem jako zasobem.
+7. **Odłożone:** pełnoekranowe okna przerwy na każdym monitorze i prowadzone ćwiczenia (`assets/exercises.json`, planer przerwy),
+   okienko ostrzeżenia i „Jeszcze 2 min”, tryb „Jestem na spotkaniu”, tint (overlay i gamma), fade i gong w rodio, gatunki `genres.toml`,
+   statystyka dnia jednym zdaniem, rozszerzenie dla Firefoksa, gwarancje UX na macOS/Linux (tam działają implementacje `Noop`).
+
+**Konsekwencje:**
+- `api.rs` jest napisany od nowa pod ten zakres i powstał w tej samej gałęzi co implementacja. To **wyjątek** od zasady osobnego PR-a z kontraktem.
+  Dopóki `cargo test` nie ruszy, bindingi TS są pisane ręcznie w formacie ts-rs. Po pierwszym zielonym `cargo test -p focus-core`
+  polecenie `git diff src/lib/bindings` musi być puste.
+- Przerwa nie wygania już od ekranu: to dzwonek, toast i karta z propozycjami ruchu w oknie głównym. „Wymuszenie” przerwy jest słabsze,
+  za to nic nie może uwięzić użytkownika.
+- Wyciszenie powiadomień opiera się na nieudokumentowanym interfejsie COM Windows i może przestać działać po aktualizacji systemu.
+  Gdy klasy COM nie ma, osłona dostaje status `Unavailable`, a gdy nie uda się samo przełączenie, `Error` + `app://error`. Sesja trwa w obu
+  przypadkach. Dlatego osłona jest domyślnie wyłączona. Gdy DND było wyłączone przed focusem, a użytkownik zmieni je ręcznie w trakcie,
+  koniec focusa i tak je wyłączy.
+- Automatyczne `clearUserPreferredPresence` kasuje też status ustawiony w Teams ręcznie (ryzyko z ADR-010 R07). Przyjmujemy to świadomie,
+  bo właściciel produktu chce zdjęcia DND w przerwie; ustawienia o tym ostrzegają. W długiej pauzie DND może wygasnąć przed końcem focusa
+  (`TODO(hackathon)`: odnawianie).
+- Teams wymaga własnej rejestracji aplikacji w Entra ID i zgody tenantu (T0-8 nadal nierozstrzygnięty), więc pozostaje funkcją opcjonalną.
+- Rozszerzenie trzeba raz załadować ręcznie. Między zmianą fazy a nałożeniem albo zdjęciem reguł mija do 30 s (przy nawigacji szybciej).
+  Gdy port 47615 jest zajęty, mostu nie ma i zostaje awaryjny nudge po tytule okna.
+- Muzyka zależy od WebView2 i sieci (poza folderem i szumem). Część linków YouTube nie pozwala na osadzanie; grają w osobnym oknie YouTube (pkt 2).
+- Nowe zależności: `windows` 0.62 i `reqwest` 0.13 w `focus-platform`; pluginy Tauri dialog, notification, single-instance, autostart i log,
+  a także `tokio`, `tiny_http` i `anyhow` w powłoce; pluginy JS dialog, notification, autostart i log; `regex` w `focus-core` (lista stron, pkt 4).
+  `rodio =0.22.2` zostaje, tylko dla dzwonków.
+- DESIGN.md i ARCHITECTURE.md są w części nieaktualne (w ARCHITECTURE aktualny jest §6, kontrakt IPC). Do czasu ich aktualizacji wygrywa ten ADR i `api.rs`.
+
+**Co zastępuje:**
+- ADR-003 **częściowo**: rodio i dedykowany wątek zostają tylko dla dzwonków; muzyka, gatunki, fade i docelowy stan odtwarzania (R04) przechodzą do WebView.
+- ADR-009 **w części**: tint wypada z zakresu. Jeśli wróci, obowiązuje overlay zamiast gammy.
+- ADR-010 **w części**: ręczny tryb spotkania odpada. Teams DND z *Could* staje się opcjonalną osłoną z automatycznym czyszczeniem (uchyla R07)
+  i wygaśnięciem focus + 5 min zamiast odnawianych 10 min. Wykrywanie rozmów nadal Won't.
+- ADR-011 **w części**: zostają `TimingProfile`, dwa zegary i heurystyka luki (próg 90 s; w przerwie też auto-pauza, a nie Idle).
+  Odpadają ostrzeżenie w focusie, Postpone, plan przerwy i wyniki przerwy. Demo to 40/20 s.
+- ADR-012 **w części**: zostają snapshot z `revision`, wzorzec listen → getter → nowsza rewizja i wykonawcy efektów (R02).
+  Odpadają okna przerwy, ostrzeżenia i tint, `window_ready`, heartbeat oraz `break_id`.
+- ADR-001, 002, 006, 007 i 008 bez zmian: core nadal jest czysty, kontrakt idzie przez ts-rs, a platformą odbioru jest Windows.
+
+**Poprawka (ADR-014, 2026-10-13):** pkt 6: pierwsze X na oknie głównym pyta, czy schować aplikację do zasobnika, a zamiast toastów
+mogą się pojawiać okienka FocusMode. Pkt 7: tint nie jest już odłożony (wraca jako overlay). Pkt 4: dochodzi osłona „zamknij launchery gier”;
+Teams nie rusza statusu „offline” ani własnego DND użytkownika; `BlocklistIssue` niesie kod (`code`), a polski opis wybiera UI.
+
+**Poprawka (ADR-015, 2026-10-13):**
+- Pkt 2: dochodzi źródło `library` (muzyka dołączona do aplikacji: Open Lo-Fi, CC0, offline) i to ono jest domyślne w nowym configu.
+  Stream Lofi Girl zostaje jako wybór; stary `config.json` z zapisanym źródłem zachowuje je.
+- Pkt 3: oprócz syntetycznych pakietów dzwonków rodio gra też własny plik użytkownika skopiowany do folderu danych aplikacji.
+- Pkt 5: tracker pomija powierzchnie powłoki Windows (pasek zadań, pulpit, menu Start, wyszukiwanie, widok zadań, `ShellExperienceHost` itd.).
+  **Tytuły okien zapisujemy** (zdanie „Tytułów okien nie zapisujemy” przestaje obowiązywać), ale tylko przy włączonym `trackTitles`,
+  przycięte i tylko lokalnie, jako podpowiedź na wykresie. Zapis do `history.jsonl` można wyłączyć (`keepHistory`), a historię usunąć jednym przyciskiem.
+
+**Poprawka (ADR-016, 2026-10-13):**
+- Pkt 1: tabela faz dostaje wiersz dla Tick po terminie w Focus, gdy przerwa zaczynająca się teraz nachodzi na spotkanie z kalendarza.
+  Wybór `extend` przesuwa termin focusa na koniec spotkania, bez efektów. Wybór `pauseAtBreak` zaczyna przerwę w pauzie, z tymi samymi efektami
+  w tej samej kolejności co zwykła przerwa, tylko `Notify(BreakHeld)` zastępuje `Notify(BreakStarted)`. Pomiń fazę, Pauza, Wznów i Stop działają bez zmian.
+- Pkt 4: logowanie Teams prosi też o `Calendars.Read`, bo ten sam token czyta kalendarz Microsoft.
+- Pkt 7: przycisk „Jestem na spotkaniu” nadal jest odłożony; spotkania z kalendarza obsługuje ADR-016.
+
+**Poprawka (ADR-018, 2026-10-13):** pkt 4: most nie jest już wyłącznie do odczytu. Przyjmuje jedno zapisujące zapytanie, `POST /v1/report`, w którym rozszerzenie
+zgłasza wzorce z listy aplikacji, których przeglądarka nie przyjęła jako reguł; tylko z originu rozszerzenia, z nagłówkiem `X-FocusMode-Extension: 1`, z limitami rozmiaru,
+a aplikacja zostawia z niego tylko wzorce z bieżącej listy. Adresy odwiedzanych stron nadal nie trafiają do aplikacji.
+
+---
+
+## ADR-014: Zasobnik i okienka faz, odcień ekranu (overlay), zamykanie launcherów gier, języki
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); w części zmieniona przez ADR-015 (2026-10-13: pkt 2 i 6, overlay odcienia odrzucony); pkt 1 uzupełniony przez ADR-016 (2026-10-13: okienka spotkań) i ADR-018 (2026-10-13: okienka czekają w czasie prezentacji, maskotka)
+
+**Kontekst:** po pierwszych testach zakresu z ADR-013 właściciel produktu poprosił 2026-10-13 o:
+1. możliwość schowania aplikacji do zasobnika i **okienka przy starcie skupienia i przerwy** w stylu FocusMode (małe okno w rogu ekranu,
+   jak komunikaty antywirusa) zamiast toastów Windows. Pierwsze X na oknie ma zawsze zapytać, czy schować aplikację do zasobnika, a „tak” włącza też okienka;
+2. **ciepły odcień ekranu** zależny od pory dnia (np. cieplej po 18:00, normalnie od 9:00), domyślnie wyłączony;
+3. **zamykanie launcherów gier** (Steam, Epic Games Store, GOG Galaxy…) na start skupienia, z polami wyboru, które zamykać;
+4. przełączniki „Nie przeszkadzać” także dla **innych komunikatorów** (np. Discord), ale nie wtedy, gdy użytkownik jest tam niewidoczny;
+   jeśli się nie da, pominąć.
+
+Do tego kolejny krok to tłumaczenie aplikacji na 10 języków, więc teksty dla użytkownika nie mogą powstawać w `focus-core`.
+Stan z ADR-013 stał temu na przeszkodzie: X zawsze chowało okno (bez pytania, więc łatwo było przeoczyć, że aplikacja działa dalej), tint był odłożony
+(twarda zasada 6 w CLAUDE.md), Teams DND przykrywało także „Wyświetlaj jako offline” i ręczne DND, a potem je czyściło,
+a parser `websiteblacklist.txt` w core zwracał opisy błędów po polsku.
+
+**Opcje — okienka faz:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Własne okno Tauri `popup` w rogu ekranu** | wygląd aplikacji; własne przyciski (pokaż okno, pomiń fazę); nie jest powiadomieniem Windows, więc „Nie przeszkadzać” go nie wycisza | kolejne okno WebView (pamięć); nie może kraść fokusu ani zasłaniać pracy |
+| Toast Windows (`tauri-plugin-notification`, stan z ADR-013) | natywny, bez kodu UI | wygląd systemu; w trybie dev nazwa i ikona PowerShell; przyciski akcji w pluginie są tylko na mobile |
+| Okno główne na wierzch | nic nowego | wyrywa z pracy i kradnie fokus |
+
+**Opcje — odcień ekranu:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Overlay: przezroczyste, klikalne na wylot okno na każdym monitorze** (ADR-009) | znika z procesem, więc kolory zawsze wracają; działa z HDR i razem z „Oświetleniem nocnym” Windows; zwykłe API okien Tauri | nie przykrywa gier w wyłącznym pełnym ekranie; mieszanie alfa obniża kontrast; trafia na zrzuty ekranu |
+| Gamma ramp (`SetDeviceGammaRamp`) | prawdziwa zmiana kolorów, także kursora | odrzucona w ADR-009 (R08): brak gwarancji powrotu po kill, gubi kalibrację, HDR niezdefiniowany |
+| Sterowanie „Oświetleniem nocnym” Windows | systemowe | brak publicznego API (tylko nieudokumentowany zapis w rejestrze); odrzucone |
+
+**Opcje — launchery gier:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Zamknięcie procesów o dokładnych nazwach, w sesji użytkownika, na start focusa** | bez praw administratora; użytkownik wybiera launchery | launcher można uruchomić ponownie w trakcie; nazwy procesów zmieniają się z wersjami |
+| Blokada uruchamiania (IFEO `Debugger`, AppLocker, zatrzymanie usług) | trwała | prawa administratora, zmiana systemowa, nie wraca po crashu; odrzucone |
+| Tylko przypomnienie | bezpieczne | nic nie zamyka |
+
+**Opcje — inne komunikatory:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Teams przez Graph z odczytem statusu przed zmianą** | oficjalne API; ta sama zgoda `Presence.ReadWrite` | Graph nie odróżnia „Wyświetlaj jako offline” od braku zalogowania; status aktualizuje się z opóźnieniem |
+| Discord | – | brak API do zmiany statusu użytkownika (OAuth2 i lokalne RPC Discorda tego nie dają); automatyzacja konta tokenem użytkownika („self-bot”) łamie warunki korzystania z Discorda i grozi blokadą konta; **odrzucone** |
+| Slack (`dnd.setSnooze`) | oficjalne API | własna aplikacja Slack i zgoda workspace'u, kolejna integracja OAuth; poza zakresem, kandydat na później |
+
+**Decyzja:**
+
+1. **Zasobnik i okienka faz.**
+   - `Config.closeToTray: Option<bool>`, domyślnie `None` (= zapytaj). Dopóki wyboru nie ma, X na oknie głównym go nie zamyka: powłoka przerywa
+     zamknięcie (`CloseRequested` → `prevent_close`) i wysyła do okna `app://close-requested`. UI pyta, czy schować FocusMode do zasobnika,
+     i odpowiada komendą `resolve_close { toTray }`. Powłoka zapisuje wybór w configu: `toTray: true` włącza też `phasePopups` i chowa okno,
+     a `false` kończy aplikację (zwykłe wyjście, więc osłony schodzą). Kolejne X działa według zapisanego wyboru, bez pytania; wybór można zmienić w Ustawieniach.
+     Bez odpowiedzi: drugie X w ciągu minuty od pytania (ale nie szybciej niż po 1 s, czyli nie dwuklik) chowa okno do zasobnika, a X po dłuższym czasie
+     (pytanie zamknięte Escape albo zignorowane) pyta ponownie.
+   - Okna głównego nie niszczymy, dopóki działa aplikacja, bo w nim gra muzyka (ADR-013 pkt 2). X albo je chowa, albo kończy cały proces.
+     „Zakończ” w zasobniku działa zawsze, także gdy WebView nie odpowiada.
+   - *Zmiana 2026-10-13 (prośba właściciela):* `phasePopups` jest domyślnie **włączone** (nowe instalacje i reset); zapisany wybór w `config.json` zostaje, a brak pola daje nową wartość domyślną; toast Windows tylko przy wyłączonych okienkach albo gdy okna nie da się pokazać (także gdy jego strona się nie załadowała), nigdy oba.
+   - `Config.phasePopups`, domyślnie wyłączone; włącza je wybór zasobnika przy pierwszym X albo przełącznik w Ustawieniach. Gdy jest włączone,
+     zamiast toastu Windows powłoka pokazuje okno `popup` przy starcie przerwy i skupienia, przy automatycznej pauzie po uśpieniu
+     i po zamknięciu launcherów (`PopupKind`: `breakStarted`, `focusStarted`, `interrupted`, `launchersClosed`). Okno jest małe, w prawym dolnym rogu ekranu,
+     w stylu aplikacji, zawsze na wierzchu, bez paska zadań i bez przejmowania fokusu. Znika samo po kilku sekundach albo po kliknięciu:
+     `popup_action` z `dismiss`, `showMain` albo `skipPhase` (to samo, co „Pomiń fazę” w zasobniku).
+   - Okno `popup` (`src-tauri/src/popup.rs`, własny wątek) powstaje widoczne i bez aktywacji (`focused(false)`) dla każdego okienka i jest niszczone,
+     gdy okienko znika, bo `show()` na istniejącym oknie aktywowałoby je i zabrało fokus. Okienko, które przychodzi, gdy poprzednie jest jeszcze widoczne,
+     tylko je aktualizuje. Gdy strona sama się nie zamknie, powłoka chowa okno po limicie bezpieczeństwa. Gdy okna nie da się utworzyć,
+     powłoka pokazuje toast, który okienko zastępuje (degradacja, nigdy oba naraz).
+   - Stan okienka: `get_popup` + `popup://show` (`PopupInfo` z rewizją; `kind: null` = schowaj). Kolejność efektów z tabeli ADR-013 się nie zmienia:
+     core wysyła `Notify` w tym samym miejscu, a powłoka wybiera tylko kanał (okienko albo toast).
+2. **Odcień ekranu wraca, ale tylko jako overlay (ADR-009).**
+   - Przezroczyste, klikalne na wylot okna overlay, po jednym na monitor: bez dekoracji, zawsze na wierzchu, bez paska zadań i bez fokusu,
+     w ciepłym kolorze z przezroczystością zależną od poziomu. Gamma ramp i „Oświetlenie nocne” Windows odpadają.
+   - **Domyślnie wyłączony.** `Config.tint: TintConfig { enabled, startMinutes, endMinutes, strength, transitionMinutes }`; domyślnie od 18:00 (`1080`)
+     do 09:00 (`540`), siła 45 ze 100, przejście 30 min (zakres 0–180). Okno czasu może przechodzić przez północ, ale początek i koniec muszą się różnić.
+     Walidacja (`config.invalid` z polem `tint.*`) obowiązuje także przy wyłączonym odcieniu.
+   - Poziom liczy czysta funkcja `focus_core::tint::tint_level(cfg, minute_of_day)`: od `startMinutes` rośnie liniowo przez `transitionMinutes`,
+     a przed `endMinutes` tak samo opada (przejście zajmuje najwyżej połowę okna). Minutę doby czasu lokalnego daje `focus-platform`
+     (`clock.rs`, `GetLocalTime`), bo core nie czyta zegara, a kalendarzowe `now` sesji jest w UTC. Bez nowej zależności (np. `chrono`).
+   - Powłoka (`src-tauri/src/tint.rs`) przelicza poziom cyklicznie i po każdej zmianie configu, a przy poziomie 0 overlay znika.
+     Odcień nie jest osłoną skupienia: działa według pory dnia niezależnie od sesji (także w Idle i w przerwie), dopóki działa aplikacja.
+   - Podgląd w Ustawieniach: `preview_tint { strength }` pokazuje odcień o danej sile przez kilka sekund mimo harmonogramu, a `null` od razu kończy podgląd.
+     Stan: `get_tint_status` + `tint://changed` (`TintStatus` z rewizją: `enabled`, `level`, `preview`, `active`, `error`).
+   - W UI opisujemy go jako efekt wizualny: bez kalibracji barw i bez obietnic zdrowotnych (zasada 10 w CLAUDE.md).
+3. **Zamykanie launcherów gier** (nowa osłona skupienia).
+   - `shields.closeLaunchers` (domyślnie wyłączone) i `shields.launchers` (pola wyboru). Do wyboru: Steam, Epic Games Launcher, GOG Galaxy, Ubisoft Connect,
+     EA app, Battle.net i Riot Client (domyślnie zaznaczone) oraz Xbox app, Amazon Games i itch.
+   - Na **każdy start fazy Focus** (pierwszy cykl, każdy następny i „Pomiń fazę” z przerwy) powłoka zamyka procesy zaznaczonych launcherów.
+     Dopasowanie tylko po **dokładnych nazwach plików `.exe`** z `focus_core::launchers::process_names`, bez rozróżniania wielkości liter
+     (np. `steam.exe`, `steamwebhelper.exe`, `EpicGamesLauncher.exe`, `GalaxyClient.exe`; `steam.exe` nigdy nie trafi w `steamwebhelper.exe`).
+     Ogólnych nazw (`agent`, `launcher`, `helper`, `updater`…) na liście nie ma i pilnuje tego test.
+   - `focus-platform/src/processes.rs`: lista procesów z Toolhelp (`CreateToolhelp32Snapshot`), tylko procesy **bieżącej sesji Windows** (`ProcessIdToSessionId`),
+     nigdy własny proces. Proces zamykamy przez `TerminateProcess` (po ponownym sprawdzeniu nazwy przez uchwyt, bo pid mógł zostać użyty ponownie),
+     bez łagodnego `WM_CLOSE`, bo launchery na nie tylko chowają się do zasobnika. Główny proces launchera idzie przed procesami pomocniczymi,
+     żeby rodzic ich nie wskrzesił. Usług (`steamservice`, `EABackgroundService`…), procesów wymagających praw administratora i procesów gier nie ruszamy.
+     Proces, którego nie da się zamknąć, jest pomijany; błędem jest tylko nieudany odczyt listy procesów.
+   - Wynik trafia do `ShieldStatus.launchers` (`IntegrationStatus`) i `ShieldStatus.closedLaunchers`, a gdy coś zamknięto, do okienka `launchersClosed`.
+     Poza Windows: `Unavailable`.
+   - To jednorazowe sprzątanie, nie blokada: launchera nie pilnujemy w trakcie focusa i nie uruchamiamy go ponownie w przerwie ani po Stop.
+     Nie ma czego przywracać, więc zasada „osłony zawsze wracają” tej osłony nie dotyczy.
+4. **Teams szanuje status użytkownika; Discord odrzucony.**
+   - Na start focusa, przed `setUserPreferredPresence`, powłoka czyta bieżący status (`GET /me/presence`, w ramach zgody `Presence.ReadWrite`).
+     Gdy `availability` to `Offline` („Wyświetlaj jako offline” albo brak zalogowania), FocusMode **nie ustawia** DND, bo DND zrobiłoby z niewidocznego
+     użytkownika widocznego. Gdy `availability` to już `DoNotDisturb` (ustawione przez użytkownika, prezentacja, czas skupienia), FocusMode też go
+     nie ustawia. W obu przypadkach **nie czyści** statusu w przerwie ani po Stop: czyścimy tylko DND, które ustawiliśmy sami.
+   - Discord: nie robimy. Discord nie daje aplikacjom API do zmiany statusu użytkownika, a automatyzacja konta tokenem użytkownika („self-bot”)
+     łamie warunki korzystania z Discorda i grozi blokadą konta. Banery, które Discord pokazuje jako powiadomienia Windows, wycisza osłona powiadomień Windows.
+   - Inne komunikatory (np. Slack przez oficjalne `dnd.setSnooze`) są poza zakresem.
+5. **Języki.**
+   - `Config.language`: `system` (domyślnie) albo jeden z 10 języków: `en`, `pl`, `de`, `fr`, `it`, `uk`, `ru`, `es`, `zh`, `ja`.
+     `system` oznacza język wyświetlania Windows (`get_system_language`: `focus-platform/src/locale.rs` + `Language::from_tag`), a gdy go nie ma na liście, angielski.
+   - Język obejmuje UI, zasobnik, okienka faz i toasty. `focus-core` nie zawiera tekstów dla użytkownika: zwraca kody i ewentualny szczegół po angielsku
+     (`AppError.code`, nowe `BlocklistIssue.code`), a tekst wybiera UI (`src/lib/strings.ts`) albo powłoka (`src-tauri/src/texts.rs`).
+   - Tłumaczenia przyjdą osobnym przebiegiem. Do tego czasu wszystkie teksty są po polsku, niezależnie od `language`.
+6. **Okna i kontrakt.**
+   - Okno `popup` i okna overlay ładują lekkie strony z grupy tras `src/routes/(overlay)/`, bez odtwarzacza muzyki i nawigacji. Okno główne ładuje
+     `src/routes/(app)/`, gdzie żyje odtwarzacz, więc muzyka nie zagra w kilku oknach naraz.
+   - Kontrakt (`api.rs`; jak w ADR-013, w tej samej gałęzi co implementacja): komendy `resolve_close`, `get_system_language`, `get_popup`, `popup_action`,
+     `get_tint_status` i `preview_tint`; eventy `app://close-requested`, `popup://show` i `tint://changed`; DTO `Language`, `TintConfig`, `GameLauncher`,
+     `PopupKind`, `PopupInfo`, `PopupAction`, `TintStatus` i `BlocklistIssueCode`; nowe pola `Config` i `ShieldStatus`. Szczegóły: ARCHITECTURE §6.
+
+**Konsekwencje:**
+- Overlay nie zastąpi prawdziwej zmiany temperatury barwowej. Nie przykrywa gier i aplikacji w **wyłącznym pełnym ekranie** (omijają kompozycję pulpitu), ekranu blokady,
+  okien UAC ani części elementów systemu (np. menu Start), a kursor zostaje w normalnych kolorach. To zwykłe okno, więc trafia na zrzuty ekranu i nagrania
+  (chyba że powłoka wyłączy je z przechwytywania przez `content_protected`). Kolor jest nakładany przez mieszanie alfa, więc obraz traci trochę kontrastu,
+  a czernie lekko się rozjaśniają (gamma tylko by przygasiła niebieski). W zamian kolory zawsze wracają: okna giną razem z procesem, także po crashu i kill.
+- Okna overlay i `popup` to kolejne WebView, czyli więcej pamięci. Overlay na każdym monitorze trzeba odtworzyć po zmianie układu monitorów;
+  gdy się nie uda, `TintStatus.error` opisuje błąd, a harmonogram próbuje dalej.
+- Pierwsze X zachowuje się inaczej niż w ADR-013: przed wyborem nic się nie zamyka, a po „nie” X kończy aplikację (muzyka cichnie, osłony schodzą).
+  Jeśli UI nie odpowie na `app://close-requested`, okno zostaje otwarte, a wyjściem jest „Zakończ” w zasobniku (zasada 7).
+- Zamknięcie launchera może przerwać pobieranie albo aktualizację gry i czat w launcherze. Gra uruchomiona z launchera nie jest zamykana,
+  ale może stracić nakładkę i synchronizację, a część gier kończy się razem z launcherem. Dlatego osłona jest domyślnie wyłączona.
+  Nazwy procesów mogą się zmienić po aktualizacji launchera (lista w `crates/focus-core/src/launchers.rs`). Świadomie pominięte: Origin
+  (EA wyłączyło tego klienta 2025-04-17, a nazwa koliduje z innym oprogramowaniem), zbyt ogólne `Agent.exe` (Battle.net) i `butler.exe` (itch),
+  usługi oraz procesy uruchamiające gry.
+- Teams: Graph zwraca `Offline` zarówno dla „Wyświetlaj jako offline”, jak i dla braku zalogowania. W obu przypadkach nic nie zmieniamy
+  (bez sesji Teams preferowany status i tak nie byłby widoczny). Status w Graph aktualizuje się z opóźnieniem, więc odczyt tuż po naszym
+  `clearUserPreferredPresence` (bardzo krótka przerwa, np. 20 s w demo) może jeszcze pokazać DND, a wtedy kolejny cykl pominie Teams.
+  Ryzyko z ADR-013 zostaje w węższej postaci: status zmieniony ręcznie **w trakcie** focusa i tak zostanie wyczyszczony na przerwę.
+- Discord i inne komunikatory: brak funkcji; README wyjaśnia dlaczego.
+- `config.json` z nieznaną wartością enuma (np. język albo launcher z nowszej wersji po powrocie do starszej) nie wczytuje się i aplikacja wraca
+  do ustawień domyślnych (`config.corrupt`), tak jak przy pozostałych enumach. Stary `config.json` bez nowych pól wczytuje się z wartościami domyślnymi.
+- `BlocklistIssue` ma teraz `code` (`BlocklistIssueCode`), a `message` to angielski szczegół (np. powód z parsera regexu albo domena do podpowiedzi).
+  Polski opis z ADR-013 pkt 4 wybiera UI. Podpowiedź dla linii `*.facebook.com` istnieje na razie tylko jako angielski dopisek do szczegółu `invalidRegex`;
+  osobny kod (np. `wildcardDomain`) wymaga zmiany kontraktu przez `/sync-contract`.
+- Nowych crate'ów nie ma. W `focus-platform` dochodzą feature'y `windows`: `Win32_System_Diagnostics_ToolHelp`, `Win32_Globalization` i `Win32_System_RemoteDesktop`.
+- Twardej izolacji komend per okno (manifest komend w `build.rs`, ARCHITECTURE §10, B-12) nadal nie ma. Okna `popup` i overlay potrzebują tylko
+  swoich getterów i eventów, a `popup` także `popup_action`.
+
+**Co zmienia:**
+- ADR-009: tint wraca do zakresu, tylko jako overlay i domyślnie wyłączony. Gamma ramp nadal nie.
+- ADR-010 i ADR-013 pkt 4 (Teams): nie zmieniamy statusu „offline” ani DND ustawionego przez użytkownika i wtedy też go nie czyścimy.
+- ADR-012: wracają okna overlay (tylko odczyt stanu) i dochodzi okno `popup`; oba stany mają getter + event z rewizją.
+  Protokół gotowości, heartbeat i watchdog nie wracają.
+- ADR-013: pkt 6 (X pyta raz; okienka FocusMode zamiast toastów, gdy włączone), pkt 7 (tint nie jest już odłożony),
+  pkt 4 (nowa osłona: launchery gier; `BlocklistIssue.code`).
+- CLAUDE.md, twarda zasada 6: „Bez pełnoekranowych okien przerwy, gammy i trybu spotkania (odłożone, ADR-013); odcień ekranu tylko jako overlay,
+  domyślnie wyłączony (ADR-009, ADR-014)”.
+
+**Poprawka (ADR-015, 2026-10-13):** pkt 2 nie obowiązuje w części o mechanizmie: overlay odcienia (okna `tint-*`, trasa `/tint`, wpis `tint-*`
+w `capabilities/overlays.json`) jest usunięty, a ciepło ekranu daje Oświetlenie nocne Windows albo gamma ramp, z powrotem kolorów jak przy osłonach.
+Harmonogram (`startMinutes`, `endMinutes`, `strength`, `transitionMinutes`), podgląd, domyślne wyłączenie i niezależność od sesji zostają.
+Pkt 6: grupa tras `(overlay)` obsługuje już tylko okno `popup`. Konsekwencje dotyczące overlayu (pełny ekran, kontrast, zrzuty ekranu, okna per monitor) przestają obowiązywać,
+a w ich miejsce wchodzą konsekwencje z ADR-015.
+
+**Poprawka (ADR-016, 2026-10-13):** pkt 1: dochodzą dwa rodzaje okienek. `meetingReminder` to przypomnienie o spotkaniu, które wypada w przerwie,
+z tymi samymi wyborami co na stronie Skupienie (bez „przypomnij później” w ostatnim, 10 minut przed spotkaniem). `breakHeld` mówi, że przerwa zaczęła się
+wstrzymana z powodu spotkania. Oba niosą spotkanie w `PopupInfo.meeting` (`MeetingConflict`).
+
+**Poprawka (ADR-018, 2026-10-13):** pkt 1: okienko nie wyskakuje nad grą ani prezentacją. Gdy Windows zgłasza, że użytkownik prezentuje albo ma aplikację
+na pełnym ekranie (`SHQueryUserNotificationState`), okienko czeka (najwyżej 10 minut, zostaje najnowsze) i pojawia się, gdy to się skończy. W okienku
+jest maskotka „zza krawędzi” (wyłączana przez `showMascot`).
+
+---
+
+## ADR-015: Runda 2a: ciepło ekranu bez overlayu, motywy, dźwięki, muzyka, przerwy i historia
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`); pkt 2 uzupełniony przez ADR-018 (2026-10-13: pikselowa maskotka w motywie 8-bit)
+
+**Kontekst:** po testach zakresu z ADR-014 właściciel produktu poprosił 2026-10-13 o drugą rundę zmian (runda 2a):
+1. **Odcień ekranu jako overlay jest odrzucony**: „półprzezroczysta warstwa koloru to nie jest odcień”. Warstwa mieszana alfą obniża kontrast i rozjaśnia czernie,
+   nie zmienia kursora ani gier w wyłącznym pełnym ekranie, trafia na zrzuty ekranu i nagrania, a okna overlay były widoczne w Alt+Tab.
+   Potrzebna jest prawdziwa zmiana temperatury barwowej obrazu.
+2. **Motywy**: Midnight (obecny wygląd, domyślny), Vaporwave, fazy księżyca, przytulna jesień, prosty ciemny, prosty jasny i 8-bit.
+3. **Nawigacja**: podświetlenie aktywnej zakładki płynnie przesuwa się między Skupieniem, Podsumowaniem i Ustawieniami, a tło lekko przesuwa się
+   w lewo albo w prawo zgodnie z kolejnością zakładek.
+4. **Dźwięki dzwonków**: lista pasująca do motywów i „własny”: użytkownik wybiera plik, aplikacja kopiuje go do swoich danych i go używa.
+5. **Muzyka w zestawie**: utwory Open Lo-Fi (CC0) dołączone do aplikacji jako domyślna muzyka.
+6. **Własne przypomnienia na kolejne przerwy**, np. „1. przerwa: rozciąganie; 2.: woda i spacer z psem; 3.: obiad”.
+7. **Losowe porady na przerwę oparte na badaniach**, bez obietnic zdrowotnych.
+8. **Historia** (prośba użytkownika): nie liczyć w historii skupienia elementów powłoki Windows (np. `ShellExperienceHost`); gdy na pierwszym planie jest Eksplorator,
+   przeglądarka albo podobna aplikacja, zapamiętać tytuł okna i pokazać go po najechaniu myszą na wykres (z wyłącznikiem w Ustawieniach);
+   przycisk usuwający historię (z potwierdzeniem); opcja, żeby historii w ogóle nie zapisywać.
+
+Punkt 8 jest sprzeczny z twardą zasadą 11 w CLAUDE.md („tytułów okien nie zapisujemy”) i z ADR-013 pkt 5, więc wymaga tego ADR.
+Punkt 1 odwraca ADR-014 pkt 2, który odrzucił Oświetlenie nocne (brak publicznego API) i gamma ramp (ADR-009, R08).
+
+**Opcje — ciepło ekranu:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Overlay (ADR-014) | kolory wracają razem z procesem | **odrzucony przez właściciela**: warstwa koloru zamiast zmiany temperatury; niższy kontrast, jaśniejsze czernie, widoczny na zrzutach, nie obejmuje pełnego ekranu ani kursora |
+| **Oświetlenie nocne Windows** (domyślnie) | mechanizm systemu, który użytkownik zna; działa po kompozycji, więc zmienia cały obraz (także kursor) bez utraty kontrastu i nie trafia na zrzuty; ustawienie użytkownika, bez praw administratora | brak publicznego API: nieudokumentowany zapis ustawień w rejestrze, który może przestać działać po aktualizacji Windows (jak `IQuietHoursSettings` w ADR-013); zmienia ustawienie użytkownika, więc trzeba je przywracać także po crashu; jedna temperatura dla wszystkich monitorów |
+| **Gamma ramp** (`SetDeviceGammaRamp`, do wyboru) | po kompozycji, per monitor, także w grach na pełnym ekranie i na pasku zadań; nie rusza ustawień Windows | Microsoft odradza; brak efektu na monitorach HDR; Windows odrzuca rampy zbyt odległe od liniowej (bardzo ciepłe wartości są słabsze); rampa zostaje po crashu; konflikt z kalibracją monitora (R08) |
+
+**Opcje — tytuły okien w historii:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Najczęstsze tytuły każdej aplikacji, lokalnie, z wyłącznikiem** | odpowiada na prośbę; z „chrome.exe 40 min” wiadomo, co to było; ograniczona ilość danych | tytuły bywają prywatne (temat maila, nazwa dokumentu, strona w trybie prywatnym) i leżą w `history.jsonl` |
+| Tylko wybrane procesy (przeglądarki, Eksplorator) | mniej danych | lista procesów do utrzymania; prośba dotyczy „Eksploratora, przeglądarki itp.”, więc i tak szeroko |
+| Nie zapisywać (stan z ADR-013) | najprostsza prywatność | wykres nie mówi, co działo się w przeglądarce |
+
+**Decyzja:**
+
+1. **Ciepło ekranu: Oświetlenie nocne (domyślnie) albo gamma ramp; overlay usunięty.**
+   - `TintConfig.mode: TintMode` = `nightLight` (domyślnie) albo `gamma`. Harmonogram, siła, przejście, podgląd i domyślne wyłączenie zostają z ADR-014,
+     a odcień nadal działa według pory dnia, niezależnie od sesji. Siłę 0–100 zamienia na temperaturę `focus_core::tint::kelvin_for_level`
+     (0 = 6500 K, czyli bez zmian; 100 = 1900 K; interpolacja w miredach, żeby suwak zmieniał obraz równomiernie), a dla gammy
+     `rgb_gain_for_kelvin` daje mnożniki kanałów (dopasowanie krzywej ciała doskonale czarnego Tannera Hellanda, znormalizowane tak, że 6500 K = `[1, 1, 1]`).
+   - **Oświetlenie nocne** (`focus-platform/src/night_light.rs`): FocusMode włącza je i ustawia jego temperaturę według poziomu, a przy poziomie 0 wyłącza.
+     Zapis trafia do ustawień bieżącego użytkownika w rejestrze (`HKCU\…\CloudStore\…\windows.data.bluelightreduction.*`, nieudokumentowany format binarny),
+     bez praw administratora; do Windows 11 23H2 Windows stosuje zmianę sam. Zapisywane są tylko wartości, których układ FocusMode rozumie w całości.
+     **Od Windows 11 24H2 (kompilacja 26100+) zapis w rejestrze nie działa** (silnik czyta magazyn przez wewnętrzne API, a nie z rejestru; sprawdzone
+     na kompilacji 26200), więc `NightLight::available()` zwraca tam `false`, nic nie jest zapisywane, a domyślny tryb w praktyce działa przez gammę (niżej).
+   - **Gamma** (`focus-platform/src/gamma.rs`): dla każdego aktywnego monitora FocusMode przed pierwszą zmianą odczytuje **bazową rampę** (`GetDeviceGammaRamp`)
+     i ustawia bazę × mnożniki (`SetDeviceGammaRamp`), więc kalibracja monitora zostaje (R08). Gdy Windows odrzuci rampę jako zbyt odległą od liniowej,
+     FocusMode próbuje coraz słabszej i ustawia `TintStatus.capped` (na maszynie testowej najcieplej ok. 3300 K, czyli siła powyżej ok. 45 jest przycięta).
+     Monitor podłączony później dostaje rampę zapamiętaną przy pierwszym użyciu; ona też trafia do pliku przywracania i wraca przy przywracaniu.
+     Monitory HDR ignorują rampę (Windows przyjmuje wywołanie, obraz się nie zmienia), więc tam ocieplenie po prostu nie działa.
+   - Gdy Oświetlenie nocne jest niedostępne, powłoka (`src-tauri/src/tint.rs`, napisany od nowa) przechodzi na gammę, a powód podaje w `TintStatus.error`;
+     `TintStatus.mode` pokazuje mechanizm, który faktycznie działa. Przy `active: true` ten `error` to tylko informacja (UI pokazuje notkę o zastępstwie,
+     a nie błąd); niedostępność na danej wersji Windows nie wysyła `app://error`. Oświetlenie nocne jest próbowane ponownie przy następnym ciepłym okresie albo zmianie configu.
+     Gamma nie ma zastępstwa (błąd w `TintStatus.error`). Przy zmianie trybu (także przy przejściu na zastępstwo) powłoka najpierw przywraca stan poprzedniego
+     mechanizmu, więc oba nigdy nie działają naraz.
+   - **Powrót kolorów** (jak osłony, zasada 7): przed pierwszą zmianą FocusMode zapisuje to, co nadpisuje (kopię ustawień Oświetlenia nocnego
+     albo bazowe rampy monitorów), w `tint-restore.json` w katalogu danych aplikacji i uzbraja wpis RunOnce `FocusModeRestore` (`--restore-shields` przywraca też kolory).
+     Jeden wpis RunOnce obsługuje oba przywracania (`src-tauri/src/safety_net.rs`): istnieje, dopóki czeka którekolwiek, i znika, gdy nie czeka żadne.
+     Stan wraca, gdy poziom spada do 0, po wyłączeniu odcienia, przy zmianie trybu i przy wyjściu z aplikacji. Po crashu albo kill przywraca go następny start aplikacji,
+     a jeśli nikt jej nie uruchomi, następne logowanie. Plik jest usuwany dopiero po udanym przywróceniu.
+     Ustawienia Oświetlenia nocnego wracają takie, jakie były przed pierwszą zmianą.
+   - Usunięte: okna `tint-*`, trasa `src/routes/(overlay)/tint` i wpis `tint-*` w `capabilities/overlays.json`. `TintStatus` dostaje `mode` i `capped`,
+     a `active` znaczy „ciepło jest teraz zastosowane”.
+   - W UI „Ciepłe kolory ekranu” to zmiana wyglądu, bez kalibracji barw i bez obietnic zdrowotnych (zasada 10). Ustawienia uprzedzają,
+     że w trybie Oświetlenia nocnego FocusMode steruje tym ustawieniem Windows w swoich godzinach.
+
+2. **Motywy.** `Config.theme: Theme` = `midnight` (obecny wygląd, domyślny), `vaporwave`, `lunar` (fazy księżyca), `autumn` (przytulna jesień), `dark` (prosty ciemny),
+   `light` (prosty jasny) albo `pixel` (8-bit). Motyw to zestaw zmiennych CSS (kolory, akcent, tło) i dekoracja tła w `src/lib/themes/`, nakładany atrybutem
+   na korzeniu dokumentu w oknie głównym i w okienku `popup`. Tła powstają w kodzie (CSS/SVG); każda dołączona grafika z zewnątrz wymaga licencji i wpisu w `CREDITS.md` (zasada 10).
+   Tekst zachowuje kontrast co najmniej WCAG AA także w motywie jasnym, a animacje tła respektują `prefers-reduced-motion`.
+
+3. **Animowana nawigacja.** Podświetlenie aktywnej zakładki (kolor akcentu motywu, w Midnight pomarańczowy) przesuwa się płynnie między Skupieniem,
+   Podsumowaniem i Ustawieniami, a warstwa tła przesuwa się o kilka procent w lewo albo w prawo według numeru zakładki. Animujemy tylko `transform` i `opacity`
+   (bez przeliczania układu), a przy `prefers-reduced-motion: reduce` nic się nie przesuwa. Czysty frontend (layout `src/routes/(app)/`), bez zmian kontraktu.
+
+4. **Dźwięki dzwonków.**
+   - `Config.chimeSound: ChimeSound`: pakiety pasujące do motywów (`midnight`: miękki dzwon, dotychczasowy, domyślny; `vaporwave`: rozstrojony akord syntezatora;
+     `lunar`: szklane, kryształowe tony; `autumn`: ciepła drewniana marimba) oraz `classic` (ding-dong), `soft` (łagodny sinus), `chiptune` (8-bitowe arpeggio) i `custom`.
+     Każdy pakiet ma wariant przerwy (opadający) i skupienia (rosnący), syntezowany w `focus-audio`, bez plików. Dźwięk wybiera się osobno, więc zmiana motywu go nie zmienia.
+   - Własny plik: `import_chime { path, chime }` sprawdza rozszerzenie (mp3, wav, ogg, flac, m4a), rozmiar (najwyżej 10 MB) i to, czy plik się dekoduje,
+     kopiuje go do folderu `sounds` w danych aplikacji pod nową nazwą (`custom-<break|focus>-<ms>.<ext>`, więc plik, który wątek audio może jeszcze grać,
+     nigdy nie jest nadpisywany), zapisuje nazwę w `Config.customChimes` i wybiera `chimeSound: custom` (`src-tauri/src/chimes.rs`).
+     `remove_custom_chime { chime }` usuwa wpis; pliki, których config już nie wskazuje, powłoka usuwa (także przy starcie). W configu są tylko nazwy plików (`is_chime_file_name`: bez ścieżek, `..` i nazw urządzeń Windows),
+     więc config nie wskaże pliku spoza folderu `sounds`. Gdy brakuje pliku jednego dzwonka, gra plik drugiego (`CustomChimes::file_for`), a gdy nie ma żadnego,
+     pakiet `midnight`. Plik odtwarza rodio na wątku dzwonków, najwyżej 10 s.
+
+5. **Muzyka w zestawie jako domyślne źródło.**
+   - `MusicSourceKind::Library`: 12 utworów Open Lo-Fi (btahir, wydanie v1.0.0, **CC0**) w `src-tauri/resources/music/open-lofi/` z opisem `library.json`
+     (tytuł, kategoria). Trafiają do instalatora jako zasób (`bundle.resources`, ok. 37 MB). Licencja i pochodzenie: `CREDITS.md`.
+   - `list_library_tracks` → `Track[]` z bezwzględnymi ścieżkami. Powłoka dopuszcza w asset protocol dokładnie te pliki (jak przy folderze), a odtwarzacz gra je
+     przez `<audio>` i `convertFileSrc`. Działa offline, bez ciasteczek i bez okna YouTube.
+   - Nowy config (i config bez zapisanego źródła muzyki) dostaje `library`; zapisany wybór (np. `stream`) zostaje. Stream Lofi Girl (`@LofiGirl/live`) jest dalej jednym kliknięciem.
+
+6. **Przypomnienia na kolejne przerwy.** `Config.breakReminders: string[]`: indeks 0 to pierwsza przerwa sesji, 1 druga itd.; pusty tekst = bez przypomnienia dla tej przerwy.
+   Najwyżej 24 pozycje po 160 znaków (więcej → `config.invalid` z polem `breakReminders`); znaki sterujące zamieniane są na spacje.
+   `Config.repeatReminders` (domyślnie wyłączone) po ostatniej pozycji zaczyna listę od początku. Tekst wybiera `focus_core::config::reminder_for_break(cfg, n)`,
+   gdzie `n` to `cycle` ze snapshotu w chwili startu przerwy (przerwa po 1. cyklu to przerwa 1). Przypomnienie pokazuje okienko faz (`PopupInfo.reminder`)
+   i karta przerwy w oknie głównym.
+
+7. **Porady na przerwę ze źródłami.**
+   - Dane frontendu w `src/lib/tips.ts` (bez zmian kontraktu): **60 porad na przerwę** w kategoriach oczy, rozciąganie, ruch, picie, oddech, postawa, na zewnątrz,
+     ludzie, głowa i porządek, każda oznaczona jako na krótką przerwę, na długą albo na każdą; **10 porad do pracy** (ustawienie monitora, światło i odblaski, siedzenie,
+     krótkie i częste przerwy, 20-20-20, zmiana pozycji, poczta o stałych porach, jedno zadanie, telefon poza zasięgiem wzroku, woda pod ręką); przypis do rozciągania
+     („w wygodnym zakresie; coś boli, to pomiń”) i **nota prawna tylko po polsku** (kto pracuje przy monitorze co najmniej połowę dnia, ma 5 minut przerwy po każdej
+     godzinie, wliczanej do czasu pracy; rozporządzenie w sprawie bhp na stanowiskach wyposażonych w monitory ekranowe, Dz.U. 1998 nr 148 poz. 973).
+     Każda porada ma tekst PL i EN oraz źródło.
+   - Wybór jest losowy, ale powtarzalny: każda sesja ma własną, przetasowaną (ziarno z `sessionId`) kolejność porad pasujących do długości przerwy
+     (krótka < 10 min, długa ≥ 10 min), a kolejne przerwy idą po niej według numeru przerwy. Ten sam widok po odświeżeniu i każde okno pokazują tę samą poradę,
+     a porada nie wraca, zanim nie pojawią się wszystkie z puli. Przycisk „Inna propozycja” przesuwa się po tej kolejności. Porada do pracy zmienia się raz dziennie.
+   - Główne źródła: HSE (przerwy przy pracy z monitorem), OSHA eTools (stanowisko komputerowe), CIOP-PIB („Ergonomia pracy z komputerem”), AAO (zasada 20-20-20,
+     zmęczenie oczu), wytyczne WHO 2020 dotyczące aktywności fizycznej i siedzącego trybu życia, metaanaliza mikroprzerw Albulescu i in. 2022 (PLOS ONE,
+     [doi:10.1371/journal.pone.0272460](https://doi.org/10.1371/journal.pone.0272460)), CCOHS (rozciąganie w biurze) i NHS (ćwiczenia na siedząco, oddech, picie wody),
+     a do tego badania o odpoczynku w pracy (m.in. Kim i in. 2017, Sianoja i in. 2018, Trougakos i in. 2014, Lee i in. 2015, Kushlev i Dunn 2015, Mark i in. 2008).
+     Link do źródła jest przy każdej poradzie w `tips.ts`.
+   - **Bez obietnic zdrowotnych** (zasada 10): porady to propozycje czynności („spójrz w dal przez 20 s”), bez „zapobiega”, „leczy” czy „chroni wzrok”.
+     Źródło uzasadnia wybór porady, a nie obiecuje efektu.
+
+8. **Historia.**
+   - **Powierzchnie powłoki Windows nie trafiają do wykresu.** `focus_core::stats::is_ignored_process` pomija procesy powłoki (m.in. `ShellExperienceHost`,
+     `StartMenuExperienceHost`, `SearchHost`, `TextInputHost`, `LockApp`, `ApplicationFrameHost`, `dwm`), a `is_shell_surface(process, class)` rozpoznaje dodatkowo
+     po klasie okna pasek zadań, pulpit, przepełnienie zasobnika i widok zadań. `focus-platform` podaje klasę okna na pierwszym planie (`GetClassNameW`),
+     a tracker pomija taką sekundę w całości: nie liczy jej ani jako aplikacji, ani jako „Nieznane” (bezczynność liczy się jak dotąd).
+     `explorer.exe` liczy się tylko jako prawdziwe okno (np. folder), a nie jako pasek zadań czy pulpit.
+   - **Tytuły okien w podpowiedzi wykresu.** `Config.trackTitles` (domyślnie włączone, wyłącznik w Ustawieniach). Gdy jest włączone, tracker przekazuje tytuł okna
+     na pierwszym planie do `UsageAccumulator::add_sample`; core czyści go (znaki sterujące → spacje), przycina do 120 znaków i trzyma najwyżej 50 różnych tytułów
+     na aplikację (przy przepełnieniu wypada najrzadszy). Podsumowanie (`AppUsage.titles: TitleUsage[]`) ma najwyżej 5 tytułów na aplikację, od najdłużej oglądanego,
+     i razem z nim trafia do `history.jsonl`; wykres pokazuje je po najechaniu myszą na słupek. Tytuły zbieramy dla każdej aplikacji (najbardziej przydają się
+     dla przeglądarki i Eksploratora). Przy wyłączonym `trackTitles` tytuł nie trafia do core. Wyłączenie nie usuwa tytułów z zapisanej historii; służy do tego „Usuń historię”.
+   - **Tytułów nigdy nie logujemy** (`Debug` akumulatora pokazuje tylko liczby). Nie trafiają do mostu, rozszerzenia ani sieci i nie opuszczają komputera.
+     Awaryjny nudge po tytule okna przeglądarki działa jak dotąd, w pamięci.
+   - **Nie zapisuj historii.** `Config.keepHistory` (domyślnie włączone). Po wyłączeniu podsumowanie z wykresem nadal pokazuje się po Stop, ale nie trafia do `history.jsonl`.
+     Wyłączenie nie usuwa wcześniejszej historii.
+   - **Usuń historię.** Komenda `clear_history` usuwa plik `history.jsonl` i ostatnie podsumowanie. UI najpierw prosi o potwierdzenie (okno z przyciskiem „Usuń”;
+     operacji nie da się cofnąć). Trwającej sesji nie przerywa.
+
+9. **Kontrakt** (`api.rs`; jak w ADR-013 i ADR-014, w tej samej gałęzi co implementacja): komendy `import_chime`, `remove_custom_chime`, `list_library_tracks`
+   i `clear_history`; nowe DTO `Theme`, `ChimeSound`, `CustomChimes`, `TintMode` i `TitleUsage`; nowe pola `Config` (`theme`, `chimeSound`, `customChimes`,
+   `breakReminders`, `repeatReminders`, `trackTitles`, `keepHistory`), `TintConfig.mode`, `TintStatus.mode` i `capped`, `PopupInfo.reminder`, `AppUsage.titles`;
+   wariant `MusicSourceKind::library`. Eventów nie przybywa. Szczegóły: ARCHITECTURE §6.7.
+
+**Konsekwencje:**
+- Ciepło ekranu zmienia teraz stan systemu (ustawienie Oświetlenia nocnego albo rampę gamma) i nie znika samo z procesem. Po kill kolory zostają ciepłe
+  do następnego startu FocusMode albo najpóźniej do następnego logowania (RunOnce). Oświetlenie nocne można też od razu wyłączyć w szybkich ustawieniach Windows.
+- Oświetlenie nocne opiera się na nieudokumentowanym formacie ustawień w rejestrze i może przestać działać po aktualizacji Windows. Wtedy powłoka przechodzi na gammę
+  albo zgłasza `TintStatus.error` (+ `app://error`), a aplikacja działa dalej. W godzinach harmonogramu FocusMode nadpisuje ręczne zmiany Oświetlenia nocnego.
+- Gamma nie działa na monitorach HDR, a bardzo ciepłych wartości Windows nie przyjmuje (`capped`). Gry i aplikacje, które same ustawiają rampę, mogą ją nadpisać.
+- Oba mechanizmy działają po kompozycji: obraz nie traci kontrastu, kursor też robi się cieplejszy, a zrzuty ekranu i nagrania mają normalne kolory.
+- Tytuły okien mogą zawierać dane prywatne (temat wiadomości, nazwa dokumentu, tytuł strony z trybu prywatnego). Leżą na dysku w `history.jsonl`
+  (profil użytkownika Windows, bez szyfrowania), dopóki użytkownik nie usunie historii. Dlatego wyłącznik tytułów, „Nie zapisuj historii” i „Usuń historię”
+  są obok siebie w Ustawieniach, a README to opisuje.
+- Pominięte sekundy powłoki nie wchodzą do `trackedSecs`, więc suma na wykresie może być mniejsza od czasu skupienia.
+- Instalator rośnie o ok. 37 MB (muzyka). Nowych crate'ów i pakietów npm nie ma; w `focus-platform` dochodzą feature'y `windows`: `Win32_UI_ColorSystem` i `Win32_Graphics_Gdi`.
+- Nieznana wartość enuma w `config.json` (np. motyw z nowszej wersji po powrocie do starszej) nadal unieważnia cały config (`config.corrupt`, jak w ADR-014).
+
+**Co zmienia:**
+- ADR-009: zastąpiona. Overlay odpada; gamma ramp wraca jako tryb do wyboru, z kopią bazowej rampy każdego monitora (R08) i powrotem kolorów jak przy osłonach.
+- ADR-012: okna overlay odcienia znikają; `TintStatus` z rewizją zostaje (czyta go tylko okno główne).
+- ADR-013: pkt 2 (domyślne źródło `library`), pkt 3 (dzwonek z pliku użytkownika), pkt 5 (pomijanie powłoki Windows, tytuły okien przy `trackTitles`,
+  `keepHistory`, `clear_history`).
+- ADR-014: pkt 2 (odcień przez Oświetlenie nocne albo gammę zamiast overlayu) i pkt 6 (grupa tras `(overlay)` tylko dla okna `popup`).
+- CLAUDE.md (zmiana czeka na zatwierdzenie przez użytkownika, notatka w TASKS z 2026-10-13):
+  - twarda zasada 6: „Bez pełnoekranowych okien przerwy i trybu spotkania — odłożone (ADR-013). **Odcień ekranu tylko przez Oświetlenie nocne Windows albo
+    gamma ramp, nigdy przez overlay**, domyślnie wyłączony; stan sprzed zmiany zapisany od razu i przywracany jak osłony (zasada 7; ADR-015)”;
+  - twarda zasada 11, zdanie o trackerze: „Tracker zapisuje nazwy procesów i sumy czasu, a tytuły okien **tylko przy włączonym `trackTitles`**: przycięte,
+    tylko lokalnie w `history.jsonl` (przy wyłączonym `keepHistory` nic), **nigdy w logach**, moście, rozszerzeniu ani w sieci (ADR-015). Powierzchnie powłoki Windows pomijamy.”;
+  - Struktura: `focus-platform` (`night_light`, `gamma`, klasa okna w `foreground`), powłoka (`tint.rs`: Oświetlenie nocne / gamma i plik przywracania),
+    `src/lib/themes/`, `src/lib/tips.ts`, `src-tauri/resources/music/`.
+
+**Poprawka (ADR-018, 2026-10-13):** pkt 2: w motywie `pixel` (8-bit) maskotka jest pikselizowana przy wyświetlaniu (klatka zmniejszona do małego canvasu
+z progiem alfa i powiększona z `image-rendering: pixelated`); pliki grafiki się nie zmieniają.
+
+---
+
+## ADR-016: Kalendarze i spotkania w przerwach
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu poprosił 2026-10-13 o połączenie z kalendarzem Microsoft. Gdy spotkanie (w Teams albo dowolne inne)
+wypada w czasie przerwy, FocusMode ma o tym powiedzieć na stronie Skupienie, **zanim** użytkownik uruchomi sesję, i zapytać, co zrobić:
+1. przedłużyć skupienie na czas spotkania (z wyciszoną muzyką), a przerwę zacząć po nim;
+2. tylko wstrzymać aplikację, gdy przyjdzie pora przerwy;
+3. zignorować;
+4. przypomnieć później: 30 minut przed spotkaniem okienko z tym samym pytaniem; kolejne „przypomnij później” daje okienko po 10 minutach,
+   a ostatnie (10 minut przed spotkaniem) nie ma już „przypomnij później”.
+
+Do tego „Google Calendar i cokolwiek, czego używają korporacje”, łącznie ze spotkaniami cyklicznymi.
+To dotyka trzech wcześniejszych decyzji: ADR-013 pkt 7 odłożył ręczny tryb „Jestem na spotkaniu”, ADR-010 odrzucił wykrywanie rozmów
+przez Graph, a twarda zasada 6 w CLAUDE.md wyklucza tryb spotkania bez nowego ADR. Zmienia się też tabela faz z ADR-013
+(Tick po terminie w Focus), której pilnuje zasada 2.
+
+**Opcje — źródła kalendarza:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Microsoft Graph (`Calendars.Read`) przez logowanie Teams** | Microsoft 365, Exchange Online i Outlook; ta sama rejestracja aplikacji, device code i token co Teams; Graph sam rozwija spotkania cykliczne w wystąpienia i podaje odpowiedź na zaproszenie, „wolny/zajęty” i link do spotkania online | rejestracja w Entra ID i zgoda tenantu (T0-8 nadal nierozstrzygnięty); po dodaniu uprawnienia istniejące połączenie trzeba raz odnowić |
+| **Google Calendar API, OAuth dla aplikacji komputerowych (loopback + PKCE)** | oficjalne API, zakres tylko do odczytu; Google sam rozwija wystąpienia spotkań cyklicznych | każdy użytkownik zakłada własny projekt Google Cloud i podaje identyfikator klienta; projekt bez weryfikacji Google pokazuje ekran „aplikacja niezweryfikowana”, a w trybie testowym token odświeżania wygasa po 7 dniach |
+| **Linki ICS (subskrypcja iCalendar)** | działa prawie wszędzie: Exchange on-premises (publikowanie kalendarza w Outlook Web App), Outlook.com, Google (tajny adres iCal), iCloud, Proton, Zoho, Zimbra, Nextcloud…; bez logowania i bez rejestracji aplikacji | link jest sekretem (kto go ma, czyta kalendarz); dostawca odświeża opublikowany plik z opóźnieniem; własny parser (strefy czasowe, reguły powtarzania); brak odpowiedzi na zaproszenie |
+| CalDAV | standard, dane na bieżąco | uwierzytelnianie inne na każdym serwerze (hasła aplikacji), cięższy protokół; poza zakresem |
+| Exchange Web Services (EWS) | Exchange on-premises na bieżąco | Microsoft wycofuje EWS, a uwierzytelnianie on-premises to zwykle NTLM albo Basic; odrzucone |
+| Outlook na komputerze (COM, plik OST) | bez logowania | tylko klasyczny Outlook (nowy Outlook nie ma COM), monity zabezpieczeń Outlooka przy dostępie z zewnątrz; odrzucone |
+
+**Opcje — gdzie żyje reguła spotkania:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **`focus-core`: blokady spotkań (`MeetingHold`) sprawdzane, gdy focus dochodzi do terminu** | czysta logika z testami jednostkowymi; kolejność efektów nadal wynika z tabeli faz; fazy liczy jeden zegar (monotoniczny, ADR-011) | powłoka przelicza godziny spotkań na zegar monotoniczny i wysyła blokady po każdej synchronizacji |
+| Powłoka wysyła Pauzę albo Pomiń fazę we właściwych chwilach | bez zmian w core | wyścigi z tickiem, osobne timery; pauza zamiast przerwy zostawia osłony w górze i nie gra dzwonka; trudne do przetestowania |
+
+**Decyzja:**
+
+1. **Trzy rodzaje źródeł** (`Config.calendar`; wszystkie domyślnie wyłączone, każde włącza się osobno w Ustawieniach).
+   - **Microsoft 365 / Outlook** (`calendar.microsoft`): to samo konto i ta sama rejestracja aplikacji co Teams (`shields.teamsClientId`,
+     `shields.teamsTenant`, device code, token odświeżania szyfrowany DPAPI w `teams-token.bin`). O delegowane `Calendars.Read` logowanie prosi
+     **tylko wtedy, gdy przy logowaniu `calendar.microsoft` jest włączone** (`focus_platform::teams::login_scopes`), więc użytkownik samego Teams
+     nie potrzebuje zgody na kalendarz. Rejestracja w Entra ID musi mieć to uprawnienie, a logowanie bez niego (tylko Teams albo sprzed tej zmiany)
+     daje źródłu błąd „reconnect needed”; Ustawienia → Kalendarze pokazują wtedy „Połącz ponownie”, czyli nowe logowanie device code, tym razem
+     z kalendarzem (stare logowanie działa, dopóki nowe się nie uda). `disconnect_calendar(microsoft)` **nie usuwa tokenu Teams**: tylko wyłącza
+     `calendar.microsoft` (zapis jak przez `update_config`) i usuwa spotkania Microsoft, a status w Teams działa dalej.
+     Powłoka czyta spotkania z okna `[teraz, teraz + horyzont]`; wystąpienia spotkań cyklicznych rozwija Graph.
+   - **Google Calendar** (`calendar.google` + `calendar.googleClientId`): OAuth 2.0 dla aplikacji instalowanych. `connect_google` otwiera logowanie
+     w przeglądarce systemowej, a Google przekierowuje z powrotem na loopback (`http://127.0.0.1:<wolny port>`), z PKCE (S256) i parametrem `state`.
+     Identyfikator klienta typu „Aplikacja komputerowa” pochodzi z projektu Google Cloud użytkownika; core sprawdza tylko jego postać
+     (`focus_core::config::is_google_client_id`: `<prefiks>.apps.googleusercontent.com`, pole błędu `calendar.googleClientId`).
+     Punkt tokenów Google wymaga od takich klientów także **sekretu klienta** (`calendar.googleClientSecret`, wysyłany przy wymianie kodu
+     i odświeżaniu, gdy nie jest pusty; core sprawdza: przycięty, najwyżej 100 znaków `[A-Za-z0-9_-]`, pole błędu `calendar.googleClientSecret`).
+     Google opisuje go w aplikacjach instalowanych jako niepoufny, więc leży w `config.json` (nie w pliku DPAPI), ale nigdy w logach.
+     Zakres jest tylko do odczytu (`https://www.googleapis.com/auth/calendar.readonly`), a token odświeżania jest szyfrowany DPAPI (`google-token.bin`).
+     Postęp logowania: `CalendarStatus.googlePending` i `calendar://changed`. Wystąpienia spotkań cyklicznych rozwija Google.
+   - **Linki ICS** (`calendar.ics`): wszystko inne. `set_ics_urls { urls }` zapisuje listę linków (`https://` albo `webcal://`) w pliku szyfrowanym DPAPI
+     w danych aplikacji (`ics-links.bin`), nigdy w `config.json`; `get_ics_urls` oddaje je do edycji w Ustawieniach. Powłoka pobiera każdy link i czyta wydarzenia (`VEVENT`):
+     początek i koniec albo czas trwania, strefę czasową, **reguły powtarzania** (`RRULE`) z wyjątkami (`EXDATE`) i przeniesionymi wystąpieniami (`RECURRENCE-ID`).
+   - Wspólne: spotkania z najbliższych `horizonHours` godzin (1–24, domyślnie 10; pole błędu `calendar.horizonHours`), posortowane po początku.
+     Pomijamy spotkania odrzucone, odwołane, oznaczone jako „wolny” i **całodniowe**. `Meeting.id` = źródło + id wydarzenia + początek, więc każde
+     wystąpienie spotkania cyklicznego ma własny wybór. `Meeting.online` = jest link do Teams, Meet, Zoom albo Webex.
+     Spotkanie widoczne w kilku źródłach (to samo id albo ten sam temat, bez względu na wielkość liter i odstępy, z początkiem w odstępie do minuty)
+     liczy się raz, a wybór dany kopii przechodzi na spotkanie, które zostało. Limity: najwyżej 200 spotkań i 10 linków ICS (po 2048 znaków).
+     Powłoka synchronizuje kalendarze okresowo i na żądanie (`refresh_calendar`), a wynik podaje jako `CalendarStatus` (getter `get_calendar`
+     + event `calendar://changed` z rewizją, ADR-012). Błąd jednego źródła to `CalendarSourceStatus.state = error` ze szczegółem po angielsku;
+     pozostałe źródła działają, a sesja trwa (zasada 8).
+
+2. **Prywatność.**
+   - **Tylko odczyt**: delegowane `Calendars.Read` w Graph, zakres tylko do odczytu w Google, zwykłe pobranie linku ICS. FocusMode niczego
+     w kalendarzach nie zapisuje: nie odpowiada na zaproszenia, nie tworzy wydarzeń i nie zmienia ich.
+   - **Sekrety** (token odświeżania Google i linki ICS, bo link ICS to w praktyce klucz do kalendarza) leżą w osobnych plikach szyfrowanych DPAPI
+     dla bieżącego użytkownika Windows (`focus-platform/src/secrets.rs`), **nigdy w `config.json` i nigdy w logach** (log nie zawiera adresów linków,
+     tokenów ani tematów spotkań). Token Microsoft to dotychczasowy token Teams.
+   - **Tematy i godziny spotkań pokazujemy tylko lokalnie**: na stronie Skupienie, w okienkach i toastach FocusMode i w snapshocie sesji.
+     Nie trafiają do logów, historii (`history.jsonl`), mostu, rozszerzenia ani nigdzie indziej. Wybory dla spotkań powłoka zapisuje
+     w `meeting-choices.json` (tylko `Meeting.id` i wybór, bez tematu), żeby przetrwały restart aplikacji.
+   - Ruch sieciowy jest tylko do źródeł, które włączył użytkownik: Microsoft (logowanie i Graph), Google (logowanie i Calendar API) i serwery linków ICS.
+
+3. **Kolizja = spotkanie nachodzi na planowaną przerwę** (`focus_core::calendar`, czyste funkcje, czasy kalendarzowe w ms).
+   - `plan_breaks(now, focusRemaining, breakRemaining, cycle, profile, horizon)` planuje przerwy: w Idle przerwy sesji, która zaczęłaby się teraz
+     (`CalendarStatus.planned = true`, numeracja od 1); w Focus od terminu bieżącego focusa (przerwa numer `cycle`); w przerwie od następnej
+     (numer `cycle + 1`, trwającej przerwy nie planujemy). Faza w pauzie jest planowana tak, jakby ruszyła teraz z zamrożonym czasem. Najwyżej 512 przerw.
+   - `conflicts(breaks, meetings)`: spotkanie koliduje, gdy `[początek, koniec)` przecina okno przerwy; styk krawędzi się nie liczy. Każde spotkanie
+     jest zgłaszane raz, z pierwszą przerwą, na którą nachodzi (`MeetingConflict.breakNumber`, `breakStartMs`, `breakEndMs`).
+   - Plan zakłada, że sesja biegnie dalej bez pauz i pominięć. Po każdej takiej zmianie, a w Idle także z upływem czasu, przerwy i kolizje liczymy na nowo.
+
+4. **Pytanie przed startem i cztery wybory** (`MeetingChoice`, `set_meeting_choice { meetingId, choice }`).
+   - Strona Skupienie pokazuje kolizje już w Idle, przed Start (i dalej w trakcie sesji): temat, godziny spotkania, numer przerwy i cztery przyciski.
+     Dopóki użytkownik nie wybierze, nic się nie zmienia (jak `ignore`). Wybór można zmienić w każdej chwili; po końcu spotkania jest zapominany.
+   - `extend` („Przedłuż skupienie”): focus trwa do końca spotkania, muzyka milknie na czas spotkania (`SessionSnapshot.musicMuted`),
+     a pełna przerwa zaczyna się po spotkaniu.
+   - `pauseAtBreak` („Wstrzymaj przy przerwie”): gdy pora przerwy wypada w trakcie spotkania, przerwa zaczyna się wstrzymana (pełna długość zamrożona,
+     muzyka stoi, bo sesja jest w pauzie, a osłony schodzą jak w każdej przerwie) i czeka na Wznów. Zamiast zwykłego komunikatu o przerwie
+     pojawia się okienko (albo toast) `breakHeld` z tematem spotkania.
+   - `ignore`: przerwa jak zwykle.
+   - `remindLater` („Przypomnij później”): okienko `meetingReminder` z tym samym pytaniem (`PopupInfo.meeting`) **30 minut przed spotkaniem**;
+     „przypomnij później” w okienku daje kolejne po 10 minutach (20 minut przed), a ostatnie, **10 minut przed spotkaniem, nie ma już „przypomnij później”**
+     (`MeetingConflict.remindLaterAllowed = false`). Porę wylicza `reminder_schedule(start, now, stage)`, gdzie `stage` to liczba wybranych już
+     „przypomnij później”. Etap, którego pora minęła, jest pomijany (wybór 25 minut przed spotkaniem daje okienko 20 minut przed), a gdy do spotkania
+     zostało 10 minut lub mniej, „przypomnij później” nie jest oferowane (a wybrane mimo to daje błąd `calendar.remindLater`).
+     Porę następnego okienka pokazuje `MeetingConflict.nextReminderMs`.
+     Czasy 30/20/10 to stała `MEETING_REMINDER_LEAD_MINUTES` w `timing.rs`, także w trybie demo, bo dotyczą prawdziwych godzin spotkań.
+
+5. **Jak wybór zmienia sesję** (`focus-core/src/session.rs`).
+   - Powłoka zamienia **każde** spotkanie z wyborem `extend` albo `pauseAtBreak` (wszystkie z horyzontu, nie tylko te, które kolidują w tej chwili)
+     na `MeetingHold` (`MeetingHold::from_meeting`: czas kalendarzowy na monotoniczny, `mono = now.mono + (wall − now.wall)`) i wysyła
+     `Input::SetMeetingHolds`: po każdej synchronizacji, zmianie wyboru, Start i Wznów, żeby po uśpieniu czasy monotoniczne znów pasowały do zegara.
+     Wejście zastępuje wszystkie blokady, nie daje efektów, działa w Idle i w trakcie sesji, a blokady przeżywają Start i Stop.
+   - Blokady sprawdzamy **tylko wtedy, gdy tick osiąga termin focusa**. Pomiń fazę, Pauza, Wznów i Stop ich nie uruchamiają: wyraźna akcja użytkownika
+     wygrywa, więc sesja nie więzi (zasada 7). Liczy się spotkanie, które nachodzi na przerwę zaczynającą się teraz, `[teraz, teraz + przerwa)`.
+     Każda blokada działa najwyżej raz na sesję.
+   - **`extend` wygrywa z `pauseAtBreak`.** Spośród pasujących blokad wybieramy tę, która kończy się najpóźniej. Termin focusa przesuwa się na koniec
+     spotkania, bez efektów, a dodany czas wchodzi do `phaseTotalSecs` (pierścień nadal ma `remaining ≤ total`). Przedłużenia mogą się łączyć
+     (spotkanie zaraz po spotkaniu). W przedłużonym focusie plan przerw zaczyna się z końcem spotkania (styk), więc to spotkanie przestaje być kolizją.
+   - **`pauseAtBreak`**: przerwa zaczyna się w pauzie z pełną długością, a cykl liczy się jako ukończony. Efekty są te same i w tej samej kolejności
+     co przy zwykłym Focus → Przerwa, tylko `Notify(BreakHeld { subject })` **zastępuje** `Notify(BreakStarted)` (jedno okienko, nie dwa; dzwonek zostaje).
+     Pusty temat daje `subject: None`.
+   - Bez pasującej blokady: zwykła przerwa.
+   - Snapshot: `musicMuted` jest prawdą w Focus (także w pauzie) w trakcie spotkania z wyborem `extend`, a w Idle i w przerwie zawsze fałszem.
+     `meetingHold` (`MeetingHoldView { subject, untilMs, choice }`) jest ustawione w przedłużonym focusie i we wstrzymanej przerwie do Wznów.
+     Wznów czyści widok wstrzymanej przerwy, przedłużenie trwa do końca fazy, a Pomiń, Stop i zmiana fazy czyszczą widok.
+   - Usunięcie blokady, zanim zadziałała, ją odwołuje. Usunięcie (albo zmiana godzin) **w trakcie przedłużenia go nie skraca**: synchronizacja, która
+     zgubi spotkanie, nie może nagle zacząć przerwy w środku rozmowy. Wyjściem są Pomiń fazę i Stop.
+   - **Spotkania dłuższe niż 4 h nie blokują sesji** (`timing::MAX_MEETING_HOLD_MS`, `calendar::meeting_hold_allowed`; dokładnie 4 h jeszcze tak):
+     `SetMeetingHolds` odrzuca takie `extend` / `pauseAtBreak`, więc nie przedłużają focusa, nie wstrzymują przerwy i nie wyciszają muzyki.
+     Całodniowa konferencja albo zablokowane popołudnie nie zatrzyma przerw na wiele godzin. `MeetingConflict.tooLong` mówi to UI: Skupienie pokazuje
+     „Spotkanie dłuższe niż 4 h — nie przedłużam skupienia” i wyłącza te dwa przyciski, okienko przypomnienia ich nie pokazuje, a `set_meeting_choice`
+     z takim wyborem daje błąd `calendar.meetingTooLong`.
+   - Tabela faz z ADR-013 dostaje jeden wiersz:
+
+     | Faza | Tick po terminie |
+     |---|---|
+     | Focus, przerwa zaczynająca się teraz nachodzi na spotkanie (najwyżej 4 h) z wyborem `extend` | termin = koniec spotkania; bez efektów, muzyka milknie na czas spotkania |
+     | Focus, przerwa zaczynająca się teraz nachodzi na spotkanie (najwyżej 4 h) z wyborem `pauseAtBreak` | → Przerwa w pauzie (pełna długość): śledzenie ↓, osłony ↓, dzwonek BreakStart, okienko lub toast `breakHeld` |
+
+6. **Ograniczenia** (świadome).
+   - **ICS odświeża dostawca**: opublikowany kalendarz bywa aktualizowany z opóźnieniem (zależnie od dostawcy nawet kilka godzin), więc świeżo dodane
+     albo przesunięte spotkanie może pojawić się późno. W ICS nie ma odpowiedzi użytkownika na zaproszenie, więc odrzucone spotkanie może nadal się pokazywać,
+     a publikacja „tylko wolny/zajęty” daje spotkania bez tematu.
+   - **Strefy czasowe**: wszystkie czasy porównujemy jako czas kalendarzowy w UTC (ms). W ICS czas ze strefą (`TZID`) albo w UTC jest przeliczany na UTC,
+     a czas bez strefy traktujemy jako czas lokalny komputera. Nietypowa definicja strefy w pliku może przesunąć spotkanie, dlatego Skupienie zawsze
+     pokazuje jego godziny.
+   - **Spotkania całodniowe pomijamy** (zwykle to urlopy, święta i przypomnienia, nie rozmowy).
+   - Horyzont to najwyżej 24 godziny. Plan przerw w Idle zakłada start teraz, a w trakcie sesji brak pauz i pominięć (liczony na nowo po każdej zmianie).
+   - Microsoft: tenant może blokować zgodę na `Calendars.Read` (wtedy zgoda administratora). Google: w trybie testowym ekranu zgody token odświeżania
+     wygasa po 7 dniach i logować się mogą tylko dodani użytkownicy testowi; po publikacji projektu bez weryfikacji Google pokazuje ostrzeżenie
+     o niezweryfikowanej aplikacji (projekt Workspace typu „Wewnętrzny” go nie ma).
+   - Przedłużony focus trzyma osłony przez całe spotkanie (wyciszone powiadomienia Windows, blokada stron). Teams DND z wygaśnięciem focus + 5 min
+     może wygasnąć w długim przedłużeniu (jak w długiej pauzie, `TODO(hackathon)` z ADR-013). Tracker liczy przedłużony focus jak każdy inny
+     (np. `Teams.exe` na wykresie).
+   - Przypomnienia działają, dopóki działa aplikacja (także schowana w zasobniku).
+
+7. **Kontrakt** (`api.rs`; jak w ADR-013–015, w tej samej gałęzi co implementacja): komendy `get_calendar`, `refresh_calendar`, `set_meeting_choice`,
+   `connect_google`, `disconnect_calendar`, `set_ics_urls` i `get_ics_urls`; event `calendar://changed`; DTO `CalendarConfig`, `CalendarSource`,
+   `MeetingChoice`, `Meeting`, `MeetingConflict`, `CalendarSourceStatus`, `CalendarStatus` i `MeetingHoldView`; pole `Config.calendar`;
+   `SessionSnapshot.musicMuted` i `meetingHold`; `PopupKind.meetingReminder` i `breakHeld`; `PopupInfo.meeting`; później
+   `CalendarConfig.googleClientSecret` i `MeetingConflict.tooLong`. Szczegóły: ARCHITECTURE §6.8.
+
+**Konsekwencje:**
+- Aplikacja łączy się z nowymi serwerami, ale tylko dla źródeł włączonych przez użytkownika. Pliki szyfrowane DPAPI da się odczytać tylko na koncie
+  Windows, które je zapisało: po przeniesieniu danych na inny komputer albo konto trzeba połączyć Google i wpisać linki ICS ponownie.
+  Poza Windows (brak DPAPI) Google i ICS są niedostępne, tak jak Teams.
+- Microsoft: kalendarz i Teams DND dzielą jedno logowanie, więc zgoda na `Calendars.Read` dotyczy konta połączonego dla Teams.
+  FocusMode czyta kalendarz tylko przy włączonym `calendar.microsoft`.
+- Google wymaga od użytkownika założenia projektu Google Cloud. Prostszą drogą dla konta Google jest tajny adres iCal (źródło ICS),
+  kosztem opóźnienia odświeżania.
+- Sekret klienta Google (SR-31): punkt tokenów Google wymaga go od klientów typu „Aplikacja komputerowa” mimo PKCE, więc doszło pole
+  `calendar.googleClientSecret` (przez `/sync-contract`). Wbrew pierwotnemu planowi (DPAPI) leży w `config.json`: Google dokumentuje go
+  w aplikacjach instalowanych jako niepoufny, a to tylko identyfikacja klienta, nie dostęp do kalendarza (ten daje token odświeżania, nadal w DPAPI).
+  Do logów nie trafia (`Debug` zadania pobierania pokazuje tylko, czy jest ustawiony).
+- W `focus-core`: `NotifyKind` traci `Copy` (wariant `BreakHeld` niesie `String`); `Session` trzyma listę blokad niezależną od trwającej sesji;
+  nowe `Session::remaining_ms(now)` (wejście dla `plan_breaks`) i `Session::meeting_holds()`. Testy: planowanie, kolizje, przypomnienia 30/20/10,
+  walidacja configu i 17 testów blokad w `session.rs`.
+- Zasada 2 („czasy z `TimingProfile`”): pory przypomnień nie są częścią profilu, tylko nazwaną stałą w `timing.rs`, i tryb demo ich nie skraca.
+  Długość przedłużenia wynika z kalendarza, nie z profilu.
+- Stary `config.json` bez `calendar` wczytuje się z kalendarzami wyłączonymi; częściowy obiekt `calendar` jest uzupełniany wartościami domyślnymi.
+- Okienka faz dostają dwa nowe rodzaje (`meetingReminder`, `breakHeld`). Przy `breakHeld` nie ma przypomnienia użytkownika na przerwę
+  (`reminder_for_break`), chyba że powłoka doda je do okienka.
+
+**Co zmienia:**
+- ADR-010: ręczny tryb spotkania nadal odpada, ale spotkania wracają z kalendarza, z wyborem użytkownika dla każdego spotkania. Logowanie Teams prosi też
+  o `Calendars.Read`, gdy kalendarz Microsoft jest włączony. Wykrywanie rozmów przez status Teams nadal Won't.
+- ADR-011: reguła R01 („spotkanie blokuje przerwę”) wraca w innej postaci: tylko dla spotkań z kalendarza i tylko według wyboru (`extend`, `pauseAtBreak`).
+- ADR-013: pkt 1 (tabela faz: Tick po terminie w Focus z blokadą spotkania do 4 h; `BreakHeld` zamiast `BreakStarted`), pkt 4 (logowanie Teams z `Calendars.Read`
+  przy włączonym kalendarzu Microsoft),
+  pkt 7 (przycisk „Jestem na spotkaniu” nadal odłożony; spotkania z kalendarza obsługuje ten ADR).
+- ADR-014: pkt 1 (nowe `PopupKind`: `meetingReminder` i `breakHeld`; `PopupInfo.meeting`).
+- CLAUDE.md (zmiana czeka na zatwierdzenie przez użytkownika, notatka w TASKS z 2026-10-13, „kalendarze”):
+  - twarda zasada 2, dopisek: „Wyjątek: pory przypomnień o spotkaniach (`MEETING_REMINDER_LEAD_MINUTES`, 30/20/10 min) i przedłużenie focusa do końca spotkania (ADR-016)”;
+  - twarda zasada 6: „Bez pełnoekranowych okien przerwy i ręcznego trybu spotkania („Jestem na spotkaniu”) — odłożone (ADR-013). Spotkania z kalendarza
+    zmieniają sesję tylko według wyboru użytkownika (`extend`, `pauseAtBreak`), tylko gdy focus dochodzi do terminu, i nigdy nie blokują Pomiń fazę ani Stop (ADR-016)”;
+  - twarda zasada 11: ruch sieciowy także do kalendarzy włączonych przez użytkownika (Graph, Google, linki ICS), tylko do odczytu; token Google i linki ICS
+    tylko w plikach szyfrowanych DPAPI, nigdy w `config.json` ani w logach; tematy spotkań tylko lokalnie, nigdy w logach, historii, moście ani rozszerzeniu;
+  - Struktura: `focus-core/src/calendar.rs`, `focus-platform/src/calendar/` (`google.rs`, `ics.rs`) i `secrets.rs`, `src-tauri/src/calendar/`
+    (z czystą logiką w `model.rs`), `src/lib/state/calendar.svelte.ts` i komponenty `MeetingConflicts.svelte`, `MeetingHoldBanner.svelte`, `CalendarSettings.svelte`.
+
+---
+
+## ADR-017: Co dalej? — zadania z narzędzi pracy
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu poprosił 2026-10-13 o połączenie FocusMode z GitHubem, Jirą „i czymkolwiek innym” oraz o subskrypcję powiadomień
+z tych narzędzi. Na tej podstawie aplikacja ma podpowiadać, czym zająć się dalej, i **dawać pierwszeństwo zadaniom przypisanym do użytkownika**.
+Kolejność ustalił tak:
+1. **przypisane do użytkownika** (issue, tickety, work itemy): najpierw aktywny sprint albo cykl, potem priorytet (od najwyższego), potem termin
+   (po terminie, dziś, wkrótce), potem status („w toku” przed „do zrobienia”), na końcu wiek (starsze najpierw);
+2. **czekające na użytkownika**: prośba o review, zmiany do wprowadzenia albo nieudane testy (CI) we własnym pull / merge requeście, bezpośrednie wzmianki;
+3. **pozostałe powiadomienia** (informacyjne).
+
+Próg 1 zawsze stoi nad progiem 2, a ten nad progiem 3, a użytkownik widzi, dlaczego pozycja jest wysoko. Powiadomienia czekają do przerwy
+albo do następnej sesji i **nigdy nie przerywają skupienia**. Tokeny tylko do odczytu, zaszyfrowane, nigdy w logach ani w `config.json`;
+nic nie trafia do modelu AI ani do innej strony trzeciej.
+
+To dotyka twardej zasady 11 w CLAUDE.md (ruch sieciowy tylko ten, który wybrał użytkownik: dotąd muzyka, Graph i kalendarze), ADR-013 pkt 5
+(co leży w historii) i ADR-014 pkt 1 (rodzaje okienek), więc wymaga tego ADR.
+
+**Opcje — skąd zadania i powiadomienia:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Odpytywanie API każdego narzędzia z komputera użytkownika, jego tokenem tylko do odczytu** | bez serwera i pośredników; działa za firmowym VPN i z instancjami na własnych serwerach (GitLab self-managed, Jira Data Center); token zostaje na komputerze | nowe pozycje widać dopiero po następnej synchronizacji; limity zapytań każdego dostawcy; pięć różnych API |
+| Webhooki | zmiany od razu | wymagają publicznego adresu, czyli serwera pośredniczącego (strona trzecia, zasada 11); zakłada je administrator repozytorium albo projektu, a nie użytkownik; odrzucone |
+| Logowanie OAuth z aplikacją zarejestrowaną u każdego dostawcy | bez wklejania tokenów | rejestracja (często też weryfikacja) aplikacji u pięciu dostawców, sekrety klienta, przekierowania; koszt widać po Google w ADR-016; na później |
+| Powiadomienia e-mail (IMAP) | jedno źródło dla wszystkich narzędzi | dostęp do całej skrzynki to znacznie więcej niż zadania; parsowanie maili; odrzucone |
+| Kolejność układa model AI | „sprytniejsza” kolejność | tytuły zadań wychodzą poza komputer (zasada 11), wynik bez powtarzalności i bez wyjaśnienia; odrzucone |
+
+**Opcje — kolejność:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Stałe progi (przypisane → czeka na ciebie → reszta), w progu kolejne kryteria, z powodami** | dokładnie według prośby; przewidywalne, testowalne, czysta funkcja w core; powody da się pokazać | heurystyka nie zna ustaleń zespołu |
+| Jedna suma ważona wszystkich cech | jedna liczba | pilna wzmianka mogłaby wyprzedzić przypisane zadanie, wbrew prośbie; wagi trudno uzasadnić |
+
+**Decyzja:**
+
+1. **Pięć narzędzi** (`Config.work`; wszystkie domyślnie wyłączone, każde włącza się osobno w Ustawieniach). Tylko odczyt: FocusMode niczego w nich nie zmienia
+   (nie zamyka zadań, nie odpowiada, nie oznacza powiadomień jako przeczytanych).
+
+   | Narzędzie | Konfiguracja | Token (najwęższy możliwy) | Co daje |
+   |---|---|---|---|
+   | GitHub (github.com) | `work.github` | fine-grained personal access token tylko do odczytu: Issues (Read) i Pull requests (Read); Metadata (Read) dochodzi sam. Albo token klasyczny (`notifications` + `repo` / `public_repo`, pkt 7) | przypisane issue (priorytet z etykiet `P0`–`P4` / `priority: …`, termin z kamienia milowego, „w toku” z etykiet); PR z prośbą o twoje review; twoje PR z prośbą o zmiany albo z nieudanymi testami; z tokenem klasycznym także nieprzeczytane powiadomienia z twoim udziałem (wzmianki i pozostałe) |
+   | GitLab (gitlab.com albo własna instancja) | `work.gitlab`, `work.gitlabUrl` (domyślnie `https://gitlab.com`) | personal access token z zakresem `read_api` | przypisane issue (priorytet z etykiet `priority::1` / `P2`…, „w toku” z etykiet `workflow::…`, bieżąca iteracja = sprint); MR czekające na twoje review (bez już ocenionych); twoje MR z prośbą o zmiany albo z nieudanym pipeline'em; lista To-Do (wzmianki, reszta jako powiadomienia) |
+   | Jira Cloud albo Data Center | `work.jira`, `work.jiraUrl`, `work.jiraEmail` (puste = Data Center) | Cloud: e-mail konta + token API Atlassian, najlepiej z zakresami tylko do odczytu `read:jira-work` i `read:jira-user` (wtedy przez bramkę `api.atlassian.com`, pkt 7); Data Center: personal access token (ma uprawnienia konta) | przypisane zgłoszenia (priorytet, termin, status, aktywny sprint); obserwowane zgłoszenia innych osób zmienione w ostatniej dobie jako powiadomienia (Jira nie ma API powiadomień ani wzmianek) |
+   | Azure DevOps Services | `work.azureDevops`, `work.azureOrg` | PAT ograniczony do jednej organizacji: Work Items (Read), Code (Read) oraz Project and Team (Read) | przypisane work itemy (priorytet 1–4, termin, bieżąca iteracja zespołu = sprint); PR czekające na twój głos; twoje PR z głosem „czeka na autora” albo „odrzucone” |
+   | Linear | `work.linear` | osobisty klucz API z uprawnieniem Read | przypisane issue (priorytet, termin, aktywny cykl = sprint); nieprzeczytane powiadomienia ze skrzynki Linear (wzmianki i pozostałe) |
+
+   - **Tokeny** zapisuje `set_work_token { source, token }`, każdy w osobnym pliku szyfrowanym DPAPI dla bieżącego użytkownika Windows
+     (`focus-platform/src/secrets.rs`; w danych aplikacji `work-<github|gitlab|jira|azure-devops|linear>-token.bin`), **nigdy w `config.json` i nigdy w logach**;
+     `token: null` usuwa plik. Powłoka przyjmuje 1–4096 widocznych znaków ASCII bez spacji (trafiają do nagłówka HTTP); inaczej błąd `work.token`
+     (pole `token`), a nieudany zapis albo usunięcie pliku to `work.tokenSave`; żaden komunikat nie powtarza tokenu. Tokenu nie da się odczytać z UI
+     (nie ma gettera): Ustawienia pokazują tylko stan źródła i konto (`WorkSourceStatus.account`). Token jedzie wyłącznie do API swojego narzędzia,
+     przez HTTPS. Poza Windows (bez DPAPI) narzędzia pracy są niedostępne (`state = unavailable`), jak Google i ICS w ADR-016.
+   - **Adresy** (`gitlabUrl`, `jiraUrl`) core sprawdza w `config::normalize_work_url`: tylko `https://`, host `[a-z0-9.-]` z opcjonalnym portem, bez danych logowania,
+     zapytania i fragmentu (`@`, `?`, `#`), ścieżka z bezpiecznych znaków (bez segmentów `.` i `..`), najwyżej 512 znaków, bez końcowego `/`. Dla `gitlab.com`
+     i `*.atlassian.net` ścieżka jest odrzucana, więc wklejony adres z przeglądarki działa. `jiraEmail` jest pusty albo ma postać `nazwa@domena` bez spacji,
+     znaków sterujących i `:` (staje się nazwą użytkownika w Basic auth), najwyżej 254 znaki. `azureOrg` przyjmuje też wklejony `https://dev.azure.com/<org>/…`
+     albo `<org>.visualstudio.com`, a potem tylko `[A-Za-z0-9._-]` (najwyżej 64 znaki, bez nazw z samych kropek). Błędy: `config.invalid` z polem
+     `work.gitlabUrl`, `work.jiraUrl`, `work.jiraEmail` albo `work.azureOrg`; komunikat nie powtarza wartości (wklejony adres może zawierać dane logowania).
+   - Stan każdego narzędzia: `WorkSourceStatus { source, state, detail, account }`. Błąd jednego (zły albo wygasły token, brak sieci, limit zapytań) to
+     `state = error` ze szczegółem po angielsku, bez tokenu i adresów; pozostałe działają, a sesja trwa (zasada 8).
+
+2. **„Subskrypcja” = okresowa synchronizacja.** Powłoka (`src-tauri/src/work.rs`, czysta część w `work/model.rs`) ma własny wątek ze stanem, a każde pobranie
+   idzie w osobnym krótkim wątku (`work/fetch.rs`, blokujące HTTP z `focus_platform::work`), więc komendy odpowiadają od razu, a aktor sesji nigdy nie czeka
+   na sieć (zasada 3). Każde włączone narzędzie jest czytane **co 5 minut** (`model::POLL_EVERY`) i od razu po `refresh_work`, zmianie tokenu albo ustawień
+   narzędzia i na starcie sesji. Nieudane pobranie (także odpowiedź 429 przy wyczerpanym limicie) jest ponawiane po 1, 2, 4… minutach, najrzadziej co 30 minut,
+   a narzędzie zachowuje poprzednie pozycje. GitHub nie jest czytany częściej, niż każe `X-Poll-Interval` (wartość z nagłówka przyjmujemy najwyżej do godziny),
+   także przy ręcznym odświeżeniu,
+   a jego klient pamięta `Last-Modified` dla `If-Modified-Since` (odpowiedź 304 nie zużywa limitu). Pozycje wszystkich narzędzi przechodzą razem przez
+   `focus_core::work::rank` (także co 5 minut, bo wiek i terminy płyną z zegarem), a wynik idzie jako `WorkStatus` (getter `get_work` + event `work://changed`
+   z rewizją, ADR-012). Identyfikatory już widzianych pozycji powłoka trzyma w `work-seen.json` (same `id`, bez tytułów), żeby po restarcie nie ogłaszać
+   starych pozycji jako nowych.
+
+3. **Kolejność** (`focus_core::work::rank`, czysta funkcja: bez zegara, plików i sieci; `now` przychodzi z powłoki).
+   - Próg (`work::tier`): `assigned` = 1; `reviewRequested`, `changesRequested`, `ciFailed` i `mention` = 2; `notification` = 3.
+     **Każda pozycja progu 1 stoi nad każdą pozycją progu 2, a ta nad każdą z progu 3**, bez względu na pozostałe cechy (test sprawdza wszystkie kombinacje).
+   - W progu 2 najpierw prośby o review (ktoś czeka na ciebie), potem zmiany do zrobienia i nieudane testy we własnym PR / MR, na końcu wzmianki.
+   - Dalej, w każdym progu, kryteria właściciela w jego kolejności: aktywny sprint / cykl / iteracja → priorytet (`priorityRank` 0 = najwyższy … 4 = najniższy;
+     brak priorytetu liczy się jak średni, 2) → termin (po terminie → w ciągu 24 h → w ciągu 3 dni → później albo brak) → status „w toku” przed resztą
+     (`work::is_in_progress` rozpoznaje m.in. „In Progress”, „Doing”, „In Review”, „Active”, „WIP”, `workflow::in progress` z GitLaba, kategorię statusu Jira
+     `indeterminate`, typ stanu Linear `started` oraz polskie, niemieckie, francuskie, hiszpańskie, włoskie i rosyjskie odpowiedniki) → wiek: w progach 1 i 2
+     starsze najpierw (dłużej czeka), w progu 3 nowsze najpierw (świeża informacja). Remis rozstrzyga `key`, potem `id`, więc wynik nie zależy od kolejności wejścia.
+   - `WorkItem.score` zapisuje tę kolejność cyframi dziesiętnymi (wyższy = wyżej): `10^9` próg (3 = przypisane, 2 = czeka, 1 = powiadomienie), `10^8` grupa progu 2
+     (3 = review, 2 = zmiany / CI, 1 = wzmianka), `10^7` sprint, `10^6` priorytet (4 − ranga), `10^5` termin (3 / 2 / 1 / 0), `10^4` „w toku”, a ostatnie cztery cyfry
+     to godziny od ostatniej zmiany (najwyżej 9999; w progu 3 odwrócone). Wynik i powody liczy zawsze core; wartości przysłane z zewnątrz są ignorowane.
+   - **Powody** (`WorkItem.reasons`, w tej kolejności, tylko gdy dotyczą): `assigned` (próg 1), `blockingOthers` (prośba o review), `mentioned` (wzmianka),
+     `inSprint`, `highPriority` (ranga 0 albo 1), `overdue` albo `dueToday`, `inProgress`, `waitingLong` (tylko próg 2, bez zmian dłużej niż 3 dni).
+     UI pokazuje je jako krótkie etykiety przy pozycji (teksty w `strings.ts`).
+   - **Terminy**: `dueMs` to chwila, w której mija termin. Termin bez godziny (Jira `duedate`, GitLab `due_date`, Linear `dueDate`) platforma przekazuje
+     jako **koniec tego dnia czasu lokalnego**, więc zadanie jest „na dziś” przez cały dzień, a „po terminie” dopiero następnego dnia.
+   - **Jedna pozycja na zadanie**: `id` = źródło + klucz. Kopie o tym samym `id` (np. przypisane issue, które jest też wzmianką w powiadomieniach) łączą się:
+     wygrywa kopia z najlepszego progu (potem silniejsza grupa progu 2, potem pełniejsza, potem nowsza), a jej braki uzupełniają pozostałe.
+   - Wynik ma najwyżej 50 pozycji (`work::MAX_ITEMS`). Tekst jest czyszczony do wyświetlenia (znaki sterujące → spacje, tytuł do 300 znaków, klucz do 120,
+     etykiety do 80), a adres, który nie jest `http(s)://` z hostem (np. `javascript:`, `file:`, `ms-settings:`), staje się pusty: UI nie otwiera wtedy linku.
+   - Priorytety narzędzi platforma przelicza na `priorityRank` 0–4 (`focus_platform::work::priority_rank_from_name`: `P0`–`P4` i cyfra na początku nazwy wprost,
+     a słowa: Highest / Blocker / Critical / Urgent = 0, High / Major = 1, Medium / Normal = 2, Low / Minor = 3, Lowest / Trivial = 4; GitHub i GitLab z etykiet;
+     Azure DevOps 1–4 i Linear Urgent (1) … Low (4) na 0–3, a „bez priorytetu” Linear (0) na brak);
+     nazwa z narzędzia zostaje w `priorityLabel` do wyświetlenia. Pozycja bez priorytetu, terminu albo sprintu ma te kryteria puste (priorytet liczy się jak średni).
+
+4. **Wstrzymanie w trakcie skupienia** (`work.holdDuringFocus`, domyślnie włączone).
+   - Synchronizacja trwa także w focusie, ale **nowe pozycje nie przerywają skupienia**: żadnego okienka ani toastu, a strona Skupienie pokazuje
+     w focusie tylko cel sesji. Liczbę wstrzymanych nowych pozycji podaje `WorkStatus.heldCount`.
+   - `unseen: true` mają pozycje, które przyszły, odkąd użytkownik ostatnio patrzył na listę: pozycje zwrócone przez `get_work` albo `refresh_work`
+     liczą się od następnego stanu jako widziane (UI czyta listę przez `get_work`, gdy ją pokazuje). Pierwsza lista narzędzia po starcie aplikacji
+     albo po zmianie jego ustawień jest punktem wyjścia i niczego nie ogłasza.
+   - Na start przerwy (i po Stop, czyli przed następną sesją) powłoka pokazuje okienko `workDigest` z liczbą nowych pozycji (`PopupInfo.workCount`),
+     także przy wyłączonych okienkach faz (jak przypomnienie o spotkaniu); toast tylko wtedy, gdy okienka nie da się otworzyć. Okienko `workDigest`
+     nigdy nie zastępuje innego: czeka, aż zniknie okienko przerwy (albo przypomnienie o spotkaniu), a z kilku czekających zostaje najnowsze.
+     Żadne nie przechodzi do focusa: okienko startu focusa go nie odkłada, tylko zastępuje, a na start focusa z wstrzymaniem powłoka usuwa
+     paczkę z ekranu i z kolejki (`PopupHandle::withdraw_work_digest`). Toast podaje tylko liczbę, bez tytułów zadań.
+   - Przy wyłączonym `holdDuringFocus` (świadomy wybór użytkownika) lista „Co dalej?” jest widoczna także w focusie, a nowe pozycje są ogłaszane
+     od razu, także okienkiem w trakcie focusa. Wyłączenie w trakcie focusa od razu ogłasza pozycje wstrzymane do tej chwili.
+   - Podstawa: powiadomienia w paczkach o stałych porach zamiast na bieżąco. Kushlev i Dunn 2015 („Checking email less frequently reduces stress”,
+     Computers in Human Behavior 43, [doi:10.1016/j.chb.2014.11.005](https://doi.org/10.1016/j.chb.2014.11.005)): sprawdzanie poczty kilka razy dziennie
+     zamiast bez ograniczeń obniżało stres. Fitz i in. 2019 („Batching smartphone notifications can improve well-being”, Computers in Human Behavior 101,
+     [doi:10.1016/j.chb.2019.07.016](https://doi.org/10.1016/j.chb.2019.07.016)): powiadomienia w paczkach trzy razy dziennie poprawiały samopoczucie,
+     a całkowite wyłączenie powiadomień zwiększało niepokój i obawę, że coś umknie; dlatego wstrzymujemy i pokazujemy w przerwie, zamiast ukrywać.
+     Mark i in. 2008 („The cost of interrupted work: more speed and stress”, CHI, [doi:10.1145/1357054.1357072](https://doi.org/10.1145/1357054.1357072)):
+     przerywaną pracę ludzie kończą szybciej, ale z większym stresem i frustracją. Kushlev i Dunn 2015 oraz Mark i in. 2008 są już źródłami porad
+     w `src/lib/tips.ts` (ADR-015 pkt 7). To uzasadnienie projektu, a nie obietnica w UI (zasada 10).
+
+5. **Karta „Co dalej?”, cel sesji i „Zrobione?”.**
+   - Strona Skupienie pokazuje kartę „Co dalej?” (`NextUp.svelte`) w Idle i w przerwie (w focusie tylko przy wyłączonym `holdDuringFocus`): pięć pierwszych
+     pozycji (więcej po „Pokaż więcej”), przy każdej źródło, klucz, tytuł, termin i powody („Dlaczego teraz”), oznaczenie „nowe” dla `unseen`,
+     „Otwórz” (link w przeglądarce, tylko `http(s)://`) i „Ustaw jako cel”. Bez połączonych narzędzi karta to tylko podpowiedź z linkiem do Ustawień.
+   - „Ustaw jako cel” ustawia cel sesji: `set_session_goal { goal }` z `SessionGoal { source, key, title, url }` (`null` czyści).
+     Działa w każdej fazie i nie daje efektów (`Input::SetGoal`). Core czyści cel (`work::normalize_goal`: tekst jak w rankingu, adres spoza `http(s)://` pusty;
+     pusty klucz i tytuł = brak celu) i pokazuje go w każdym snapshocie (`SessionSnapshot.goal`; UI pod minutnikiem, `SessionGoalLine.svelte`, z „×”,
+     które czyści cel). Cel wybrany w Idle przechodzi przez Start.
+   - Na Stop cel trafia do podsumowania (`SessionSummary.goal`), a sesja zostaje bez celu. Podsumowanie pyta „Zrobione?” (Tak / Nie):
+     `mark_goal_done { sessionId, done }` zapisuje odpowiedź (`goalDone`) w ostatnim podsumowaniu i przy tej sesji w `history.jsonl`
+     (powłoka przepisuje plik atomowo, `persistence.rs`). Historia pokazuje cel ze znacznikiem. Stara historia bez tych pól wczytuje się z `goal: null`, `goalDone: null`.
+   - Odpowiedź dotyczy tylko FocusMode: zadanie w narzędziu się nie zmienia (tylko odczyt).
+
+6. **Prywatność.**
+   - **Ranking jest lokalny** (czysta funkcja w `focus-core`). Tytuły, klucze i powiadomienia **nie trafiają do żadnego modelu AI ani innej strony trzeciej**;
+     jedyny ruch to zapytania do API narzędzi włączonych przez użytkownika (`api.github.com`, adres GitLaba, adres witryny albo serwera Jira
+     i dla tokenów z zakresami `api.atlassian.com`, `dev.azure.com`, `api.linear.app`). Zapytania idą tylko pod skonfigurowany adres (przekierowania
+     na inny adres są odrzucane, bo nagłówek z tokenem poszedłby za nimi).
+   - Tytuły i klucze zadań pokazujemy tylko w oknie i okienkach FocusMode oraz w snapshocie sesji. **Nie trafiają do logów**, mostu ani rozszerzenia,
+     a toast podaje tylko liczbę. Na dysku: `work-seen.json` (same identyfikatory) i cel sesji w `history.jsonl` (klucz, tytuł i link; tylko przy `keepHistory`;
+     usuwa go „Usuń historię”).
+   - Tokeny: pkt 1. Szczegóły błędów nie zawierają tokenów ani adresów.
+
+7. **Ograniczenia** (świadome).
+   - **GitHub: tokeny fine-grained nie czytają powiadomień ani Checks API** (`GET /notifications` przyjmuje tylko tokeny klasyczne, a Checks API
+     GitHub wymienia wśród ograniczeń tokenów fine-grained). Z tokenem fine-grained FocusMode widzi przez wyszukiwanie (`GET /search/issues`) przypisane issue
+     i prośby o review oraz własne PR z prośbą o zmiany, ale nie widzi wzmianek, pozostałych powiadomień ani wyników GitHub Actions (check runs).
+     Token fine-grained działa też tylko dla jednego właściciela zasobów (twoje konto albo jedna organizacja), a organizacja może wymagać jego zatwierdzenia.
+     Token klasyczny z zakresem `notifications` daje powiadomienia, ale do prywatnych repozytoriów (i ich check runs) potrzebuje zakresu `repo`, czyli pełnego
+     dostępu, a nie tylko odczytu (FocusMode i tak tylko czyta). Issue GitHuba nie mają pól priorytetu ani sprintu: priorytet i „w toku” platforma odczytuje
+     z etykiet, a termin z kamienia milowego (pól GitHub Projects nie czytamy). Tylko github.com, bez GitHub Enterprise Server.
+   - **Limity zapytań**: GitHub: wyszukiwanie 30 zapytań na minutę, reszta REST 5000 na godzinę; Jira Cloud: odpowiedź 429 z `Retry-After`
+     (od 2026-03-02 Atlassian egzekwuje też limity punktowe dla aplikacji); Azure DevOps: dławienie według zużycia zasobów, z `Retry-After`; Linear: 2500 zapytań i 3 mln punktów złożoności
+     na godzinę na klucz; GitLab: limity instancji (429). Synchronizacja co 5 minut mieści się w nich z zapasem, a po błędzie narzędzie ponawia coraz rzadziej (pkt 2).
+   - **Jira**: brak publicznego API powiadomień i wzmianek. Próg 3 z Jiry to tylko zastępstwo: obserwowane zgłoszenia przypisane do kogoś innego,
+     zmienione w ostatniej dobie. **Pole sprintu** to pole niestandardowe z innym id na każdej witrynie: platforma znajduje je w `GET /rest/api/{3|2}/field`
+     po typie (`schema.custom` kończy się na `:gh-sprint`) i uznaje zgłoszenie za „w sprincie”, gdy któryś z jego sprintów ma stan `active`
+     (Data Center bywa, że podaje sprinty starym zapisem tekstowym `…[…,state=ACTIVE,…]`). Jira bez Jira Software (bez tablic Scrum) nie ma sprintów.
+     Cloud szuka przez `POST /rest/api/3/search/jql` (stare `/rest/api/3/search` Atlassian wyłączył w 2025; nowe zwraca tylko id, jeśli nie poda się `fields`),
+     Data Center przez `POST /rest/api/2/search` z tokenem jako `Bearer` (Jira 8.14+); token Data Center ma wszystkie uprawnienia konta (nie da się go
+     ograniczyć do odczytu). **Token Cloud z zakresami** Atlassian przyjmuje wyłącznie przez bramkę `https://api.atlassian.com/ex/jira/{cloudId}`:
+     gdy witryna odrzuci token, platforma odczytuje `cloudId` z `https://<witryna>/_edge/tenant_info` (bez wysyłania danych logowania) i kieruje zapytania
+     przez bramkę. Tokeny API Atlassian wygasają najpóźniej po roku.
+   - **Azure DevOps**: API nie ma skrzynki powiadomień; tylko Azure DevOps Services (`dev.azure.com`), bez Azure DevOps Server. Globalne PAT przestają działać
+     2026-12-01, więc token musi być ograniczony do jednej organizacji, a administrator organizacji może tworzenie PAT ograniczyć.
+   - **GitLab**: iteracje (sprint) są tylko w planach Premium i Ultimate; issue GitLaba nie mają pola priorytetu (platforma czyta go z etykiet), a status
+     „w toku” pochodzi z etykiet (`workflow::…`), bo samo issue ma tylko stan otwarte / zamknięte.
+   - Nowe pozycje pojawiają się z opóźnieniem jednego cyklu synchronizacji (nie na żywo). Jedno konto na narzędzie. Kolejność to heurystyka, która nie zna
+     ustaleń zespołu: dlatego zawsze pokazujemy powody, a cel wybiera użytkownik.
+   - Tokeny w plikach DPAPI działają tylko na koncie Windows, które je zapisało (po przeniesieniu danych trzeba je wkleić ponownie). Tokeny wygasają
+     (GitLab domyślnie po roku, Atlassian najpóźniej po roku, GitHub i Azure DevOps według wyboru albo zasad organizacji): źródło pokazuje wtedy błąd.
+
+8. **Kontrakt** (`api.rs`; jak w ADR-013–016, w tej samej gałęzi co implementacja): komendy `get_work`, `refresh_work`, `set_work_token`,
+   `set_session_goal` i `mark_goal_done`; event `work://changed`; DTO `WorkConfig`, `WorkSource`, `WorkItemKind`, `WorkReason`, `WorkItem`,
+   `WorkSourceStatus`, `WorkStatus` i `SessionGoal`; pole `Config.work`; `SessionSnapshot.goal`; `SessionSummary.goal` i `goalDone`;
+   `PopupKind.workDigest`; `PopupInfo.workCount`. Nowe pola mają wartości domyślne (`#[serde(default)]`), więc stary config, stara historia
+   i stary snapshot się wczytują. Szczegóły: ARCHITECTURE §6.9.
+
+**Konsekwencje:**
+- Aplikacja łączy się z kolejnymi serwerami, ale tylko z narzędziami włączonymi przez użytkownika i tylko z jego tokenem. Bez sieci źródło ma stan błędu,
+  a sesja działa jak dotąd.
+- Wklejanie tokenów to tarcie przy konfiguracji (pięć różnych stron tworzenia tokenu); README i Ustawienia prowadzą krok po kroku. Logowanie OAuth zostaje na później.
+- „Tylko odczyt” jest pełne tam, gdzie pozwala narzędzie (GitHub fine-grained, GitLab `read_api`, Jira Cloud z zakresami `read:jira-work` / `read:jira-user`,
+  Azure DevOps Read, Linear Read). Tokenu Jira Cloud bez zakresów, tokenu Jira Data Center i klasycznego tokenu GitHuba z `repo` nie da się tak ograniczyć:
+  wtedy „tylko odczyt” gwarantuje kod FocusMode, który wysyła wyłącznie zapytania odczytu, a nie sam token. Wybór GitHuba to kompromis: token fine-grained
+  jest tylko do odczytu, ale bez powiadomień i wyników GitHub Actions; klasyczny daje wszystko, ale nie jest tylko do odczytu.
+- `history.jsonl` dostaje cel sesji, a tytuł zadania bywa poufny: obowiązuje to samo co przy tytułach okien (ADR-015): tylko lokalnie, nic przy wyłączonym
+  `keepHistory`, „Usuń historię” usuwa.
+- `mark_goal_done` przepisuje cały `history.jsonl` (atomowo); przy długiej historii to jeden większy zapis na odpowiedź.
+- W `focus-core`: nowy moduł `work.rs`, `Input::SetGoal`, `Session::goal()` i `SessionTotals.goal`; `stats::summarize` przenosi cel do podsumowania
+  (z `goalDone: null`); `WorkConfig::normalized` w `Config::normalized`. Tabela faz z ADR-013 się nie zmienia: `SetGoal` nie daje efektów w żadnej fazie.
+- Okienka faz dostają rodzaj `workDigest`, który czeka na inne okienka.
+
+**Co zmienia:**
+- ADR-013: pkt 5 (historia: cel sesji i odpowiedź „Zrobione?”).
+- ADR-014: pkt 1 (nowe `PopupKind.workDigest` i `PopupInfo.workCount`; digest nie zastępuje innego okienka).
+- CLAUDE.md (zmiana czeka na zatwierdzenie przez użytkownika, notatka w TASKS z 2026-10-13, „Co dalej?”):
+  - twarda zasada 11: ruch sieciowy także do włączonych narzędzi pracy (GitHub, GitLab, Jira, Azure DevOps, Linear), tylko do odczytu; tokeny tylko w plikach
+    szyfrowanych DPAPI (`work-<źródło>-token.bin`), nigdy w `config.json` ani w logach; tytuły zadań tylko lokalnie, nigdy w logach, moście ani rozszerzeniu;
+    kolejność liczona lokalnie, nic nie trafia do modeli AI;
+  - Struktura: `focus-core/src/work.rs`, `focus-platform/src/work/`, `src-tauri/src/work.rs` (+ `work/model.rs`, `work/fetch.rs`),
+    `src/lib/state/work.svelte.ts` i komponenty `NextUp.svelte`, `SessionGoalLine.svelte`, `WorkSettings.svelte`.
+
+---
+
+## ADR-018: Maskotka i poprawki
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu przygotował 2026-10-13 maskotkę FocusMode: aksolotla w słuchawkach, wygenerowanego przez AI na dwóch arkuszach
+(`art/mascot/`, opis obróbki w `art/mascot/README.md`). Pierwszy arkusz to postać z sześcioma kształtami ust (O A E I U Y) i po trzy klatki mrugnięcia,
+oczka, uśmiechu, smutku, złości i radości. Drugi to ta sama postać „wyglądająca” zza krawędzi: spoczynek, cztery klatki mrugnięcia, usta A E I U Y,
+uśmiech, smutek, złość i radość. Właściciel prosi, żeby maskotka mrugała, reagowała na to, co dzieje się w sesji, „mówiła” porady z ruchem ust,
+wyglądała zza krawędzi okienek FocusMode i miała pikselową wersję w motywie 8-bit. **Decyzja właściciela: grafiki nie przerysowujemy.**
+Wpis w `CREDITS.md` (dodany razem z ADR-015) mówił o „wersji wektorowej przygotowanej na podstawie arkusza”; takiej wersji nie ma w repozytorium i jej nie robimy.
+
+Z testów wyszły też poprawki, które trafiają do tej samej rundy:
+1. Okienko FocusMode to okno aplikacji zawsze na wierzchu, którego „Nie przeszkadzać” nie wycisza (ADR-014), więc wyskakuje nad grą na pełnym ekranie
+   i nad prezentacją na rzutniku. Toasty Windows w tych trybach zwykle wycisza sam system (automatyczne reguły „Nie przeszkadzać” / Asystenta skupienia).
+2. Działająca instancja ignoruje `--demo` z drugiego uruchomienia (wtyczka single instance przekazuje jej tylko argumenty), więc przed prezentacją
+   trzeba zamknąć FocusMode z zasobnika i uruchomić go ponownie.
+3. Wzorzec z `websiteblacklist.txt`, który przechodzi walidację w core (crate `regex`), może nie dostać reguły w przeglądarce: Chrome sprawdza go własnym RE2
+   z limitami (`isRegexSupported`) i ma limit reguł regex (`MAX_NUMBER_OF_REGEX_RULES`). Popup rozszerzenia pokazuje wtedy „pominięte”, ale Ustawienia aplikacji nie,
+   więc użytkownik myśli, że linia działa w pełni. Żeby aplikacja się o tym dowiedziała, rozszerzenie musi coś do niej wysłać, a most jest dotąd tylko do odczytu
+   (ADR-013 pkt 4, twarda zasada 11 w CLAUDE.md). To wymaga tego ADR.
+4. Wpis autostartu (`launchOnLogin`) powstaje tylko przy zmianie ustawienia. Wpis zapisany wcześniej (np. przez wcześniejszy build albo przed przeniesieniem
+   aplikacji do innego folderu) zostaje taki, jaki był: może wskazywać starą ścieżkę albo nie mieć argumentu `--autostart`, a wtedy logowanie otwiera okno zamiast
+   zostawić FocusMode w zasobniku.
+
+**Opcje — jak pokazać maskotkę:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Klatki z arkuszy właściciela (sprite sheet): atlas WebP + manifest JSON, jedna klatka naraz** | wierne grafice właściciela; animacja to podmiana klatki (tania, przewidywalna, łatwa do zatrzymania); dwa pliki, razem ok. 1,1 MB | tylko te miny i kształty ust, które są na arkuszach; ruch skokowy, bez płynnych przejść; powiększenie ponad rozdzielczość klatki rozmywa |
+| Wersja wektorowa (SVG) narysowana na podstawie arkusza | płynne skalowanie, animacja części (oczy, usta) | to przerysowanie projektu; **odrzucone przez właściciela** |
+| Animacja szkieletowa 2D (postać pocięta na części, siatka) | płynny ruch | cięcie postaci na części i dorysowywanie zasłoniętych fragmentów to ingerencja w grafikę; dodatkowe narzędzia i biblioteki; za duże na hackathon; odrzucone |
+| Nowe miny generowane przez AI w aplikacji | dowolne miny | ruch sieciowy i model AI (zasada 11), niepowtarzalny wynik, zmienia projekt; odrzucone |
+
+**Opcje — jak aplikacja dowie się, których wzorców przeglądarka nie egzekwuje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Rozszerzenie zgłasza listę: `POST /v1/report`** | prawdziwy wynik przeglądarki (jej RE2, jej limit reguł); rozszerzenie i tak zna tę listę | pierwsze zapisujące zapytanie do mostu: zmiana zasady 11, potrzebne zabezpieczenia (pkt 7) |
+| Aplikacja sama przewiduje wynik Chrome | most zostaje tylko do odczytu | crate `regex` to nie RE2 z Chrome (inne limity rozmiaru), a limit reguł zależy od przeglądarki: wynik byłby inny niż w przeglądarce; odrzucone |
+| Zgłoszenie w adresie zapytania (`GET /v1/state?skipped=…`) | bez nowej metody HTTP | `GET` ze skutkiem ubocznym, lista wzorców w adresie (limity długości, logi pośrednie); odrzucone |
+| Native messaging przeglądarki | oficjalny kanał rozszerzenie ↔ aplikacja | manifest hosta w rejestrze i identyfikator rozszerzenia (rozpakowane rozszerzenie ma identyfikator zależny od ścieżki); za dużo na hackathon |
+
+**Decyzja:**
+
+1. **Grafika: klatki z arkuszy właściciela, bez przerysowywania.**
+   - Źródła w `art/mascot/`: `axolotl-sheet.webp` (1536×745, przezroczyste tło) i `axolotl-peek-sheet.webp` (1536×1024). Klatki przygotowuje powtarzalnie
+     `tools/mascot/` (Node + Edge headless; narzędzie tylko przygotowuje grafikę i nie trafia do aplikacji): powiększenie ×4 przez Real-ESRGAN
+     (`realesrgan-ncnn-vulkan` v0.2.5.0, BSD-3, model `realesrgan-x4plus-anime`), wykrycie i wycięcie klatek, wyrównanie skali (wiersze rysowane mniejszą postacią
+     powiększone ok. ×1,30 do wielkości wiersza z ustami), wspólna kotwica (linia stóp + środek głowy, więc postać nie skacze przy zmianie klatki) i usunięcie
+     miękkiej poświaty alfa. Wynik w `static/mascot/`: atlas WebP (6 kolumn) + manifest (`frameWidth`, `frameHeight`, `columns`, `anchorX`, `anchorY`,
+     `frames: { nazwa: { x, y, scale } }`). Atlasów i manifestów nie edytujemy ręcznie.
+   - Zestaw główny (`axo-atlas.webp` + `axo-manifest.json`, 24 klatki 415×420): `mouth-o`, `mouth-a`, `mouth-e`, `mouth-i`, `mouth-u`, `mouth-y`, `blink-1..3`,
+     `wink-1..3`, `smile-1..3`, `sad-1..3`, `angry-1..3`, `happy-1..3`. **`blink-1` (oczy otwarte, neutralnie) to spoczynek.**
+     Zestaw „zza krawędzi” (`peek-atlas.webp` + `peek-manifest.json`, 14 klatek 495×300): `idle`, `blink-1..4`, `mouth-a`, `mouth-e`, `mouth-i`, `mouth-u`,
+     `mouth-y`, `smile`, `sad`, `angry`, `happy` (bez O).
+   - **Wolno**: wybierać i wyświetlać klatki, skalować całą klatkę, pikselizować przy wyświetlaniu (pkt 3). **Nie wolno**: przerysowywać, przekolorowywać,
+     obrysowywać (trace), wektoryzować, dorysowywać klatek ani generować nowych min. Nowa mina to nowy arkusz od właściciela, pocięty tym samym narzędziem.
+
+2. **Stany i animacja** (frontend, `src/lib/mascot/`; animacja to tylko podmiana klatek, bez interpolacji i bez zmian w plikach).
+   - Wyświetlanie: jedna klatka z atlasu jako tło elementu o stałym rozmiarze (`background-image`, `background-position` i `background-size` liczone z manifestu),
+     więc zmiana klatki nie przesuwa układu. Manifest jest pobierany raz z własnego originu aplikacji (CSP bez zmian: `img-src 'self'`, `connect-src 'self'`).
+   - **Spoczynek i mruganie**: co losowe 3–7 s mrugnięcie (główna: `blink-1` → `blink-3` na ok. 120 ms → `blink-1`; „zza krawędzi”: `idle` → `blink-2` →
+     `blink-3` → `blink-2` → `idle`), tylko gdy maskotka odpoczywa z neutralną miną (klatki mrugnięcia mają neutralną twarz) i okno jest widoczne.
+   - **Reakcje** na zdarzenia sesji: start sesji → `wink-1..3`; start przerwy → `smile-1..3`, potem spoczynek; ukończony cykl (przerwa → następny focus) →
+     `happy-1..3` w pętli przez 2,5 s; Stop przed końcem pierwszego focusa (`focusedSecs` mniejsze niż długość focusa) → `sad-1..3`, potem spoczynek;
+     nudge o rozpraszającej stronie → `angry-1..3`, potem spoczynek; przypomnienie o spotkaniu → uśmiech; paczka nowych pozycji „Co dalej?” → radość.
+     Wersja „zza krawędzi” ma po jednej klatce miny i nie ma oczka, więc start to mrugnięcie przechodzące w uśmiech.
+   - **„Mówienie”** (ruch ust według samogłosek): gdy maskotka pokazuje dymek z tekstem, usta idą za tekstem znak po znaku (ok. 70 ms na znak, najwyżej 6 s,
+     potem spoczynek): a / ą → A, e / ę → E, i → I, y → Y, o / ó → O (wersja „zza krawędzi” nie ma O, więc A), u → U; spółgłoska trzyma poprzednie usta
+     przez jeden krok, potem klatkę neutralną; spacja i interpunkcja → spoczynek. To przybliżenie z liter: FocusMode nie ma syntezy mowy, więc nie ma dźwięku
+     do analizy.
+   - **Ograniczenie animacji** (`prefers-reduced-motion`): bez mrugania i bez ruchu ust (w czasie dymka maskotka pokazuje klatkę uśmiechu), a reakcja to jedna
+     nieruchoma klatka przez ten sam czas.
+   - **Miejsca**: strona Skupienie (maskotka obok minutnika, ok. 140 px, w wąskim oknie mniejsza i bez dymka; w Idle dymek z pierwszą pozycją „Co dalej?”,
+     jeśli jest, albo z „Dobrą praktyką”), karta przerwy (w przerwie maskotka przechodzi do karty i „mówi” poradę i przypomnienie, więc na ekranie jest jeden
+     aksolotl), Podsumowanie (smutna przy pustym podsumowaniu, wesoła, gdy cel sesji jest zrobiony), pasek nudge'a (mała, zła) i okienko `popup`
+     (wersja „zza krawędzi” przy krawędzi karty, „mówi” tytuł i treść okienka).
+   - **Dostępność**: maskotka jest dekoracyjna (`aria-hidden`), a treść dymka to zwykły tekst (`aria-live="polite"` tylko dla nowych porad).
+     Teksty po polsku w `src/lib/strings.ts`.
+
+3. **Wersja 8-bit**: w motywie `pixel` klatka jest zmniejszana do małego canvasu (jeden piksel grafiki to 2–4 piksele CSS, zależnie od rozmiaru maskotki)
+   filtrem przeglądarki, który uśrednia piksele (zostają cienkie kontury i oczy); potem każdy piksel staje się w pełni kryjący albo w pełni przezroczysty
+   (próg alfa, ostre krawędzie), a canvas jest powiększany z `image-rendering: pixelated`. To efekt wyświetlania, a nie nowa grafika: pliki się nie zmieniają,
+   nic nie jest dorysowane ani przekolorowane, a kolory pikseli to średnie z klatki właściciela. Gdy pikseli nie da się odczytać, zostają miękkie krawędzie.
+   W pozostałych motywach klatka jest skalowana gładko.
+
+4. **`Config.showMascot`** (`boolean`, domyślnie `true`; stary `config.json` bez pola wczytuje się z `true`): Ustawienia → Wygląd → „Pokaż maskotkę (aksolotl)”.
+   Wyłączona maskotka znika z okna głównego, karty przerwy i okienek (okno `popup` czyta config przez `get_config`); treści (porady, przypomnienia,
+   okienka) zostają bez zmian. Core nie ma tu czego walidować (zwykły przełącznik).
+
+5. **Okienka czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie.**
+   - Platforma: `focus_platform::notification_state::user_is_presenting()` pyta `SHQueryUserNotificationState` (shell32), czyli ten sam test, którym Windows
+     decyduje o dymkach powiadomień. „Prezentuje” to `QUNS_BUSY` (aplikacja na pełnym ekranie albo włączone ustawienia prezentacji),
+     `QUNS_RUNNING_D3D_FULL_SCREEN` (Direct3D w wyłącznym pełnym ekranie), `QUNS_PRESENTATION_MODE` (tryb prezentacji Windows) i `QUNS_APP`
+     (aplikacja ze Sklepu Windows na pierwszym planie). Nie prezentuje: `QUNS_ACCEPTS_NOTIFICATIONS`, `QUNS_QUIET_TIME`, `QUNS_NOT_PRESENT` (ekran zablokowany,
+     wygaszacz, nieaktywna sesja), nieznana wartość i błąd zapytania (wtedy nic nie jest wstrzymywane na zgadywanie). Bez COM i tanie, więc powłoka może pytać
+     co tick. Poza Windows zawsze `false`. Funkcja jest zadeklarowana ręcznie (`windows::core::link!`, ten sam import, który generuje crate `windows`),
+     bo zależność `windows` nie ma włączonej funkcji `Win32_UI_Shell` (`TODO(hackathon)`; bez nowych zależności).
+   - Powłoka (`popup.rs`): okienko, które ma się pokazać, gdy użytkownik prezentuje, nie otwiera okna, tylko czeka, a powłoka sprawdza stan co 5 s
+     (`PRESENTING_POLL`) i pokazuje je, gdy prezentacja się skończy. Dotyczy wszystkich rodzajów okienek: faz, zamkniętych launcherów, przypomnień o spotkaniach
+     i paczek „Co dalej?”. Czeka najnowsze okienko, a kolejne spotyka je tak, jak spotkałoby okienko na ekranie: zastępuje je, a przypomnienie o spotkaniu
+     i paczka „Co dalej?” czekają w kolejce na swoją kolej (przypomnienie o spotkaniu, które już się skończyło, przepada). Okienko, które czeka dłużej niż
+     10 minut (`PRESENTING_HOLD_MAX`), a użytkownik nadal prezentuje, przepada bez toastu zastępczego (Windows w tych trybach i tak wstrzymuje toasty, a stan widać
+     w oknie głównym), więc test Windows nie zatrzyma okienek na zawsze. Okienko, które już jest na ekranie, zostaje. Toastów (przy wyłączonych okienkach)
+     to nie zmienia.
+
+6. **`--demo` przy działającej aplikacji.** Drugie uruchomienie z `--demo` (np. `focusmode.exe --demo` ze skrótu do prezentacji), gdy działająca instancja jest w Idle,
+   przełącza ją na profil demo (40 s skupienia / 20 s przerwy: `ActorCmd::UseDemoProfile`, aktor ustawia profil Idle, `SessionSnapshot.demo = true`) i pokazuje
+   okno główne. W trakcie sesji (także w pauzie) profil się nie zmienia (sesja ma swój profil od Start), a toast mówi „Zatrzymaj sesję, aby włączyć tryb prezentacji”
+   (`texts::demo_needs_stop_toast`). Profil demo zostaje do końca działania procesu; zwykłe czasy wracają po ponownym uruchomieniu bez `--demo`.
+   `FOCUSMODE_DEMO=1` działa tylko przy pierwszym uruchomieniu (drugie uruchomienie przekazuje działającej instancji argumenty, a nie zmienne środowiska).
+
+7. **Rozszerzenie zgłasza wzorce, których przeglądarka nie egzekwuje: `POST /v1/report`, jedyny zapis do mostu.**
+   - Rozszerzenie: po ustawieniu reguł w fazie Focus wysyła listę wzorców, które nie dostały reguły `declarativeNetRequest` (odrzucone przez `isRegexSupported`
+     albo ponad limit reguł regex): `POST http://127.0.0.1:47615/v1/report`, nagłówki `Content-Type: application/json` i `X-FocusMode-Extension: 1`,
+     treść `{ "skipped": string[] }`. Tylko źródła wzorców otrzymane od aplikacji, dokładnie w tej postaci; nigdy adresy, tytuły ani nic o przeglądaniu.
+     Wysyła po 2 s spokoju, raz na każdą nową listę w danym focusie (w następnym focusie od nowa), a po braku odpowiedzi ponawia przy następnym sprawdzeniu stanu.
+     Błąd zgłoszenia nie wpływa na blokowanie.
+   - Most przyjmuje to zapytanie tylko wtedy, gdy: nagłówek `Host` wskazuje loopback (jak dotąd, przeciw DNS rebinding); `Origin` to origin rozszerzenia
+     (`chrome-extension://`, `moz-extension://`, `extension://`); jest nagłówek `X-FocusMode-Extension: 1`; treść ma najwyżej ok. 1,5 MB (mieści się najdłuższa lista, jaką aplikacja może wysłać) i jest JSON-em z tablicą `skipped`
+     o najwyżej 500 pozycjach po najwyżej 500 znaków (limity listy w core: `MAX_PATTERNS`, `MAX_LINE_CHARS`; inne pola są ignorowane). Odpowiedzi: `204` (przyjęte,
+     także gdy nic się nie zmieniło), `403` (zły `Host`, brak originu rozszerzenia albo nagłówka), `413` (treść ponad ten limit; zadeklarowanej większej treści most nie czyta),
+     `400` (nie ten JSON albo ponad limity pozycji); odrzucone zgłoszenie niczego nie zmienia.
+     Własny nagłówek wymusza na stronach WWW preflight CORS, a most nie daje nagłówków CORS originom innym niż rozszerzenia, więc strona otwarta w przeglądarce
+     zgłoszenia nie wyśle. Poza tym most zostaje tylko do odczytu (`GET /v1/state`).
+   - Aplikacja (`src-tauri/src/blocklist.rs`) zostawia ze zgłoszenia **tylko wzorce, które są teraz na liście** (dokładnie te same źródła, w kolejności z pliku,
+     bez powtórzeń), więc nawet podrobione zgłoszenie nie wstawi do Ustawień obcego tekstu: najwyżej oznaczy wzorce użytkownika jako nieobsługiwane.
+     Wynik to `BlocklistInfo.extensionSkipped` (tylko w pamięci; każde zgłoszenie zastępuje poprzednie; przeładowanie pliku zostawia tylko wzorce, które w nim zostały),
+     a zmiana daje nową rewizję i `blocklist://changed`. Logi podają tylko liczby.
+   - Ustawienia → Blokuj rozpraszające strony pokazują tę listę jako ostrzeżenie: „Przeglądarka nie obsługuje tych wyrażeń jako reguł — sprawdzam je przy wczytaniu karty”.
+     Taki wzorzec rozszerzenie nadal sprawdza samo przy ładowaniu karty (jeśli JavaScript umie wykonać to wyrażenie), ale strona może zdążyć się na chwilę otworzyć.
+
+8. **Autostart odświeżany przy starcie.** Gdy `launchOnLogin` jest włączone, powłoka przy każdym starcie (poza uruchomieniem z `--restore-shields`) zapisuje
+   wpis autostartu od nowa przez wtyczkę (`disable` + `enable`), więc wpis ma bieżącą ścieżkę aplikacji i argument `--autostart`. Robi to tylko wtedy, gdy wpis
+   istnieje i jest włączony (`is_enabled()`): wpisu wyłączonego w Menedżerze zadań (Aplikacje autostartu) albo usuniętego nie rusza, bo `enable()` wtyczki
+   włączyłoby go z powrotem wbrew wyborowi użytkownika. Taki wpis wraca dopiero po wyłączeniu i włączeniu „Uruchamiaj przy logowaniu” w Ustawieniach.
+   Błędy trafiają tylko do logu (start aplikacji ich nie zgłasza).
+
+9. **Kontrakt** (`api.rs`; jak w ADR-013–017, w tej samej gałęzi co implementacja): pole `Config.showMascot` (`#[serde(default)]` = `true`) i pole
+   `BlocklistInfo.extensionSkipped` (`string[]`, `#[serde(default)]`). Bez nowych komend i eventów: lista przychodzi istniejącą parą `get_blocklist` +
+   `blocklist://changed`. Most dostaje trasę `POST /v1/report` (to nie jest komenda Tauri; port `BRIDGE_PORT` bez zmian). Szczegóły: ARCHITECTURE §6.10.
+
+**Konsekwencje:**
+- Instalator rośnie o ok. 1,1 MB (dwa atlasy WebP). Źródłowe arkusze i narzędzie leżą w repozytorium, ale nie trafiają do aplikacji.
+- Maskotka ma tylko te miny i kształty ust, które są na arkuszach, a ruch ust to przybliżenie z liter. Każda nowa mina wymaga nowego arkusza od właściciela.
+- Animacja to timery w WebView: muszą znikać razem z komponentem (bez wycieków przy zmianie strony) i respektować ograniczenie animacji.
+- Most nie jest już tylko do odczytu. Lokalny proces, który podrobi nagłówki, może najwyżej oznaczyć wzorce użytkownika jako nieobsługiwane w Ustawieniach
+  (bez wpływu na blokowanie). Strona WWW nie może tego zrobić (CORS, `Origin`, `Host`).
+- Limit treści zgłoszenia wynika z limitów listy (500 wzorców po 500 znaków), więc mieści się każde zgłoszenie, które rozszerzenie może wysłać; `413` dostaje
+  tylko treść, której aplikacja nie mogła wywołać.
+- Czy użytkownik „prezentuje”, ocenia heurystyka Windows: okno bez ramki na cały ekran zwykle się liczy, ale nie zawsze, a aplikacja ze Sklepu na pierwszym planie
+  też może wstrzymać okienka. Okienko pokazane po czekaniu może już być nieaktualne (np. zaczęła się następna faza): zostaje tylko najnowsze.
+- Przełączenie na demo przez drugie uruchomienie działa tylko w Idle, a z powrotem tylko przez ponowne uruchomienie aplikacji.
+- Odświeżenie autostartu nie naprawia wpisu wyłączonego w Menedżerze zadań ani usuniętego (celowo); po przeniesieniu aplikacji taki wpis trzeba
+  włączyć ponownie w Ustawieniach.
+
+**Co zmienia:**
+- ADR-013 pkt 4: most „obsługuje tylko odczyt stanu (`GET`)” — wyjątek `POST /v1/report` (pkt 7 wyżej).
+- ADR-014 pkt 1: okienka czekają, gdy użytkownik prezentuje albo gra na pełnym ekranie (pkt 5); w okienku jest maskotka (pkt 2).
+- ADR-015 pkt 2: motyw `pixel` pikselizuje też maskotkę (pkt 3).
+- CLAUDE.md: opis zakresu (ADR-013…018 i maskotka); zasada 10 (własne grafiki projektu: maskotki nie przerysowujemy, nie przekolorowujemy ani nie obrysowujemy);
+  zasada 11 (most tylko udostępnia stan, z wyjątkiem `POST /v1/report`); Struktura (`src/lib/mascot/`, `static/mascot/`, `art/mascot/`, `tools/mascot/`,
+  `focus-platform/src/notification_state.rs`, `/v1/report` w `bridge.rs`, czekanie okienek w `popup.rs`); Komendy (`--demo` przy działającej aplikacji).
+
+**Uzupełnienie (2026-10-13, B): utwardzenie mostu.**
+- **Problem.** Most stał na `tiny_http` 0.12, który nie daje się zabezpieczyć ustawieniami:
+  - zapytanie odrzucone bez czytania treści (np. `413` albo `403`) przy zwalnianiu „dopija” resztę zadeklarowanej treści (`util/equal_reader.rs`, `Drop`) na jedynym
+    wątku mostu, alokując przy tym bufor wielkości całej reszty (`vec![0; remaining]`). `Content-Length: 2147483648` to 2 GB pamięci i wątek czekający na dane, które
+    nie przyjdą; `Content-Length: 18446744073709551615` kończy się paniką „capacity overflow”, a przy `panic = "abort"` w wydaniu zamyka całą aplikację;
+  - brak limitu długości wiersza i liczby nagłówków (`client.rs` dokłada bajty do bufora bez końca) i brak limitu czasu odczytu: powolny klient trzyma wątek połączenia
+    bez końca (slow-loris), a wątki puli rosną z liczbą połączeń;
+  - błąd `accept` (np. klient, który zerwał połączenie przed przyjęciem) kończy pętlę nasłuchu na zawsze (`lib.rs`).
+- **Decyzja.** Własny minimalny serwer HTTP/1.1 tylko na potrzeby rozszerzenia (`src-tauri/src/bridge/http.rs`) na jednowątkowym runtime Tokio w wątku `focus-bridge`.
+  Bez nowych crate'ów: funkcje `net` i `io-util` crate'a `tokio` są już w drzewie zależności (przez `reqwest`); `tiny_http` usunięty z `Cargo.toml` i `Cargo.lock`
+  (razem z `ascii`, `chunked_transfer`, `httpdate`). Trasy, `Host`, `Origin`, CORS i parsowanie zgłoszenia zostają w `bridge.rs` (`Router`).
+  Zachowanie widoczne dla rozszerzenia bez zmian (ścieżki, nagłówki, CORS, kody `200` / `204` / `400` / `403` / `404` / `413`); nowe jest `Connection: close` w każdej odpowiedzi.
+- **Zasady** (szczegóły i limity: ARCHITECTURE §6.10, „Ochrona HTTP mostu”): jedno zapytanie na połączenie; głowa ≤ 16 KiB i ≤ 48 pól (`431`) w łącznym terminie 2 s (`408`);
+  treść czytana tylko dla uprawnionego `POST /v1/report` i tylko przy `Content-Length` ≤ `REPORT_MAX_BYTES`: większa albo nieznana długość (`Transfer-Encoding`) → `413` bez czytania,
+  bez alokacji i z zamknięciem połączenia zamiast „drenażu”; treść przy innej metodzie niż `POST`, sprzeczne lub zdublowane nagłówki ram → `400`; treść w 5 s, najwyżej 2 naraz (czytane albo obsługiwane);
+  zapis odpowiedzi w 2 s; powyżej 64 połączeń nowe zamyka najstarsze otwarte co najmniej 100 ms (poza czytającymi treść), twardo najwyżej 1024 otwarte (kolejne zamykane od razu), nowe przyjmowane po jednym na obrót runtime;
+  błąd `accept` nie kończy nasłuchu.
+- **Konsekwencje.** Lokalny proces nie wyczerpie pamięci mostu, nie zablokuje go na stałe i nie zamknie aplikacji. Zalewem połączeń nadal może spowolnić przyjmowanie, gdy kolejka systemu jest pełna
+  (jak każdy proces użytkownika może po prostu zamknąć aplikację); bezczynne połączenia ustępują nowym, a nowe połączenie ma 100 ms na zapytanie, zanim nowsze mogą je zamknąć,
+  więc ani trzymanie, ani zalew połączeń nie odcina rozszerzenia (dopiero ponad 1024 nowe połączenia w 100 ms zamykają kolejne nowe, także jego).
+  Odpowiedź na treść odrzuconą bez czytania może dotrzeć jako reset połączenia, gdy klient już ją wysyła (rozszerzenie nigdy nie wysyła takiej treści).
+  Serwer obsługuje tylko to, czego potrzebuje rozszerzenie (bez keep-alive, potokowania i `chunked`), więc każda nowa trasa mostu wymaga sprawdzenia tych limitów.
+- **Co zmienia:** CLAUDE.md, Struktura (propozycja): przy `bridge.rs` dopisać „własny minimalny serwer HTTP w `bridge/http.rs`: limity rozmiaru i czasu, jedno zapytanie na połączenie”.
+
+## ADR-019: Tryb dewelopera
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** właściciel produktu przygotowuje prezentację i potrzebuje zrzutów ekranu okienek, toastów, reakcji maskotki i banerów. W zwykłym użyciu
+większość z nich pojawia się tylko w konkretnej chwili sesji (koniec focusa, spotkanie przed przerwą, nowe zadania w trakcie focusa, zamknięty launcher),
+znika po kilku sekundach albo czeka, gdy użytkownik prezentuje (ADR-018 pkt 5). Profil demo (40 s / 20 s) skraca czekanie, ale bez kalendarza nie wywoła
+okienka spotkania, a bez narzędzi pracy paczki „Co dalej?”. Prośba właściciela: przełącznik „Włącz tryb dewelopera” w Ustawieniach, który dokłada zakładkę
+z dużą liczbą przycisków wywołujących okienka i inne efekty.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Tryb dewelopera w configu + strona z przyciskami + jedna komenda `dev_trigger`** | działa w zainstalowanej aplikacji; prawdziwe okienka i toasty (te same komponenty i teksty); jedna komenda zamiast kilku | kod deweloperski w wydaniu; trzeba pilnować, żeby próbki nie trafiły do plików ani do sieci |
+| Osobny build deweloperski (feature w Cargo albo zmienna środowiska) | zero dodatkowego kodu w wydaniu | właściciel nagrywa na zainstalowanej aplikacji; dwa buildy przed demo; odrzucone |
+| Fałszywe źródła danych (fikcyjny kalendarz i narzędzia pracy zapisane na dysku) | cała ścieżka jak w prawdziwym użyciu | fikcyjne dane w `history.jsonl` i `meeting-choices.json`, łatwo pomylić je z prawdziwymi; odrzucone |
+
+**Decyzja:**
+1. **`Config.developerMode`** (bool, domyślnie `false`; stary `config.json` → `false`). Ustawienia: ostatnia sekcja „Deweloper” z przełącznikiem
+   „Włącz tryb dewelopera” i jednozdaniową podpowiedzią. Przełącznik, podpowiedź i nazwa zakładki są przetłumaczone na wszystkie 10 języków.
+2. **Zakładka „Deweloper”** (trasa `/dev`) pojawia się w nawigacji po Ustawieniach tylko przy włączonym trybie. Animowane podświetlenie nawigacji
+   i przesunięcie tła działają z 4 zakładkami i wracają do 3 po wyłączeniu; kto jest wtedy na `/dev`, przechodzi na inną stronę. Powłoka odrzuca komendy
+   dewelopera kodem `developerModeOff`, gdy tryb jest wyłączony.
+3. **Strona Deweloper jest tylko po angielsku** (narzędzie deweloperskie, nie część produktu): jej teksty leżą w osobnym module `src/lib/i18n/dev.ts`
+   (zwykłe stałe, poza typem `Strings`). To wyjątek od zasady, że każdy tekst UI ma 10 wersji językowych (ADR-014 pkt 5, CLAUDE.md „Konwencje”).
+4. **Próbki nie są zapisywane i nic nie opuszcza komputera.** Przyciski nie piszą do `history.jsonl`, nie wołają kalendarzy ani narzędzi pracy przez sieć
+   i nie tworzą tokenów. Próbki żyją tylko w pamięci (stan frontendu w `src/lib/state/samples.ts` i warstwach próbek w magazynach albo flaga w pamięci
+   powłoki) i znikają po „Clear samples” oraz po restarcie; prawdziwe podsumowanie sesji, która właśnie się skończyła, zastępuje próbkę podsumowania.
+   Przykładowe spotkania mają id z prefiksem `dev-sample-`; `set_meeting_choice` i przyciski okienka dla takiego spotkania są przyjmowane jako no-op
+   (nic nie trafia do `meeting-choices.json` ani do sesji). „Pomiń fazę” na przykładowym okienku tylko je zamyka; o tym, do którego okienka należał
+   przycisk, decyduje wątek okienek (przycisk tuż przed pojawieniem się nowego okienka należy do poprzedniego, jak przy zamknięciu).
+   Wyjątek świadomy: przyciski sekcji „Look & feel” (motyw, język) i „Window & app” (reset wyboru przy X) oraz „Show the mascot” to skróty
+   do prawdziwych ustawień i zapisują `config.json` jak Ustawienia; test dzwonków na chwilę przełącza `chimeSound`, odtwarza dźwięk i zapisuje
+   z powrotem wybór użytkownika (dwa zapisy; przy awarii między nimi zostaje testowany dźwięk). Treść próbek widoczna poza stroną Deweloper
+   (spotkania, przypomnienie, komunikat o linku próbki) jest w języku interfejsu, tak jak próbki okienek z powłoki.
+5. **Zrzuty ekranu.** Przykładowe okienka pokazują się od razu, także gdy użytkownik prezentuje albo gra na pełnym ekranie (wyjątek od ADR-018 pkt 5:
+   właściciel nagrywa ekran właśnie w takim trybie), i mają opcję „Keep popup open” (`PopupInfo.sticky`: strona okienka nie odlicza, powłoka go nie chowa;
+   co kilka sekund sprawdza tylko, czy okno jeszcze istnieje, a wyłączenie trybu dewelopera zamyka próbkę).
+   Przyciski efektów w oknie głównym (maskotka, banery, próbki) przechodzą na zakładkę, na której efekt widać (Skupienie albo Podsumowanie), i działają
+   dopiero po zamontowaniu strony. Przełącznik „Clean screenshots” na stronie Deweloper chowa zakładkę Deweloper, dopóki Ctrl+Shift+D (albo wyłączenie
+   trybu w Ustawieniach) jej nie przywróci; ten stan jest tylko w pamięci.
+6. **Skrócenie fazy** (`setRemaining`) idzie przez nowy `Input` w core (`Input::DevSetRemaining`): bieżąca faza kończy się za podaną liczbę sekund
+   (przycięte do 1..=długość fazy). Zegar monotoniczny i `TimingProfile` się nie zmieniają (CLAUDE.md, zasada 2), a koniec fazy przebiega dokładnie
+   według tabeli ADR-013 (Tick po terminie). W Idle → `notRunning`.
+7. **Kontrakt** (`api.rs`, osobny mały commit przed implementacją): `Config.developerMode`, `PopupInfo.sticky` (`#[serde(default)]`), komenda
+   `dev_trigger { action: DevAction } -> ()`, gdzie `DevAction` to `popup { kind, leadMinutes, sticky }` | `toast { phase }` | `setRemaining { secs }`
+   (tag `type`). Bez nowych eventów. Szczegóły: ARCHITECTURE §6.11.
+
+**Konsekwencje:**
+- Wydanie zawiera kod dewelopera, ale domyślnie wyłączony i odcięty w powłoce (`developerModeOff`).
+- Przykładowe okienko używa tego samego okna co prawdziwe, więc może przykryć prawdziwe okienko (i odwrotnie).
+- Sesja skrócona przez `setRemaining` jest prawdziwą sesją: po Stop jej podsumowanie trafia do historii jak zwykle (przy `keepHistory`),
+  z czasem rzeczywiście spędzonym w skupieniu.
+- Toast z `toast` to prawdziwe powiadomienie Windows: przy włączonym „Nie przeszkadzać” system może go wyciszyć.
+- Strona Deweloper nie jest tłumaczona.
+- *Uzupełnienie 2026-10-13 (prośba właściciela):* `DevAction` ma też `presentationMode { on }` (profil demo z `--demo` w działającym procesie,
+  bez zapisu; w trakcie sesji od następnego Startu) i `factoryReset` (ścieżka „Usuń wszystko” z ADR-020, potem `config.json` i restart
+  jak po świeżej instalacji; poza folderami aplikacji nic). Szczegóły: ARCHITECTURE §6.11.
+- *Uzupełnienie 2026-10-13 (finał hackathonu, prośba właściciela):* „Presentation mode” to czasy demo **i pokaz** (bez zmiany kontraktu:
+  ten sam `presentationMode { on }`). Powłoka (`src-tauri/src/showcase.rs`): zasiany podgląd nagród (poziom 8 w 85%, seria 12/21, bank 2/3,
+  cel dnia 10/30, pełny licznik litości, kolekcja ADR-024 z sezonem o jeden dzień celu przed motywem), trzymany przez kolejne Starty; reguły
+  bety dla podglądu, faktów demo, kroków i linii nagród w okienkach (w pamięci, `Config` bez zmian); sesja demo w trakcie pokazu się nie zapisuje
+  (`history.jsonl`, ostatnie podsumowanie), także gdy kończy się już po wyłączeniu pokazu; fakty prawdziwych sesji zostają przy prawdziwych
+  regułach. Motyw z kolekcji pokazu („Wypróbuj”, Ustawienia → Kolekcja) jest tylko podglądem, nie trafia do `Config.rewardTheme`. UI (`presentation.svelte.ts`,
+  `showcase.ts`): warstwy próbek (dzień pracy, ~3 tygodnie historii, 10 tygodni do statystyk tygodnia, „Co dalej?”, cel), beta liczona jako
+  włączona, bez znaczków „demo”, „Czyste zrzuty” i Skupienie. `--presentation` (albo `FOCUSMODE_PRESENTATION=1`) startuje w tym trybie z
+  trybem dewelopera tylko na to uruchomienie; o pokazie, który zaczęła powłoka, okno główne dowiaduje się ze wskazówki
+  `window.__FOCUSMODE_LAUNCH__` (dwie wartości logiczne, `eval` przy załadowaniu strony; poza kontraktem IPC, do przeniesienia w następnej
+  rundzie kontraktu). Nic z pokazu nie trafia do `config.json`, `history.jsonl` ani `rewards.json` (test w `rewards.rs`).
+
+**Co zmienia:**
+- ADR-014 pkt 5: strona Deweloper tylko po angielsku (pkt 3).
+- ADR-018 pkt 5: przykładowe okienka nie czekają na koniec prezentacji (pkt 5).
+- CLAUDE.md: Struktura (trasa `/dev`, `src/lib/state/dev.svelte.ts`, `src/lib/state/samples.ts`, `dev_trigger` w `commands.rs`), zakres ADR-014…019,
+  wyjątek od zasady tekstów UI w „Konwencjach” i wpis `popup.rs` (próbki nie czekają na koniec prezentacji).
+
+## ADR-020: Panel prywatności
+**Status:** Przyjęta i wdrożona (2026-10-13, B na prośbę właściciela produktu, priorytet 2; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`)
+
+**Kontekst:** aplikacja trzyma na komputerze coraz więcej danych: ustawienia, historię sesji (opcjonalnie z tytułami okien), wybory dla spotkań,
+widziane pozycje „Co dalej?”, tokeny Microsoft, Google i narzędzi pracy, linki ICS (DPAPI), własne dzwonki, listę stron, pliki przywracania osłon
+i kolorów, profil przeglądarki WebView2 (ciasteczka, w tym zgoda i logowanie YouTube, cache) i logi. Użytkownik nie ma jednego miejsca, w którym
+zobaczy, co jest zapisane, zabierze swoje dane albo je usunie. Prośba właściciela: sekcja „Prywatność i dane” w Ustawieniach.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Raport pozycja po pozycji + eksport bez sekretów + usuwanie pojedyncze i „Usuń wszystko”** | pełna przejrzystość; usuwanie przez istniejące ścieżki (rozłączenia, `clear_history`) | kilka nowych komend i event |
+| Tylko „Otwórz folder danych” | zero logiki | pliki DPAPI i profil WebView2 nic nie mówią użytkownikowi; ręczne kasowanie w trakcie sesji łamie zasadę 7 |
+| Odinstalowanie jako jedyne „usuń wszystko” | nic do zrobienia | instalator NSIS zostawia dane w `%APPDATA%`; nie da się zacząć od zera bez reinstalacji |
+
+**Decyzja:**
+1. **Raport** `PrivacyReport { revision, folders, items, busy }`, po jednej pozycji `PrivacyItem { kind, present, sizeKib, count, deletable, includesTitles }`
+   na każdy `PrivacyItemKind` (18 rodzajów, osobno każdy token narzędzia pracy), także nieobecne. Rozmiar w KiB jako `u32` (zasada liczb w kontrakcie).
+   Z plików DPAPI i ciasteczek tylko obecność (dla linków ICS najwyżej ich liczba), **nigdy treść**. Getter + `privacy://changed` z rewizją (ADR-012);
+   moduły zgłaszają zapis, powłoka skanuje ponownie z opóźnieniem i wysyła raport tylko przy innym wyniku.
+2. **Eksport** do jednego pliku JSON wskazanego w oknie zapisu: config bez sekretów (`calendar.googleClientSecret` puste), historia, wybory dla spotkań,
+   widziane pozycje. **Nigdy** tokeny, linki ICS, ciasteczka, dźwięki ani logi; UI mówi to przy przycisku. Format w ARCHITECTURE §6.12.
+3. **Usuwanie pojedyncze** przez istniejące ścieżki: historia jak `clear_history`, tokeny jak `teams_disconnect` / `disconnect_calendar` / `set_work_token(null)`,
+   własne dzwonki, wybory spotkań, widziane pozycje, lista stron (wraca domyślna), logi, dane przeglądarki (`clear_all_browsing_data`: wylogowuje
+   też z YouTube, ADR-021). Ustawień nie usuwa się pojedynczo, a plików przywracania wcale: znikają same, gdy powłoka przywróci ustawienia Windows (zasada 7).
+4. **„Usuń wszystko”** za oknem potwierdzenia, które wymienia, co zniknie: wszystkie pozycje usuwalne i powrót do ustawień domyślnych. Aplikacja zostaje
+   zainstalowana; nic poza folderami aplikacji nie jest ruszane (wyjątek to rzeczy samej aplikacji: wpis autostartu znika razem z `launchOnLogin`,
+   a ustawienia Windows wracają jak po Stop).
+5. **Każde usuwanie najpierw zatrzymuje trwającą sesję** (jak Stop: osłony wracają, status Teams wraca, zanim zniknie token) i czeka na zejście osłon.
+6. **Kontrakt:** komendy `get_privacy_report`, `open_data_folder`, `export_privacy_data { path }`, `delete_privacy_data { kinds } -> Config`,
+   `delete_all_data -> Config` (zwracają zapisany config, bo usunięcie własnych dzwonków albo całości go zmienia, a configu nie ma w żadnym evencie),
+   event `privacy://changed`. Szczegóły: ARCHITECTURE §6.12.
+7. **Wdrożenie:** czyste decyzje w `focus_core::privacy` (plan usuwania, rozmiar w KiB, config do eksportu bez sekretów, dokument eksportu), pliki
+   i usuwanie w `src-tauri/src/privacy.rs` (wątek „focus-privacy”: skan co 3 s z samych metadanych i ~0,4 s po eventach modułów; profil WebView2
+   najwyżej co 30 s), UI w `PrivacySettings.svelte` + `state/privacy.svelte.ts`. Wspomagające zmiany: `Persistence::files` / `clear_meeting_choices` /
+   `clear_work_seen` / `remove_config_leftovers`, `CalendarHandle::clear_choices`, `WorkHandle::clear_seen` (+ `Announcer::remember`),
+   `BlocklistService::restore_default`, `ConfirmDialog.list`, `commands::store_config` dostępne dla modułu prywatności.
+
+**Konsekwencje:**
+- Usunięcie danych przeglądarki czyści też `localStorage` aplikacji (zapamiętane linki odmawiające osadzenia) i zgodę YouTube na ciasteczka:
+  następne okno YouTube znów pokaże pytanie o ciasteczka (istniejąca ścieżka pierwszego uruchomienia).
+- Usunięcie czegokolwiek w trakcie sesji kończy sesję; okno potwierdzenia to mówi.
+- `work-seen.json` wraca, gdy użytkownik znów obejrzy listę „Co dalej?” (do tego czasu bieżące pozycje są na niej „nowe”, ale nie wracają jako okienko).
+- Panel sprawdza pliki także sam (co 3 s), więc pokazuje również zmiany zrobione ręcznie w otwartym folderze danych; koszt to kilkanaście odczytów
+  metadanych co 3 s i przejście profilu WebView2 najwyżej co 30 s.
+- Eksport nie przyjmie ścieżki w folderach aplikacji (`privacy.export`, pole `path`), żeby nie nadpisać jej danych.
+- Eksport historii może zawierać tytuły okien (jeśli były zapisywane): to dane użytkownika, zapisane tam, gdzie sam wskaże.
+
+**Co zmienia:**
+- CLAUDE.md (propozycja do zatwierdzenia przez użytkownika): Struktura — moduł powłoki panelu prywatności (raport, eksport, usuwanie, `privacy://changed`)
+  i komponent ustawień; zasada 11 — dopisek „eksport danych (`export_privacy_data`) nigdy nie zawiera tokenów, linków ICS, ciasteczek ani innych sekretów”.
+
+## ADR-021: Logowanie do YouTube
+**Status:** Przyjęta i wdrożona (2026-10-13, B na prośbę właściciela produktu, priorytet 3, „najważniejsza funkcja”; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`).
+Kod: `src-tauri/src/youtube_account.rs`, `src/lib/state/youtubeAccount.svelte.ts`, `src/lib/components/YoutubeAccountSettings.svelte`, `src/lib/player/engine.ts`.
+
+**Kontekst:** użytkownik z YouTube Premium słyszy w aplikacji reklamy, bo odtwarzacz nie jest zalogowany. Dziś YouTube gra na dwa sposoby: iframe
+osadzony w oknie `main` (origin `tauri.localhost`) albo ukryte okno `media` ze stroną youtube.com najwyższego poziomu (linki odmawiające osadzania
+i strony kanałów, ADR-013 pkt 2). Wszystkie okna mają jeden profil WebView2 (te same opcje środowiska, `window_util::with_main_webview_options`),
+więc ciasteczka youtube.com są wspólne. Premium działa tylko tam, gdzie ciasteczka youtube.com są własne (first-party), czyli w oknie `media`;
+w iframe na `tauri.localhost` są ciasteczkami stron trzecich i nie można na nich polegać.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Logowanie na stronie Google w widocznym oknie aplikacji (ten sam profil WebView2) + po zalogowaniu YouTube zawsze w oknie `media`** | użytkownik loguje się raz, sam, na stronie Google; aplikacja nie widzi hasła; Premium działa | Google może odmówić logowania we wbudowanej przeglądarce |
+| Import ciasteczek z przeglądarki użytkownika | bez logowania | czytanie cudzych danych przeglądarki, łamie zasadę 11; odrzucone |
+| Logowanie OAuth i YouTube Data API | oficjalne API | API nie odtwarza muzyki i nie daje sesji Premium w odtwarzaczu; odrzucone |
+| Zostawić iframe i liczyć na ciasteczka stron trzecich | bez zmian w routingu | zależy od polityki ciasteczek WebView2 i YouTube; niepewne |
+
+**Decyzja:**
+1. **Wiersz „Konto YouTube”** w Ustawieniach muzyki: „Zaloguj się do YouTube” otwiera widoczne, wyśrodkowane okno `youtube-login` z wyraźnym tytułem,
+   z tym samym profilem WebView2 co `media`, na stronie logowania Google (`accounts.google.com/ServiceLogin?service=youtube&continue=…youtube.com`).
+   Użytkownik wpisuje dane na stronie Google; aplikacja nie ma w tym oknie skryptu ani `eval`, nie widzi hasła i nie obsługuje danych logowania.
+2. **Wykrycie zalogowania tylko po nazwach ciasteczek** youtube.com (`LOGIN_INFO`, `SAPISID`, `__Secure-3PAPISID`), nigdy po wartościach (nie trafiają
+   do stanu aplikacji ani do logów). Po zalogowaniu okno zamyka się samo, gdy przepływ wróci na stronę YouTube (albo YouTube zapisze `LOGIN_INFO`),
+   najpóźniej 8 s po pojawieniu się ciasteczek, a wiersz pokazuje „Zalogowano” (bez nazwy kanału: wymagałaby dodatkowego ruchu).
+3. **Routing:** zalogowany → każda pozycja YouTube gra w oknie `media` (Premium działa); niezalogowany → bez zmian (najpierw iframe, okno dla odmów
+   osadzania). Zalogowanie przenosi pozycję YouTube z osadzonego odtwarzacza do okna od razu, a otwarte okno `media` przeładowuje stronę przy każdej
+   zmianie stanu zalogowania, żeby odtwarzacz YouTube użył nowych ciasteczek: reklamy znikają bez czekania na następny utwór. Wylogowanie nie przerywa
+   bieżącej pozycji; następna ładuje się jak dotąd. Link do playlisty (`/playlist?list=X`) okno otwiera po zalogowaniu jako `/watch?list=X`
+   na www.youtube.com: strona playlisty niczego nie odtwarza, strona odtwarzania gra playlistę od pierwszego filmu.
+4. **„Wyloguj”** usuwa ciasteczka google.com / google.<kraj> / youtube.com profilu, z wyjątkiem ciasteczek zgody (`SOCS`, `CONSENT`), więc obsługa
+   zgody działa dalej. WebView2 usuwa ciasteczko po dokładnej domenie (`.youtube.com` to inna domena niż `youtube.com`), a Tauri podaje ją bez kropki,
+   więc usunięcie idzie w obu formach (nieistniejąca to no-op); potem powłoka sprawdza, że ciasteczek logowania już nie ma.
+   Usunięcie danych przeglądarki w panelu prywatności (ADR-020) też wylogowuje (`YoutubeAccountHandle::close_sign_in_window` + `refresh(app, true)`).
+5. **Odmowa Google** („Ta przeglądarka lub aplikacja może nie być bezpieczna”) jest wykrywana po adresie strony (`/signin/rejected`) i UI wyjaśnia ją
+   jednym zdaniem. Żadnych obejść: bez importu ciasteczek, bez zmiany identyfikacji przeglądarki.
+6. **Kontrakt:** `get_youtube_account -> YoutubeAccount { revision, known, signedIn, signInOpen, browserRejected }`, `youtube_sign_in`, `youtube_sign_out`,
+   event `youtube://account` (getter + event z rewizją, ADR-012). Szczegóły: ARCHITECTURE §6.13.
+
+**Konsekwencje:**
+- Po zalogowaniu YouTube zapisuje odtwarzane utwory w historii konta użytkownika (zwykłe zachowanie Google); UI mówi to jednym zdaniem przy przycisku.
+  Ciasteczka zostają w lokalnym profilu WebView2 aplikacji.
+- Zalogowany użytkownik bez Premium dalej słyszy reklamy, tylko w oknie `media` zamiast w iframe.
+- Okno `media` nie wysyła zdarzeń odtwarzania, więc po zalogowaniu kolejne linki załatwia adres strony: ciąg filmów z listy gra jako jedna kolejka
+  `watch_videos?video_ids=…` (tymczasowa playlista YouTube w kolejności listy), strona sama się zapętla, a aplikacja śledzi pozycję po tytule okna
+  (ARCHITECTURE §6.13); koniec strony, której tytuł się nie zmienia (pojedynczy film), strona zgłasza chwilowym tytułem-znacznikiem.
+- Google może w każdej chwili zacząć odmawiać logowania we WebView2; wtedy funkcja zostaje z jednozdaniowym wyjaśnieniem.
+- Konta, które Google przekierowuje do zewnętrznego dostawcy logowania (SSO w Google Workspace), się nie zalogują: okno otwiera samo tylko hosty
+  Google i YouTube, inne strony idą do przeglądarki systemowej. Linki z `target=_blank` na stronie Google nic nie robią (okno nie dostaje skryptu,
+  który przechwytywałby je jak w `media`); zwykłe linki (pomoc, prywatność) otwierają się w przeglądarce systemowej.
+- Zalogowanie w trakcie sesji przeładowuje stronę w oknie `media`: stream wraca na żywo, film zaczyna się od nowa (raz, przy zmianie konta).
+
+**Co zmienia:**
+- ADR-013 pkt 2: okno `media` nie jest już tylko fallbackiem; po zalogowaniu gra całą muzykę z YouTube.
+- CLAUDE.md (propozycja do zatwierdzenia przez użytkownika): Struktura — moduł powłoki konta YouTube (okno `youtube-login`, obecność ciasteczek,
+  `youtube://account`); zasada 11 — dopisek „logowanie do YouTube tylko na stronie Google w oknie aplikacji; aplikacja nie widzi hasła i nie czyta
+  wartości ciasteczek; ciasteczka zostają w lokalnym profilu WebView2”.
+
+## ADR-022: Funkcje beta: iskierki, seria i małe kroki
+**Status:** Przyjęta (2026-10-13), funkcja w becie. Wdrożone: kontrakt IPC (`/sync-contract`, R-00), rdzeń (R-01…R-03: `timing.rs`, `config.rs`,
+małe kroki i `Effect::Progress` w `session.rs`, `rewards.rs` z testami wszystkich 19 grup, w tym naklejki P1), platforma i dźwięki (R-04), usługa
+nagród w powłoce (R-05), UI (R-07…R-12), P1: album naklejek, nastrój „pracujemy razem” i pigułka w nagłówku (R-13), atlas póz i ich wyświetlanie
+(R-14, R-15) oraz poprawki po przeglądzie. Czeka na odbiór właściciela (skrypt demo, przegląd `08-back-view` jako towarzysza; do decyzji właściciela domyślnie wyłączony: `focusCompanion = false`).
+Kod: `crates/focus-core/src/rewards.rs`, małe kroki w `crates/focus-core/src/session.rs`, `crates/focus-platform/src/clock.rs` (`local_date_time`),
+`crates/focus-audio/src/chime.rs` (`Chime::REWARDS`), `src-tauri/src/rewards.rs`; UI: `src/lib/state/rewards.svelte.ts`, `src/lib/rewards/`,
+`src/lib/components/rewards/`; atlas: `static/mascot/poses-*`, `tools/mascot/poses-atlas.*` (opis w `tools/mascot/README.md`).
+
+**Kontekst:** najtrudniejszy jest start sesji i powrót z przerwy. Pomaga natychmiastowa, mała nagroda za własny ruch użytkownika i rozbicie celu
+na bardzo małe kroki. Mechanizmy nagród łatwo jednak zamienić w presję: lęk przed utratą serii, ponaglanie poza sesją, wzorce hazardowe,
+nagradzanie przepracowania. Funkcja ma więc być opcjonalna, w pełni lokalna i łagodna z założenia.
+
+**Opcje:**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Bez nagród (stan sprzed ADR-022) | zero ryzyka | brak wsparcia przy starcie i powrocie z przerwy |
+| **Funkcje beta za przełącznikiem: iskierki, cel dnia, poziomy, seria z dniami wolnymi i dniami oddechu, małe kroki, niespodzianki z jawnymi szansami** | wsparcie startu i przerw; wszystko lokalnie; da się wyłączyć bez utraty danych | więcej kodu i tekstów (10 języków); ryzyko wzorców presji ograniczone zasadami niżej |
+| Rankingi, znajomi, synchronizacja | motywacja społeczna | dane poza komputerem (zasada 11), porównywanie się; odrzucone |
+| Skrzynki do otwierania, waluta, sklep | silne zaangażowanie | wzorce hazardowe i płatne przewagi; odrzucone |
+
+**Decyzja (skrót; reguły w specyfikacji i w testach `rewards.rs`):**
+1. **Przełącznik `Config.betaFeatures`** (domyślnie wyłączony) i `Config.rewards: RewardsConfig` (każda część osobno: iskierki, małe kroki,
+   niespodzianki, dźwięki, poziom świętowania, seria widoczna / wstrzymana, cel dnia, dni wolne). Bez bety aplikacja działa dokładnie jak przed ADR-022.
+   Wyłączenie chowa UI i **zostawia dane**; dni z wyłączonymi nagrodami są dla serii neutralne.
+2. **Iskierki** za start, minuty skupienia (limit 300 dziennie), pełny blok (≥ 80 % długości i ≥ 10 min), wziętą przerwę (≥ 50 %), powrót z przerwy,
+   odhaczony krok (limit 45 dziennie), wszystkie kroki, „Zrobione? → Tak” i cel dnia. Stop, Pomiń, Pauza, luka snu i wcześniejszy Stop **nigdy nic nie odejmują**
+   i nie dają komunikatu. Wszystkie liczby to nazwane stałe w `rewards.rs` i `timing.rs`.
+3. **Cel dnia** 30 / 60 / 120 iskierek (domyślnie 30); **poziomy** z sumy iskierek (`min(60 + 20·(L−1), 500)` na poziom), nigdy nie spadają, bez nazw.
+4. **Seria:** dzień nagród zaczyna się o 04:00 czasu lokalnego; dzień z celem dodaje 1. Dni wolne (domyślnie sobota i niedziela), dni wstrzymane i dni
+   oddechu (bank 2, najwyżej 3, +1 co 5 dni z celem, zużywane samoczynnie) chronią serię. UI nigdy nie mówi o utracie serii i nigdy nie pokazuje 0;
+   po przerwie dłuższej niż bank seria zaczyna się od nowa („Nowy początek”), a bank, rekord i liczba dni z celem zostają.
+5. **Małe kroki:** do 5 na sesję, najwyżej 80 znaków; w focusie widać tylko następny krok („Teraz: …”); niezrobione kroki czekają na następną sesję.
+   Teksty kroków tylko lokalnie (pamięć, snapshot IPC, okienko, `history.jsonl` przy `keepHistory`), nigdy w logach (ręczny `Debug`), moście ani `rewards.json`.
+6. **Niespodzianki** tylko za pełny blok, z jawnymi szansami (brak 50 %, bąbelek 32 %, perła 15 %, złota perła 3 %) i gwarancją perły po 4 blokach bez niej;
+   pokazują się same w przerwie. Nic do otwierania, kupowania ani losowania ponownie.
+7. **„Skupienie jest święte”:** osiągnięcia zdobyte w focusie czekają do przerwy albo do Stop. W focusie animuje się tylko to, co zrobił sam użytkownik
+   (Start, odhaczenie kroku, powrót z przerwy). Żadnych okienek, toastów ani dźwięków o nagrodach poza sesją.
+8. **Rdzeń:** `Effect::Progress(ProgressFact)` dochodzi do istniejących wektorów efektów; stare efekty zachowują kolejność z ADR-013 (test
+   `old_effects_keep_their_order`). Powłoka liczy fakty synchronicznie czystą funkcją, a plik zapisuje w kolejce (zasada 3); nic nie opóźnia ani nie blokuje
+   Stop, Pomiń fazę i Pauzy (zasada 7). Sesje demo trafiają do podglądu, który nigdy nie jest zapisywany; próbki ze strony Deweloper żyją tylko w UI.
+9. **Prywatność:** `rewards.json` (+ `rewards.json.bak`) w folderze danych: liczby, numery dni i id sesji, bez tekstów, tytułów i nazw aplikacji.
+   Pozycja `rewards` w panelu prywatności (ADR-020): usuwalna (jak „Zacznij od nowa”), w eksporcie. Nic nie opuszcza komputera; tracker nie jest
+   wejściem do nagród (żadna aplikacja nie jest oceniana jako „produktywna”).
+10. **Maskotka:** tylko istniejące klatki i 11 póz z arkusza właściciela przez nowy atlas `poses`, budowany narzędziem, które je wyłącznie skaluje (zasada 10).
+11. **Powłoka (R-05):** jedna usługa `RewardsHandle` (mutex): fakt liczony synchronicznie czystą funkcją, plik zapisuje osobny wątek
+    (`focus-rewards`, tylko najnowsza księga, plik tymczasowy + rename, `rewards.json.bak` najwyżej raz na minutę, `flush` przy wyjściu). Przy wyłączonych
+    nagrodach fakty są odrzucane i nic nie jest emitowane ani zapisywane; wyjątek to wstrzymanie serii, zapisywane tylko wtedy, gdy jest seria do ochrony.
+    Uszkodzony plik: kopia z `.bak`, a gdy i ona nie działa, odłożenie jako `rewards.unreadable-<ms>.json`, nowa księga i `rewards.load` (tylko przy
+    włączonych nagrodach). Dźwięki nagród to syntetyczne `Chime::Pop` / `Sparkle` / `Fanfare` w każdym pakiecie dzwonków (bez licencjonowanego audio),
+    grane z głośnością 0,6 × dzwonek, po dzwonku fazy (+150 ms; przy czekaniu > 3 s pomijane), nigdy podczas prezentacji ani przy `numbersOnly`.
+12. **Kontrakt (R-00):** komendy `get_rewards -> RewardsStatus`, `ack_reward_moments { upTo }`, `reset_rewards -> RewardsStatus`,
+    `play_reward_sound { sound: RewardSound }`, `set_session_steps { steps: StepDraft[] }`, `set_step_done { id, done }`; event `rewards://changed`
+    (`RewardsStatus` z rewizją, ADR-012); `SessionSnapshot.steps`, `SessionSummary.steps` / `sparks` (pomijane w JSON, gdy puste), `PopupInfo.rewards` /
+    `nextStep`, `PrivacyItemKind::Rewards`. Szczegóły i przykłady: ARCHITECTURE §6.14.
+
+**Konsekwencje:**
+- Stary `config.json`, `history.jsonl` i okienka wczytują się bez zmian; bez bety linie historii są identyczne jak wcześniej.
+- Kroki z planu giną przy restarcie aplikacji (bez `plan.json`): świadome uproszczenie.
+- Nowe teksty w 10 językach (z przeglądem słów zakazanych, skrypt `tools/i18n-banned-words.mjs`) i tokeny kolorów nagród w 7 motywach.
+- Funkcja jest w becie: zakres i liczby mogą się zmienić po pierwszych testach z użytkownikami.
+- Odstępstwa od specyfikacji przy wdrożeniu (R-01…R-05): część serii w księdze to `StreakLedger` (`StreakState` to już enum widoku w `api.rs`);
+  `RewardsHandle::session_sparks` przyjmuje id sesji (podgląd demo i prawdziwa księga mogą mieć różne sesje); id momentów nadaje usługa (wspólny licznik
+  dla księgi i podglądu, więc potwierdzenie z UI nigdy nie trafi w cudzy moment); usunięcie pozycji `rewards` w panelu prywatności nie zapisuje od razu
+  nowego pliku (pozycja wraca z następną iskierką), a `reset_rewards` zapisuje go tylko przy włączonych nagrodach; usuwa też odłożone pliki
+  `rewards.unreadable-*.json`; wstrzymanie serii bez policzonego dnia niczego nie zapisuje; dzień z celem osiągniętym w czasie wstrzymania liczy się,
+  gdy liczenie wraca tego samego dnia; linie premii celu dnia i powrotu po przerwie zdobyte w focusie też czekają (moment w focusie pokazuje tylko
+  start, plan, powrót, krok i wszystkie kroki); `PopupCmd::Show` niesie `Box<PopupRequest>` (większe żądanie okienka).
+- Uściślenia po przeglądzie (rdzeń i powłoka):
+  - **Stan w focusie niczego nie zdradza:** dopóki osiągnięcia czekają, `RewardsStatus` pokazuje księgę sprzed nich plus linie pokazane w focusie
+    (`SessionTally::shown`): bez premii celu dnia w liczniku, bez celu, serii i nowego poziomu (pasek zostaje pełny na poprzednim poziomie).
+  - **„Wszystkie kroki”** płaci każde odhaczenie, które domyka plan (także ponowne po odznaczeniu), raz na sesję.
+  - **Wstrzymanie:** widok pokazuje serię z chwili wstrzymania; seria, która już czekała, czeka dalej (żadna stara liczba nie wraca na chwilę).
+  - **Włączenie w trakcie sesji:** księga dołącza do sesji „od teraz” (`SessionTally::joined`; także po „Zacznij od nowa” i usunięciu w panelu
+    prywatności): trwająca faza płaci tylko czas od włączenia, bez pełnego bloku, niespodzianki i premii za powrót; nic wstecz.
+  - **Zegar:** cofnięcie o najwyżej 2 dni nagród (`CLOCK_BACK_TOLERANCE_DAYS`: strefa czasowa, mała korekta) jest przycinane do ostatniego dnia;
+    dalsze cofnięcie to poprawka zegara, który się spieszył: dzień jest przyjmowany, a dzień serii policzony „w przyszłości” wraca na ostatni dzień
+    z celem (albo dzień wcześniej), więc seria liczy dalej. Rekordy zostają (iskierki nigdy nie maleją).
+  - **Wczytanie:** plik, którego nie da się przeczytać jako tekst, traktujemy jak uszkodzony (najpierw `.bak`). Plik zablokowany albo bez dostępu
+    jest czytany ponownie (2 × 200 ms), a potem nigdy nie jest nadpisywany ani odkładany: widać `.bak` (albo nową księgę) i w tym uruchomieniu nic się
+    nie zapisuje. Przy wyłączonych nagrodach naprawa (zapis z `.bak` albo odłożenie) i komunikat `rewards.load` czekają na ich włączenie.
+  - **Demo:** iskierki sesji demo nie trafiają do `history.jsonl` (karta podsumowania czyta je z podglądu); „Tak” dla sesji demo płaci do podglądu
+    (skrypt demo, krok 6), nigdy do `rewards.json`.
+  - **„Tak”:** iskierki za cel sesji dochodzą do `SessionSummary.sparks` w pamięci i w linii `history.jsonl`, więc karta i historia się zgadzają.
+  - **Panel prywatności:** pozycja `rewards` liczy też odłożone `rewards.unreadable-*.json` (usuwa je razem z księgą).
+- Odstępstwa od specyfikacji przy wdrożeniu UI i atlasu (R-07…R-15):
+  - Atlas póz: wspólna skala 0,3491 (trochę poniżej oczekiwanych 0,35–0,40: głowy i słuchawki zgadzają się z `blink-1`), komórka liczona ze wszystkich
+    pikseli z α > 0 (miękkie krawędzie nigdy nie są ucięte), `anchorX` przesunięty o +17 px od środka komórki (kotwica atlasu głównego to kolumna głowy),
+    bez przejścia 120 ms (twarde cięcie jak przy innych klatkach). Typ: `MascotAtlas = MascotVariant | "poses"` zamiast trzeciego `MascotVariant`.
+  - Album naklejek pokazuje pozy także przy ukrytej maskotce, ale atlas pobiera dopiero po pierwszym rozwinięciu; próbki póz i nastrojów ze strony
+    Deweloper pokazują pozę także bez bety (na czas próbki). Galeria póz jest w sekcji Maskotka strony Deweloper.
+  - Okienko: linia nagród zajmuje miejsce wiersza porady (w przerwie) albo dzieli wiersz z „Teraz: …” (po przerwie), bo na końcu wiersza tytułu
+    zawijała się i ucinała przyciski w oknie 380 × 150.
+  - Skupienie, przerwa: podsumowanie bloku jest też chipem pod przyciskami sesji („+72 ✦ · Cel dnia ✓ · Seria 5 · Poz. 8”), bo karta przerwy może być
+    poniżej linii wzroku; po zakończeniu karta zwija się do nagłówka i wiersza stanu. W focusie z małymi krokami „Teraz:” stoi nad linią celu sesji.
+  - Etykieta minut w kartach to „Skupienie +N” (bez jednostki: iskierka to jednostka profilu, w demo sekunda, z dziennym limitem).
+  - Karta „Funkcje beta” w Ustawieniach jest widoczna także przy wyłączonej becie (ma główny przełącznik); poza nią bez bety nic się nie zmienia.
+
+**Co zmienia:**
+- ADR-013, tabela faz: `Effect::Progress` wstawiony w przejściach; stare efekty w tej samej kolejności (tabela w ARCHITECTURE §6.14).
+- Zasada 2: wyjątki `REWARD_DAY_START_MINUTE`, `FULL_BLOCK_PERCENT`, `BREAK_TAKEN_PERCENT` oraz pola `TimingProfile.spark_unit_secs` / `reward_min_block_secs`.
+- ADR-018 pkt 1–2: atlas póz i lista klatek póz; reakcja na wcześniejszy Stop przy włączonej becie nie jest smutna.
+- ADR-019: próbki nagród na stronie Deweloper; próbki okienek niosą linię nagród.
+- ADR-020: nowa pozycja `rewards` (`PrivacyItemKind::ALL` ma 19 rodzajów).
+- Zasada 11: `rewards.json` (tylko liczby); teksty kroków traktowane jak tytuły celów sesji.
+- CLAUDE.md: zakres „ADR-013 … ADR-022”, Struktura (nowe moduły wyżej), zasada 11 (`rewards.json`).
+
+## ADR-023: Wyjątki odcienia, inteligentne przerwy, statystyki tygodnia i kreator pierwszego uruchomienia
+**Status:** Przyjęta i wdrożona (2026-10-13, B na prośbę właściciela produktu; A potwierdza przy review PR-a z gałęzi `b/speedrun-mvp`).
+Najpierw kontrakt IPC (`/sync-contract`: typy, pola configu z wartościami domyślnymi i walidacją, stałe, `Config::first_run()`, komendy-zaślepki
+`notImplemented`, wrappery w `api.ts`), potem cztery części w osobnych rundach i wspólna runda integracji; żadna komenda nie jest już zaślepką.
+Szczegóły kontraktu i przykłady JSON: ARCHITECTURE §6.15.
+
+**Kontekst:** cztery prośby z użytkowania. (1) Ciepły odcień (ADR-015) przeszkadza w pracy z kolorem i w grach na pełnym ekranie, a stałe godziny
+nie nadążają za porami roku. (2) Pytanie o każde spotkanie kolidujące z przerwą (ADR-016) jest uciążliwe, gdy wystarczyłoby przesunąć przerwę
+o kilka minut. (3) Podsumowanie pokazuje tylko jedną sesję; brakuje obrazu tygodnia (kiedy i ile się skupiam, na czym). (4) Nowy użytkownik trafia
+od razu na pełną stronę Skupienie bez wyjaśnienia muzyki, osłon i rozszerzenia.
+
+### Część 1: Wyjątki odcienia
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Lista aplikacji (dokładne nazwy exe) + przełącznik pełnego ekranu + harmonogram zachód → wschód liczony lokalnie ze współrzędnych** | przewidywalne, offline, bez nowych uprawnień | użytkownik sam wpisuje miasto albo współrzędne |
+| Lokalizacja z usług systemu albo z IP | bez wpisywania | dane o położeniu poza kontrolą użytkownika, sieć (zasada 11); odrzucone |
+| Wykrywanie „aplikacji graficznych” heurystyką (np. profil ICC, tytuł okna) | bez listy | zgadywanie, tytuły okien (zasada 11); odrzucone |
+
+**Decyzja:**
+1. `TintConfig.pauseForApps` (domyślnie włączone) i `pauseApps`: lista nazw exe porównywanych bez rozróżniania wielkości liter, domyślnie
+   `tint::DEFAULT_PAUSE_APPS` (17 programów do zdjęć, grafiki, wideo, 3D i składu; `Lightroom.exe` obejmuje obie edycje). Gdy któraś jest na pierwszym
+   planie, ciepło płynnie schodzi do 0, a wraca po utracie fokusu z histerezą ok. 2 s (Alt+Tab nie miga). Dopasowanie jest czystą funkcją w `focus-core`,
+   okno na pierwszym planie z istniejącego API `foreground` (bez nowego wątku, jeśli tracker już próbkuje; inaczej co najwyżej 1 Hz).
+2. `TintConfig.pauseForFullscreen` (domyślnie wyłączone): to samo, gdy na pierwszym planie jest aplikacja albo gra na pełnym ekranie
+   (`notification_state`). Domyślnie wyłączone, bo gamma celowo działa też w grach (ADR-015) i zachowanie sprzed ADR-023 zostaje.
+3. `TintConfig.schedule = sun`: okno ciepła od zachodu do wschodu słońca, liczone offline w `focus-core` algorytmem NOAA ze współrzędnych z configu
+   (`location`: wpisane albo wybrane z wbudowanej listy ok. 40 miast, w tym wszystkich miast wojewódzkich, komenda `list_sun_cities`). Bez usług lokalizacji
+   i bez sieci. Brak lokalizacji, dzień polarny i noc polarna → stałe godziny, a `TintStatus.schedule` mówi dlaczego. Testy na znanych godzinach (±2 min).
+4. Status w karcie odcienia: „Wstrzymane: Photoshop na pierwszym planie” (`TintStatus.pausedBy`, tylko nazwa procesu, nigdy tytuł okna ani log).
+   Podgląd w Ustawieniach ignoruje wyjątki. Gwarancje przywrócenia (zasada 6) bez zmian: poziom 0 przywraca mechanizm jak dziś.
+
+**Wdrożenie części 1 (2026-10-13):** rdzeń `tint.rs` (`pause_reason`, `TintExceptions` z `PAUSE_RELEASE_MS` = 2 s i `PAUSE_FADE_MS` = 1,2 s,
+`tint_window` / `window_level`) i nowy moduł `sun.rs` (NOAA, 43 wbudowane miasta, przesunięcie strefy z dwóch zegarów). Tracker próbkuje tylko w czasie
+focusu, więc okno na pierwszym planie próbkuje istniejący wątek odcienia, najwyżej 1 Hz i tylko wtedy, gdy okno jest ciepłe, a któryś wyjątek włączony
+(bez nowego wątku). Lista miast jest pogrupowana w UI według kraju (kraj z co najmniej 3 miastami osobno), z nazwami krajów z `Intl.DisplayNames`.
+Wpisana nazwa bez `.exe` dostaje rozszerzenie. Szczegóły: ARCHITECTURE §6.15.
+
+### Część 2: Inteligentne planowanie przerw
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Zostawić pytanie dla każdego spotkania (ADR-016) | pełna kontrola | uciążliwe przy częstych spotkaniach |
+| **Przełącznik „Inteligentne przerwy”: plan sam skraca albo wydłuża blok focusu w granicach, a bez dopasowania pyta jak dotąd; cofnięcie dla każdego spotkania** | mniej pytań, przewidywalne granice | logika planowania w core i nowe wejście aktora |
+| Przesuwać spotkania albo pisać do organizatora | – | zapis w kalendarzu (kalendarze tylko do odczytu, zasada 11); odrzucone |
+
+**Decyzja:**
+1. `Config.smartBreaks` (domyślnie wyłączone), przełącznik na stronie Skupienie obok wyboru czasów; aktywny tylko z połączonym kalendarzem
+   (inaczej wyłączony, z podpowiedzią i linkiem do Ustawień kalendarza).
+2. Dla spotkania kolidującego z przerwą plan zmienia długość poprzedzającego bloku focusu tak, by przerwa skończyła się tuż przed spotkaniem albo zaczęła
+   razem z nim (wariant z mniejszą zmianą). Granice: skrócenie do ≥ 60 % długości focusu i nigdy poniżej 10 min (profil demo przeskalowany), wydłużenie
+   o ≤ 25 %; nazwane stałe w `timing.rs` (zasada 2). Bez dopasowania → zwykłe pytanie z ADR-016 dla tego spotkania. Spotkania z wyborem użytkownika
+   albo z „Zapytaj mnie” nie są dopasowywane; całodniowe, wolne i wstępne pomijane jak dziś.
+3. Planowanie to czysta funkcja w `focus-core` (`calendar.rs` / `session.rs`) z testami (bez spotkania, spotkanie w środku focusu, w środku przerwy,
+   spotkania jedno po drugim, całodniowe, wolne i wstępne, dzień zmiany czasu, profil demo). Sesja dostaje nowy koniec fazy istniejącą ścieżką wejść
+   aktora, bez sztuczek z zegarem monotonicznym; kolejność efektów ADR-013 bez zmian. Nigdy nie blokuje Stop, Pomiń fazę ani Pauzy (zasada 7).
+4. Pod zegarem jedna linia: „Przerwa przesunięta na 13:50 · spotkanie o 14:00” (`SessionSnapshot.smartBreak`) z „Zapytaj mnie” (`set_smart_break_opt_out`,
+   zapis przy wyborach spotkań, same id). Tematy spotkań tylko tam, gdzie pozwala ADR-016; nigdy w logach, historii ani w nowych okienkach.
+5. **Wdrożone (2026-10-13):** `calendar::fit_break` / `plan_smart_breaks` w `focus-core` i `Input::SetSmartMeetings` w sesji (bieżący blok dopasowuje
+   sama sesja przy Start, nowym bloku, Wznów i zmianie spotkań; zmienia się tylko termin końca), plan kolejnych bloków w module kalendarzy, „Zapytaj mnie”
+   w `meeting-choices.json` (`optOuts`), przełącznik, linia pod zegarem i lista w karcie spotkań, próbka na stronie Deweloper. Doprecyzowania:
+   spotkanie musi skończyć się przed następną przerwą (dłuższe dostaje pytanie); przesunięta przerwa nie może trafić na żadne inne spotkanie; focus
+   krótszy niż 10 min tylko się wydłuża; `optOut: false` usuwa też wybór podany w międzyczasie. „Jak dziś” dla rodzajów wydarzeń znaczy: całodniowe
+   i wolne odrzuca platforma, wstępne liczą się jak zajęte (tak samo jak przy pytaniu z ADR-016). Szczegóły: ARCHITECTURE §6.15.
+
+### Część 3: Statystyki tygodnia
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| **Sekcja „Ten tydzień” na Podsumowaniu z lokalnej historii: słupki dni, liczby, heatmapy dzień × godzina (tydzień i 8 tygodni), top aplikacji z etykietami użytkownika** | wszystko lokalnie, bez nowych danych poza czasami focusu | odczyt historii przy każdej zmianie tygodnia |
+| Automatyczna ocena „produktywności” aplikacji | bez etykietowania | ocenianie za użytkownika, presja (ADR-022 pkt 9); odrzucone |
+| Osobna baza statystyk | szybkie zapytania | drugi magazyn danych do usuwania i eksportu; zbędne przy tej skali |
+
+**Decyzja:**
+1. Strona Podsumowanie, sekcja „Ten tydzień” z wyborem tygodnia ‹ › (tygodnie ISO, poniedziałek pierwszy, czas lokalny): minuty focusu na dzień,
+   suma focusu, wzięte przerwy, sesje, najlepszy dzień, heatmapa dzień × godzina wybranego tygodnia i heatmapa 8 tygodni, top aplikacji tygodnia
+   z etykietami i udział czasu w kategoriach.
+2. Kategorie nadaje tylko użytkownik, kliknięciem w chip: `Config.appCategories` (nazwa exe małymi literami → `productive | neutral | distracting`),
+   domyślnie nic nie jest oznaczone.
+3. Dane tylko z `history.jsonl`; sesje demo pominięte. Czysta agregacja w `focus-core/src/stats.rs` (wejście: sparsowane linie, zakres tygodnia,
+   przesunięcie strefy z powłoki). Powłoka czyta plik strumieniowo i z limitem. Nowe pole historii `SessionSummary.focusSpans` (przedziały, w których
+   focus faktycznie płynął; same znaczniki czasu, pomijane w JSON, gdy puste) daje dokładne godziny; dla starszych linii czas jest rozkładany równo
+   od startu do końca sesji (`WeeklyStats.estimated`). `keepHistory` wyłączone → sekcja wyjaśnia, że historii nie ma. Tytuły okien nie są potrzebne.
+4. Kontrakt: `get_weekly_stats { weekStart } -> WeeklyStats` z rewizją i event `history://changed` (sama rewizja, bo getter ma parametr; UI pyta znowu
+   o swój tydzień, `api.watchWeeklyStats`). Dostępność: `aria-label` albo tabela zastępcza dla heatmap, kolory z tokenów motywu (także 8-bit), przyjazny
+   stan pusty bez poczucia winy. Strona Deweloper: „Sample week” (próbka w pamięci UI).
+
+**Wdrożenie części 3 (2026-10-13):** zrobione end-to-end. `Session` zapisuje `focusSpans` (zegar kalendarzowy, bez pauz i luk, najwyżej 256),
+`stats::WeekAggregator` liczy tydzień i 8 tygodni z przesunięciem strefy podawanym przez powłokę dla każdej godziny (zmiana czasu), powłoka czyta
+historię strumieniowo z limitem 64 MB i wysyła `history://changed` po każdej zmianie historii, etykiet albo `keepHistory`. Przy wyłączonym
+`keepHistory` wcześniej zapisane sesje dalej się liczą (jak lista historii), a sekcja mówi, że nowe nie dojdą. Heatmapa to prawdziwa tabela
+(tekst w każdej komórce dla czytników ekranu), więc osobna tabela zastępcza nie jest potrzebna. Szczegóły: ARCHITECTURE §6.15.
+
+### Część 4: Kreator pierwszego uruchomienia
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Bez kreatora (dziś) | zero kodu | nowy użytkownik nie wie o osłonach i rozszerzeniu |
+| **Czterokrokowy kreator w oknie głównym, tylko przy świeżej instalacji, do pominięcia na każdym kroku, na istniejących ustawieniach** | jedno spokojne wprowadzenie; nic nie startuje samo | teksty w 10 językach |
+| Samouczek z dymkami na stronach | kontekst na miejscu | trudny w 960 × 640 i z czytnikiem ekranu |
+
+**Decyzja:**
+1. `Config.onboardingDone`: domyślnie `true` (także gdy pola brak, więc istniejący użytkownicy nigdy kreatora nie widzą); `false` tylko w configu, który
+   powłoka tworzy przy świeżej instalacji (`Config::first_run()`, gdy `config.json` nie istnieje; także po resecie fabrycznym). „Usuń wszystko” przywraca
+   ustawienia domyślne, więc kreatora nie pokazuje.
+2. Kroki: (1) powitanie i język (domyślnie język systemu), poza `poses:02-clasped-hands-heart`; (2) muzyka: Open Lo-Fi w zestawie (domyślnie), stream, linki,
+   folder, szum albo cisza, poza `poses:05-look-up`; (3) osłony: wyciszenie powiadomień Windows, Teams (połączenie później), blokada stron (przycisk otwierający
+   folder rozszerzenia i trzy linijki instrukcji dla Chrome / Edge), nieusypianie ekranu, zamykanie launcherów, poza `poses:03-thinking`; (4) dodatki: okienka
+   i zasobnik, ciepły odcień (wyłączony), kalendarz i narzędzia pracy („później w Ustawieniach”), funkcje beta, poza `poses:11-point-happy`, potem
+   „Zacznij pierwsze skupienie”, które nic nie uruchamia: zamyka kreatora na stronie Skupienie z fokusem na Start.
+3. Każdy krok: poza z małym „boing” (to samo co przy łaskotaniu), dymek z tekstem odsłanianym litera po literze jak u głównej maskotki; tylko istniejące
+   klatki (zasada 10). Pominięcie na każdym kroku (Esc z potwierdzeniem), Enter = dalej, fokus uwięziony w kreatorze, etykiety ARIA, 960 × 640 we wszystkich
+   7 motywach, ograniczony ruch respektowany. Kroki używają istniejących komponentów i sklepów ustawień (bez powielania logiki) i nie blokują powłoki.
+4. Strona Deweloper: „Show first-run wizard” pokazuje kreatora bez zmiany `onboardingDone` (chyba że zostanie ukończony).
+
+**Wdrożenie części 4 (2026-10-13):** bez nowych komend. `Persistence::load_config` daje `Config::first_run()` tylko przy braku `config.json`
+(także po resecie fabrycznym), a flaga trafia na dysk z pierwszym zapisem configu. UI: sklep `state/onboarding.svelte.ts` i `components/onboarding/`
+(kreator zakrywa okno główne, strona pod nim nie jest renderowana, nagłówek i pasek muzyki są `inert`, muzyka gra dalej; sesja z zasobnika widoczna
+w kreatorze ze Stop). Wybór przycisku X to wspólny komponent `CloseButtonSetting.svelte` (Ustawienia i krok „Dodatki”). Odstępstwo: konfiguracja
+z nieprawidłowym polem (np. link streamu ze spacją) nie zapisze się przy „Pomiń” ani przy ukończeniu, więc kreator wróci przy następnym starcie;
+użytkownik widzi błąd pola (tak działa każdy zapis configu). Szczegóły: ARCHITECTURE §6.15.
+
+**Kontrakt (wszystkie części):** komendy `list_sun_cities -> SunCity[]`, `set_smart_break_opt_out { meetingId, optOut } -> CalendarStatus`,
+`get_weekly_stats { weekStart } -> WeeklyStats`; event `history://changed` (`HistoryChanged { revision }`). DTO: `TintSchedule`, `TintLocation`, `SunCity`,
+`TintPause`, `TintPauseReason`, `TintScheduleState`, `SmartBreak`, `SmartBreakKind`, `TimeSpan`, `AppCategory`, `HistoryChanged`, `WeeklyStats`, `DayStats`,
+`WeekApp`, `CategoryTotals`. Pola: `Config.smartBreaks` / `appCategories` / `onboardingDone`; `TintConfig.schedule` / `location` / `pauseForApps` / `pauseApps` /
+`pauseForFullscreen`; `TintStatus.pausedBy` / `schedule` / `windowStartMinutes` / `windowEndMinutes`; `CalendarStatus.smartBreaks` / `smartOptOuts`;
+`SessionSnapshot.smartBreak`; `SessionSummary.focusSpans`. Wszystkie z `serde(default)`, więc stary `config.json`, `history.jsonl` i stany się wczytują.
+
+**Konsekwencje:**
+- Stary config wczytuje się bez zmian zachowania (stałe godziny, inteligentne przerwy wyłączone, brak etykiet, bez kreatora); jedyna nowość działająca
+  od razu po wdrożeniu to wstrzymanie odcienia dla domyślnej listy aplikacji graficznych (`pauseForApps` domyślnie włączone).
+- `TintConfig` ma pola `f64` (współrzędne), więc traci `Eq` (zostaje `PartialEq`).
+- `history.jsonl` dostaje opcjonalne `focusSpans` (same znaczniki czasu); linie bez nich wyglądają jak wcześniej. Eksport prywatności obejmuje je razem z historią.
+- Nowe teksty w 10 językach (UI w `strings.ts`, powłoka w `texts/*.rs`).
+
+**Co zmienia:**
+- ADR-015 (odcień): wyjątki dla aplikacji i pełnego ekranu, harmonogram słońca obok stałych godzin.
+- ADR-016 (kalendarze): automatyczne dopasowanie przerw zamiast pytania, gdy `smartBreaks`; pytanie zostaje jako zapas i po „Zapytaj mnie”.
+- ADR-012: pierwszy getter z parametrem (`get_weekly_stats`) z eventem niosącym samą rewizję.
+- Zasada 2: nowe nazwane stałe granic inteligentnych przerw i histerezy wyjątków odcienia. Zasada 11: współrzędne tylko w `config.json`, nazwa procesu
+  w `TintStatus` tylko lokalnie, etykiety aplikacji tylko w configu.
+- CLAUDE.md (zastosowane w rundzie integracji): zakres „ADR-013 + ADR-014…023”; w Strukturze moduł słońca w `focus-core`, statystyki tygodnia
+  w `stats.rs` i `weekly.rs`, inteligentne przerwy, kreator w `src/lib/components/onboarding/`, sekcja tygodnia w `src/lib/components/week/`.
+
+## ADR-024: Kolekcja beta: motywy i dźwięki tła do odblokowania
+**Status:** Przyjęta (2026-10-13, B na prośbę właściciela produktu), funkcja w becie. Wdrożone: kontrakt IPC (`/sync-contract`, R24-00): typy w `api.rs`,
+pola configu z wartościami domyślnymi i walidacją, katalog z regułami, oknami sezonów i Wielkanocą (`crates/focus-core/src/unlocks.rs`, z testami),
+rusztowanie UI (`src/lib/themes/catalog.ts`, `scenes.ts`, `Background`, motyw na ekranie w obu oknach, podgląd motywów
+na stronie Deweloper); część A (rdzeń i powłoka): rekordy w `rewards.json`, ocena odblokowań i dni sezonów, prawdziwy widok kolekcji, odblokowania
+w momentach, ciche nadrabianie przy wczytaniu i po włączeniu nagród, odrzucanie zablokowanego `rewardTheme`, czyszczenie go przy „Zacznij od nowa”
+i usunięciu nagród w panelu prywatności (z testami). Pozostałe części: B (motywy Halloween, Święta, Wielkanoc, Podwodny dom), C (Nowy Rok,
+Walentynki, Lato, Deszczowe okno, Leśna chatka, Noc sakury), D (silnik dźwięków tła, mikser, kolekcja w wyborze motywu, momenty odblokowania).
+Szczegóły kontraktu i przykłady JSON: ARCHITECTURE §6.16.
+
+**Kontekst:** prośba właściciela: beta ma zamieniać motywy i dźwięki tła w nagrody za korzystanie z aplikacji i za serie; motywy świąteczne
+(Halloween, Wielkanoc, Boże Narodzenie i podobne) do zdobycia tylko w swoim miesiącu (teraz, w październiku: Halloween z dyniami, strachem na wróble,
+nietoperzami i upiornymi dźwiękami); bez bety żadnych dodatkowych skórek; wyłączenie bety nie może kasować postępu.
+
+**Opcje (co jest nagrodą):**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Zamknąć część istniejących motywów za nagrody | mniej grafiki do zrobienia | beta zabiera coś, co było darmowe; odrzucone |
+| **Nowe motywy i warstwy dźwięku tylko w becie, zdobywane poziomem, najdłuższą serią albo celem dnia w oknie sezonu; zdobyte zostają na zawsze** | nic nie znika; warunki łagodne i jawne; sezon raz w roku | 10 motywów i 9 warstw dźwięku do zrobienia; teksty w 10 językach |
+| Sklep za iskierki | wybór użytkownika | waluta do wydawania (ADR-022 odrzucił); odrzucone |
+| Losowane motywy | emocje | wzorzec hazardowy (ADR-022 pkt 6); odrzucone |
+
+**Opcje (jak zapisać wybrany motyw z kolekcji):**
+
+| Opcja | Plusy | Minusy |
+|---|---|---|
+| Nowe warianty `Theme` | jedno pole | starsza wersja nie wczyta configu z nowym motywem (cały plik „uszkodzony”), brak „ostatniego motywu podstawowego”, każda mapa `Record<Theme, …>` w UI do zmiany |
+| **Osobne pole `Config.rewardTheme` obok `theme`** | `theme` zawsze jest motywem podstawowym (bez bety i jako zapas); starsze wersje ignorują nieznane pole; istniejący kod bez zmian | motyw na ekranie liczy się z dwóch pól (`effectiveTheme`) |
+
+**Decyzja:**
+1. **Siedem motywów podstawowych zostaje darmowych dla wszystkich.** Beta dokłada kolekcję: 10 motywów (`RewardTheme`) i 9 warstw dźwięku tła
+   (`AmbienceLayer`). Bez bety kolekcji nie widać i nic z niej nie działa: na ekranie jest `theme` (ostatni motyw podstawowy), dźwięki tła nie grają.
+   Po ponownym włączeniu bety wybrany motyw kolekcji wraca.
+2. **Warunki** (katalog `unlocks::THEME_RULES` / `AMBIENCE_RULES`, nazwane liczby): Podwodny dom — poziom 3; Deszczowe okno — najdłuższa seria 7;
+   Leśna chatka — poziom 6; Noc sakury — najdłuższa seria 14; motywy sezonowe — cel dnia w 3 różne dni okna sezonu. Dźwięki: deszcz i wiatr od razu
+   w becie; burza — poziom 2; kawiarnia — poziom 4; kominek — najdłuższa seria 5; las i świerszcze — poziom 5; ocean — poziom 7; „Upiorna noc” razem
+   z Halloween, „Zimowa chatka” razem ze Świętami. Warunki są stanem, nie zdarzeniem: kto już ma poziom 6, dostaje Leśną chatkę przy najbliższym fakcie.
+3. **Sezony** (`unlocks::season_window`, dzień nagród od 04:00): Nowy Rok — styczeń, Walentynki — luty, Lato — lipiec, Halloween — październik,
+   Święta — grudzień, Wielkanoc — miesiąc zachodniej Niedzieli Wielkanocnej (anonimowy algorytm gregoriański, `easter_sunday`) rozciągnięty tak,
+   żeby sięgał co najmniej 7 dni przed i po niej (2024: 1.03–7.04, 2026: 29.03–30.04, 2027: 1.03–4.04, w pozostałych latach 2024–2030 kwiecień
+   albo 25.03–30.04). Okna się nie nakładają. Motyw sezonowy można zdobyć tylko w oknie; zdobyty zostaje na cały rok. Poza oknem karta mówi tylko,
+   kiedy będzie dostępny („Dostępny w październiku”), bez odliczania; w oknie pokazuje postęp („2/3 w tym październiku”).
+4. **Postęp nigdy nie znika przez wyłączenie bety albo nagród.** Odblokowania (id i dzień) i dni z celem w oknach sezonów leżą w `rewards.json`
+   obok księgi, jako tekst (nowszy plik wczyta się w starszej aplikacji). Czyści je tylko „Zacznij od nowa” i usunięcie pozycji `rewards` w panelu
+   prywatności (okno potwierdzenia mówi, że odblokowania też znikną); wtedy `rewardTheme` wraca do `null`. Dni z wyłączonymi nagrodami nie dają
+   postępu (jak dla serii). Podgląd demo i próbki ze strony Deweloper nigdy niczego nie odblokowują.
+5. **Moment odblokowania** to osiągnięcie jak naklejka („skupienie jest święte”, ADR-022 pkt 7): w focusie czeka, pokazuje się w podsumowaniu
+   przerwy albo po Stop (kafelek podglądu, „Nowy motyw: Halloween”, poza `06-amazed-sparkles`). Nigdy okienko poza sesją. Bez nowego `MomentKind`:
+   moment niesie `unlockedThemes` / `unlockedAmbiences`.
+6. **Wybór motywu:** motywy podstawowe jak dziś, a przy becie „Kolekcja”: karta zablokowana to pusta karta z „?” i warunkiem (bez przyciemnionej
+   sylwetki grafiki), odblokowana to żywy kafelek. Wybór motywu podstawowego czyści `rewardTheme`, wybór z kolekcji ustawia `rewardTheme`
+   (a `theme` zostaje). Powłoka nie zapisze motywu, który nie jest odblokowany (`config.invalid`, pole `rewardTheme`).
+7. **Grafika** własna projektu: SVG/CSS (sylwetki, płaska ilustracja), dopracowana w 960 × 640 i 1920 × 1080, animacje tylko `transform` / `opacity`,
+   statycznie przy ograniczonym ruchu; każdy motyw ma pełny zestaw tokenów (tekst ≥ 4,5:1, tokeny nagród, `--quiet-mark`), działa z maskotką
+   i okienkami faz; bez wariantu 8-bit. Halloween łagodny (bez krwi i straszenia). Każdy motyw we własnym folderze `src/lib/themes/<id>/`.
+8. **Dźwięki tła** syntetyzowane w WebAudio w oknie głównym (szum, filtry, obwiednie, proste oscylatory / FM), jeden `AudioContext`, wspólne bufory
+   szumu, limiter na wyjściu, bez plików audio. Grają razem z muzyką (te same zasady „kto włączył muzykę” co odtwarzacz) albo same po starcie
+   w mikserze; nigdy same przy starcie aplikacji. Bez nagłych, głośnych dźwięków: zdarzenia „Upiornej nocy” są rzadkie i ciche.
+9. **Kontrakt (R24-00):** pola `Config.rewardTheme` (`RewardTheme | null`) i `Config.ambience` (`AmbienceConfig { enabled, volume, layers:
+   AmbienceMix[] }`), `RewardsStatus.unlocks` (`UnlocksView { themes: ThemeUnlock[], ambiences: AmbienceUnlock[] }` ze stanem `UnlockState`,
+   regułą `UnlockRule`, postępem `UnlockProgress` i oknem `SeasonWindow`), `RewardMoment.unlockedThemes` / `unlockedAmbiences`; enumy `RewardTheme`,
+   `AmbienceLayer`, `Season`. Wszystkie z `serde(default)`. Bez nowych komend i eventów.
+
+**Konsekwencje:**
+- Stary `config.json` wczytuje się bez zmian zachowania (bez motywu kolekcji, dźwięki tła wyłączone). Bez bety aplikacja wygląda i brzmi jak przed ADR-024.
+- Okienko faz czyta `get_rewards` (tylko do odczytu), żeby pokazać ten sam motyw co okno główne.
+- `rewards.json` dostaje pola `unlocks` i `seasons` (tylko id, numery dni i lata).
+- Nowe teksty w 10 językach (nazwy, warunki, okna, mikser, moment) i 10 motywów z pełnymi tokenami.
+
+**Co zmienia:**
+- ADR-022: nowe osiągnięcie (odblokowanie) w momentach; „Zacznij od nowa” i usunięcie w panelu prywatności czyszczą też kolekcję.
+- ADR-015 (motywy): motyw na ekranie liczy się z `theme` i `rewardTheme`; motywy kolekcji w osobnych folderach.
+- ADR-019: strona Deweloper pokazuje każdy motyw i dźwięk kolekcji jako próbkę (bez odblokowania) i próbkę karty sezonowej w wybranym miesiącu.
+- ADR-020: pozycja `rewards` obejmuje kolekcję.
+- CLAUDE.md (po wdrożeniu): zakres „ADR-013 + ADR-014…024”; w Strukturze `unlocks.rs`, `src/lib/themes/<id>/`, `src/lib/ambience/`.
+- ADR-019 (dopisek 2026-10-13, prośba właściciela): grupa „Rewards cheats (dev)” na stronie Deweloper — `DevAction::RewardsCheat { cheat: RewardsCheat }`
+  (+1 / +5 poziomów, +100 iskier, +1 / +7 dni serii, cel dnia teraz, odblokuj wszystko, zablokuj wszystko) do testowania odblokowań. Zmienia **prawdziwy**
+  postęp (`rewards.json`; „Zacznij od nowa” go resetuje), a w trybie prezentacji tylko dane pokazowe w pamięci. Każdy cheat przechodzi zwykłe reguły
+  i ocenę odblokowań (`rewards::cheat`, `unlocks::unlock_all` / `lock_all`), więc momenty i świętowania są te same co zwykle (w focusie czekają na przerwę).
+  Przy wyłączonych nagrodach → `rewardsOff`. `history.jsonl` i config bez zmian (poza powrotem motywu z kolekcji do bazowego po „zablokuj wszystko”).

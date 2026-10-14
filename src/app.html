@@ -1,10 +1,58 @@
 <!doctype html>
-<html lang="en">
+<html lang="pl">
   <head>
     <meta charset="utf-8" />
+    <script>
+      // The phase popup (/popup) is a transparent overlay window: mark it before the first paint so it never
+      // flashes the opaque app background.
+      if (/^\/popup\/?$/.test(location.pathname)) document.documentElement.setAttribute("data-overlay", "");
+      // The theme of the last run (cached by $lib/themes), set before the first paint so a light theme does not
+      // flash dark at startup. The config stays the source of truth: the layouts apply it once it arrives. The list holds
+      // the base themes and the beta collection themes (ADR-024, src/lib/themes/catalog.ts).
+      try {
+        var cachedTheme = localStorage.getItem("focusmode.theme");
+        if (/^(midnight|vaporwave|lunar|autumn|dark|light|pixel|underwater|rainyWindow|forestCabin|sakuraNight|newYear|valentines|easter|summer|halloween|christmas)$/.test(cachedTheme || "")) {
+          document.documentElement.setAttribute("data-theme", cachedTheme);
+        }
+      } catch (e) {
+        // Storage unavailable: the default (dark) colours until the config arrives.
+      }
+      // The UI language of the last run (cached by $lib/i18n, which switches the texts themselves).
+      try {
+        var cachedLanguage = localStorage.getItem("focusmode.language");
+        if (/^(en|pl|de|fr|it|uk|ru|es|ja)$/.test(cachedLanguage || "")) {
+          document.documentElement.setAttribute("lang", cachedLanguage);
+        } else if (cachedLanguage === "zh") {
+          document.documentElement.setAttribute("lang", "zh-Hans");
+        }
+      } catch (e) {
+        // Storage unavailable: $lib/i18n sets the language when it loads.
+      }
+    </script>
+    <style>
+      html {
+        background: #110b19;
+        color-scheme: dark;
+      }
+      html[data-theme="light"] {
+        background: #eceef2;
+        color-scheme: light;
+      }
+      html[data-theme="easter"] {
+        background: #eef2e4;
+        color-scheme: light;
+      }
+      html[data-overlay],
+      html[data-overlay] body {
+        background: transparent !important;
+        /* A light scheme keeps the WebView canvas transparent (no dark canvas fill behind the page). */
+        color-scheme: light !important;
+      }
+    </style>
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tauri + SvelteKit + Typescript App</title>
+    <meta name="color-scheme" content="dark" />
+    <title>FocusMode</title>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

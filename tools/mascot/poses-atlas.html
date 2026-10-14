@@ -1,0 +1,130 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>poses atlas</title>
+<body style="margin:0;background:#333">
+<script>
+// Page side of tools/mascot/poses-atlas.mjs, run in headless Edge (pixel readback there has no noise). It only scales
+// and places the owner's pose PNGs on one canvas and encodes it as WebP: no redrawing, recolouring, outlining or
+// mirroring, and the alpha stays as decoded. The Node driver plans every number; this page draws and measures.
+'use strict';
+
+const ALPHA_INK = 128;
+
+async function loadImage(url) {
+  const img = new Image();
+  img.decoding = 'sync';
+  img.src = url;
+  await img.decode();
+  return img;
+}
+
+// The main atlas's reference frame: first ink row, feet row and the body's mean x (lower half of the figure, the same
+// rule the driver uses for the poses), all in the main frame's own pixels.
+window.measureMain = async ({ manifestUrl, atlasUrl, frame }) => {
+  const manifest = await (await fetch(manifestUrl)).json();
+  const cell = manifest.frames[frame];
+  if (!cell) throw new Error(`no frame ${frame} in the main manifest`);
+  const img = await loadImage(atlasUrl);
+  const w = manifest.frameWidth, h = manifest.frameHeight;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, cell.x, cell.y, w, h, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  const alpha = (x, y) => px[(y * w + x) * 4 + 3];
+  let top = -1, bottom = -1;
+  for (let y = 0; y < h && top < 0; y++) for (let x = 0; x < w; x++) if (alpha(x, y) >= ALPHA_INK) { top = y; break; }
+  for (let y = h - 1; y >= 0 && bottom < 0; y--) for (let x = 0; x < w; x++) if (alpha(x, y) >= ALPHA_INK) { bottom = y; break; }
+  const anchorY = manifest.anchorY;
+  const from = Math.ceil(anchorY - 0.5 * (anchorY - top));
+  let sum = 0, n = 0;
+  for (let y = from; y <= anchorY; y++) for (let x = 0; x < w; x++) if (alpha(x, y) >= ALPHA_INK) { sum += x; n++; }
+  return {
+    frameWidth: w, frameHeight: h, anchorX: manifest.anchorX, anchorY, top, bottom,
+    bodyCx: n > 0 ? sum / n : manifest.anchorX, atlasWidth: img.naturalWidth, atlasHeight: img.naturalHeight,
+  };
+};
+
+const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(blob);
+});
+
+const encode = (canvas, type, quality) => new Promise((resolve, reject) =>
+  canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), type, quality));
+
+// Draws every pose at the planned place and size (one common scale), each clipped to its own cell so resampling never
+// bleeds into a neighbour, then encodes the atlas.
+window.buildAtlas = async ({ width, height, cells, quality }) => {
+  const c = document.createElement('canvas'); c.width = width; c.height = height;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  for (const cell of cells) {
+    const img = await loadImage(cell.url);
+    if (img.naturalWidth !== cell.srcWidth || img.naturalHeight !== cell.srcHeight) {
+      throw new Error(`${cell.url}: ${img.naturalWidth}x${img.naturalHeight}, expected ${cell.srcWidth}x${cell.srcHeight}`);
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cell.x, cell.y, cell.w, cell.h);
+    ctx.clip();
+    ctx.drawImage(img, cell.dx, cell.dy, cell.dw, cell.dh);
+    ctx.restore();
+  }
+  window.lastAtlas = c;
+  const blob = await encode(c, 'image/webp', quality);
+  return { type: blob.type, size: blob.size, edgeAlpha: await edgeAlpha(blob, cells), base64: await blobToBase64(blob) };
+};
+
+// Decodes the encoded atlas and returns the highest alpha on the outer ring of any cell (0 = nothing touches a cell
+// edge, so no pose is clipped and no neighbour bleeds in when a cell is shown scaled).
+async function edgeAlpha(blob, cells) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await loadImage(url);
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    let max = 0;
+    for (const cell of cells) {
+      const px = ctx.getImageData(cell.x, cell.y, cell.w, cell.h).data;
+      for (let y = 0; y < cell.h; y++) for (let x = 0; x < cell.w; x++) {
+        if (y !== 0 && y !== cell.h - 1 && x !== 0 && x !== cell.w - 1) continue;
+        max = Math.max(max, px[(y * cell.w + x) * 4 + 3]);
+      }
+    }
+    return max;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Optional QA sheet (not shipped): the main idle frame and every pose cell side by side at the atlas scale, on a
+// checkerboard, with the shared feet line. Uses the canvas of the last buildAtlas call.
+window.buildPreview = async ({ main, mainAtlasUrl, mainFrame, poses, cellWidth, cellHeight, anchorX, anchorY }) => {
+  const atlas = window.lastAtlas;
+  const mainImg = await loadImage(mainAtlasUrl);
+  const pad = 16, cols = poses.length + 1;
+  const c = document.createElement('canvas');
+  c.width = cols * (cellWidth + pad) + pad; c.height = cellHeight + 2 * pad;
+  const ctx = c.getContext('2d');
+  for (let y = 0; y < c.height; y += 16) for (let x = 0; x < c.width; x += 16) {
+    ctx.fillStyle = ((x + y) / 16) % 2 ? '#d8d8d8' : '#f4f4f4'; ctx.fillRect(x, y, 16, 16);
+  }
+  // Main frame: its anchor on the cell anchor, as the app places a pose (Axolotl.svelte).
+  const mx = pad + anchorX - main.anchorX, my = pad + anchorY - main.anchorY;
+  ctx.drawImage(mainImg, mainFrame.x, mainFrame.y, main.frameWidth, main.frameHeight, mx, my, main.frameWidth, main.frameHeight);
+  poses.forEach((p, i) => {
+    const x = pad + (i + 1) * (cellWidth + pad);
+    ctx.drawImage(atlas, p.x, p.y, cellWidth, cellHeight, x, pad, cellWidth, cellHeight);
+    ctx.strokeStyle = 'rgba(0,120,255,0.5)'; ctx.strokeRect(x + 0.5, pad + 0.5, cellWidth - 1, cellHeight - 1);
+  });
+  ctx.strokeStyle = 'rgba(255,0,0,0.7)'; ctx.beginPath(); ctx.moveTo(0, pad + anchorY + 0.5); ctx.lineTo(c.width, pad + anchorY + 0.5); ctx.stroke();
+  const blob = await encode(c, 'image/png');
+  return { size: blob.size, base64: await blobToBase64(blob) };
+};
+
+window.ready = true;
+</script>

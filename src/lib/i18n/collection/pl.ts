@@ -1,0 +1,141 @@
+// Polish texts of the beta collection (ADR-024): collection themes, ambience layers, their unlock conditions, the
+// mixer and the unlock moment. The source language; every other `collection/<lang>.ts` has exactly this shape
+// (`CollectionStrings`). Kept apart from the big locale files, which import it as their `collection` block.
+// Tone like the rewards: calm, never pressure (no countdowns, no "last chance", nothing is ever taken away).
+import type { AmbienceLayer, RewardTheme, Season } from "$lib/types";
+import { pluralizer } from "../plural";
+
+const plural = pluralizer("pl");
+
+export const collectionPl = {
+  title: "Kolekcja",
+  hint: "Motywy i dźwięki tła za korzystanie z aplikacji. Zdobyte zostają na zawsze.",
+  baseTitle: "Motywy podstawowe",
+  baseBadge: "Motyw podstawowy",
+  baseBadgeHint: "Wraca, gdy wyłączysz funkcje beta.",
+  rewardsOffHint: "Nowe odblokowania działają przy włączonych nagrodach.",
+  rewardsOffLink: "Przejdź do funkcji beta",
+  themeNames: {
+    underwater: "Podwodny dom",
+    rainyWindow: "Deszczowe okno",
+    forestCabin: "Leśna chatka",
+    sakuraNight: "Noc sakury",
+    newYear: "Nowy Rok",
+    valentines: "Walentynki",
+    easter: "Wielkanoc",
+    summer: "Letni zachód",
+    halloween: "Halloween",
+    christmas: "Święta",
+  } satisfies Record<RewardTheme, string>,
+  themeDescriptions: {
+    underwater: "Dom aksolotla: falujące wodorosty, bąbelki i smugi światła z góry.",
+    rainyWindow: "Krople na szybie i rozmyte światła miasta nocą.",
+    forestCabin: "Sosny o zmierzchu, ciepłe okno chatki i świetliki.",
+    sakuraNight: "Księżyc i płatki wiśni niesione wiatrem.",
+    newYear: "Nocne miasto i łagodne fajerwerki.",
+    valentines: "Różowy zmierzch i serduszka unoszące się w górę.",
+    easter: "Wiosenna łąka, pastelowe pisanki i kwitnące gałązki.",
+    summer: "Zachód słońca nad morzem, palmy i spokojne fale.",
+    halloween: "Księżyc, mgła, nietoperze, strach na wróble i dynie ze światełkiem.",
+    christmas: "Śnieg, choinki, ciepłe okno i migoczące lampki.",
+  } satisfies Record<RewardTheme, string>,
+  ambienceNames: {
+    rain: "Deszcz",
+    wind: "Wiatr",
+    thunder: "Burza w oddali",
+    cafe: "Gwar kawiarni",
+    fireplace: "Kominek",
+    forest: "Las i świerszcze",
+    ocean: "Fale",
+    spookyNight: "Upiorna noc",
+    winterCottage: "Zimowa chatka",
+  } satisfies Record<AmbienceLayer, string>,
+  seasonNames: {
+    newYear: "Nowy Rok",
+    valentines: "Walentynki",
+    easter: "Wielkanoc",
+    summer: "Lato",
+    halloween: "Halloween",
+    christmas: "Święta",
+  } satisfies Record<Season, string>,
+  /** "Dostępny …": in a month. */
+  monthIn: [
+    "w styczniu",
+    "w lutym",
+    "w marcu",
+    "w kwietniu",
+    "w maju",
+    "w czerwcu",
+    "w lipcu",
+    "w sierpniu",
+    "we wrześniu",
+    "w październiku",
+    "w listopadzie",
+    "w grudniu",
+  ],
+  /** "2/3 …": the open window when it is one month. */
+  thisMonth: [
+    "w tym styczniu",
+    "w tym lutym",
+    "w tym marcu",
+    "w tym kwietniu",
+    "w tym maju",
+    "w tym czerwcu",
+    "w tym lipcu",
+    "w tym sierpniu",
+    "w tym wrześniu",
+    "w tym październiku",
+    "w tym listopadzie",
+    "w tym grudniu",
+  ],
+  /** "2/3 …": an open window that is not one month (Easter). */
+  thisPeriod: "w tym okresie",
+  locked: "Do zdobycia",
+  availableNow: "Do zdobycia teraz",
+  lockedAria: (name: string, condition: string) => `${name}: do zdobycia. ${condition}`,
+  rule: {
+    free: "Od razu w becie",
+    level: (n: number) => `Poziom ${n}`,
+    bestStreak: (d: number) => `Seria ${d} ${plural(d, { one: "dzień", other: "dni" })} (wystarczy raz)`,
+    seasonal: (n: number) =>
+      `Cel dnia w ${n} ${plural(n, { one: "dzień", few: "różne dni", many: "różnych dni", other: "różnych dni" })}`,
+    withTheme: (theme: string) => `Razem z motywem „${theme}”`,
+  },
+  availableIn: (monthIn: string) => `Dostępny ${monthIn}`,
+  availableBetween: (from: string, to: string) => `Dostępny od ${from} do ${to}`,
+  progressLevel: (have: number, need: number) => `Poziom ${have} z ${need}`,
+  progressStreak: (have: number, need: number) => `Najdłuższa seria: ${have} z ${need}`,
+  progressSeason: (have: number, need: number, period: string) => `${have}/${need} ${period}`,
+  progressAria: (have: number, need: number) => `${have} z ${need}`,
+  unlockedOn: (date: string) => `Zdobyty ${date}`,
+  newTheme: (name: string) => `Nowy motyw: ${name}`,
+  newAmbience: (names: string) => `Nowy dźwięk tła: ${names}`,
+  moreInCollection: (n: number) => `+${n} w kolekcji`,
+  tryIt: "Wypróbuj",
+  inUse: "Włączony",
+  mixer: {
+    title: "Dźwięki tła",
+    open: "Dźwięki tła",
+    close: "Zamknij",
+    hint: "Grają razem z muzyką albo same. Nic nie zaczyna grać samo po uruchomieniu aplikacji.",
+    master: "Dźwięki tła razem z muzyką",
+    volume: "Głośność dźwięków tła",
+    playAlone: "Graj same",
+    stop: "Zatrzymaj",
+    playing: "Gra teraz",
+    layerOn: (name: string) => `${name}: włączony`,
+    layerVolume: (name: string) => `Głośność: ${name}`,
+    locked: "Do zdobycia",
+    lockedHint: "Kolejne dźwięki tła przychodzą z poziomami, serią i sezonowymi motywami.",
+  },
+  beta: {
+    label: "Dźwięki tła",
+    hint: "Deszcz, wiatr i dźwięki z kolekcji, zmiksowane pod muzyką. Mikser jest przy odtwarzaczu.",
+    openMixer: "Otwórz mikser",
+  },
+  resetNote: "Odblokowane motywy i dźwięki tła też wrócą do początku.",
+  privacyNote: "Także odblokowane motywy i dźwięki tła z kolekcji.",
+};
+
+/** The shape of every `collection/<lang>.ts`. */
+export type CollectionStrings = typeof collectionPl;

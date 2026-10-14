@@ -6,3 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+log = "0.4.34"
+rodio = { version = "=0.22.2", features = ["noise"] }
+thiserror = "2.0.21"

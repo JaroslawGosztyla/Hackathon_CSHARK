@@ -1,0 +1,99 @@
+/*
+ * Easter (beta collection theme, ADR-024): a spring meadow in pastels, the only light collection theme (structure of
+ * the `light` block in app.css). Full token set + the reward tokens (ADR-022). The doubled selector (0,2,0) wins over
+ * app.css's shared blocks whatever order the CSS loads in.
+ *
+ * Contrast (WCAG 2.x, measured; --surface composited over --bg-0):
+ *   --text        on surface-solid 15.9 · surface-raised 15.9 · bg-1 15.0 · surface 15.8
+ *   --text-2      on surface-solid 10.2 · surface-raised 10.2 · bg-1  9.6 · surface 10.2
+ *   --text-muted  on surface-solid  6.6 · surface-raised  6.6 · bg-1  6.3 · surface  6.6
+ *   --accent-ink on --accent 6.2 · --break-ink on --break 5.3 · --accent-strong on surface-solid 8.4 · --danger 6.6
+ *   --reward-ink on surface 7.1 · --reward 5.4 · --bubble 5.9 · confetti ≥ 5.3 (all on --surface)
+ *   --quiet-mark on surface-solid 3.5 · --focus-ring on bg-0 5.9 · --border-strong on surface-solid 3.8
+ */
+
+:root[data-theme="easter"],
+[data-theme="easter"]:not(:root) {
+  color-scheme: light;
+
+  --bg-0: #eef2e4;
+  --bg-1: #f7f9f1;
+  --glow-warm: #fff4d8;
+  --glow-cool: #e2f0fa;
+
+  --surface: rgba(255, 255, 255, 0.94);
+  --surface-solid: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-inset: rgba(36, 44, 28, 0.04);
+  --surface-hover: rgba(36, 44, 28, 0.08);
+  --border: rgba(36, 44, 28, 0.13);
+  --border-strong: #7d8776;
+  --border-hover: #5d6757;
+
+  --text: #1c2230;
+  --text-2: #3a4150;
+  --text-muted: #565d69;
+
+  /* Lilac violet (white ink), spring green for breaks. */
+  --accent: #7048c4;
+  --accent-strong: #5a34a8;
+  --accent-soft: rgba(112, 72, 196, 0.1);
+  --accent-ink: #ffffff;
+  --accent-line: rgba(112, 72, 196, 0.5);
+
+  --break: #1d7a50;
+  --break-strong: #15603e;
+  --break-soft: rgba(29, 122, 80, 0.1);
+  --break-ink: #ffffff;
+  --break-line: rgba(29, 122, 80, 0.5);
+
+  --danger: #b42318;
+  --danger-soft: rgba(180, 35, 24, 0.08);
+  --danger-line: rgba(180, 35, 24, 0.5);
+  --ok: #1d7a50;
+  --muted-mark: #8a9086;
+
+  --focus-ring: #1d4ed8;
+
+  --track: rgba(36, 44, 28, 0.08);
+  --track-strong: rgba(36, 44, 28, 0.18);
+  --knob-fill: #ffffff;
+  --scrim: rgba(28, 34, 22, 0.36);
+  --dock-bg: rgba(255, 255, 255, 0.96);
+  --shadow-color: rgba(36, 44, 28, 0.1);
+  --shadow-sm:
+    0 4px 12px rgba(36, 44, 28, 0.14),
+    0 1px 3px rgba(36, 44, 28, 0.12);
+  --logo-bg: rgba(112, 72, 196, 0.1);
+  --logo-moon: #7048c4;
+  --logo-star: #d9922b;
+  --chart-4: #a86f00;
+  --chart-other: #7d838e;
+  --chart-idle: #c3c7cf;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%233a4150' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Spring sky: soft blue overhead, warm light from the upper left, pale towards the meadow. */
+  --app-bg:
+    radial-gradient(70% 55% at 8% 0%, rgba(255, 238, 180, 0.6) 0%, transparent 70%),
+    linear-gradient(180deg, #d6e9f7 0%, #e4f0f6 38%, #f3f5e9 66%, #e9f1dc 100%);
+  --header-bg: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  --header-line: rgba(36, 44, 28, 0.1);
+
+  /* Rewards (ADR-022): every colour ≥ 4.5:1 on white, like the light theme. */
+  --quiet-mark: #858b84;
+  --reward: #a3560b;
+  --reward-ink: #8a4508;
+  --bubble: #0369a1;
+  --confetti-1: #a3560b;
+  --confetti-2: #0369a1;
+  --confetti-3: #be185d;
+  --confetti-4: #1d7a50;
+  --reward-soft: rgba(163, 86, 11, 0.1);
+  --bubble-soft: rgba(3, 105, 161, 0.1);
+}
+
+/* Like the light theme: placeholders at full strength keep their 4.5:1 contrast. */
+[data-theme="easter"] .input::placeholder,
+[data-theme="easter"] .textarea::placeholder {
+  opacity: 1;
+}

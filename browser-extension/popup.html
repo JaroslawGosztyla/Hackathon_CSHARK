@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FocusMode</title>
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="popup.css" />
+    <script type="module" src="popup.js"></script>
+  </head>
+  <body class="popup">
+    <!-- Texts: data-i18n keys in _locales/<language>/messages.json (filled by localizePage in common.js). -->
+    <main class="popup__main" data-mode="loading">
+      <header class="popup__header">
+        <img src="icons/icon-32.png" alt="" width="28" height="28" />
+        <h1 class="popup__title">FocusMode</h1>
+      </header>
+
+      <p class="connection" id="connection" role="status" aria-live="polite">
+        <span class="connection__dot" aria-hidden="true"></span>
+        <span id="connection-text" data-i18n="checking"></span>
+      </p>
+
+      <section class="phase-card" aria-labelledby="phase">
+        <p class="phase-card__phase" id="phase">—</p>
+        <p class="phase-card__clock" id="clock">--:--</p>
+        <p class="phase-card__hint" id="phase-hint"></p>
+      </section>
+
+      <dl class="facts">
+        <div class="facts__row">
+          <dt data-i18n="factBlocking"></dt>
+          <dd id="blocking">—</dd>
+        </div>
+        <div class="facts__row">
+          <dt data-i18n="factDomains"></dt>
+          <dd id="domain-count">—</dd>
+        </div>
+        <div class="facts__row">
+          <dt data-i18n="factPatterns"></dt>
+          <dd id="pattern-count">—</dd>
+        </div>
+      </dl>
+
+      <details class="domains" id="domains" hidden>
+        <summary data-i18n="showList"></summary>
+        <ul class="domains__list" id="domain-list"></ul>
+      </details>
+
+      <p class="popup__note" data-i18n="listNote" data-i18n-code="websiteblacklist.txt"></p>
+
+      <button type="button" class="btn btn--ghost popup__refresh" id="refresh" data-i18n="refresh"></button>
+
+      <p class="popup__privacy" data-i18n="privacy"></p>
+    </main>
+  </body>
+</html>

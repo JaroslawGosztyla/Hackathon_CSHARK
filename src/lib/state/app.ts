@@ -1,0 +1,96 @@
+// Wires shell events and initial reads into the stores. Called once by the root layout.
+import { goto } from "$app/navigation";
+import * as api from "$lib/api";
+import { cueForPhaseChange, cueForSummary, mascotCues } from "$lib/mascot/cues.svelte";
+import type { AppError } from "$lib/types";
+import { blocklist } from "./blocklist.svelte";
+import { calendar, reportCalendarError } from "./calendar.svelte";
+import { config } from "./config.svelte";
+import { mediaWindow } from "./mediaWindow.svelte";
+import { nudge } from "./nudge.svelte";
+import { presentation } from "./presentation.svelte";
+import { privacy } from "./privacy.svelte";
+import { rewards } from "./rewards.svelte";
+import { session } from "./session.svelte";
+import { shields } from "./shields.svelte";
+import { summary } from "./summary.svelte";
+import { teams } from "./teams.svelte";
+import { tint } from "./tint.svelte";
+import { toasts } from "./toasts.svelte";
+import { reportWorkError, work } from "./work.svelte";
+import { youtubeAccount } from "./youtubeAccount.svelte";
+
+/** Length of one focus phase in the profile in use (idle snapshots report it too), for the mascot's Stop cue. */
+function focusSecs(): number {
+  const fromSnapshot = session.snapshot.focusSecs;
+  if (fromSnapshot > 0) return fromSnapshot;
+  return (config.value?.focusMinutes ?? 0) * 60;
+}
+
+/** Starts all subscriptions; returns a cleanup function. */
+export function initAppState(): () => void {
+  const unlisteners: api.UnlistenFn[] = [];
+  let disposed = false;
+  let reportedNoShell = false;
+
+  const reportError = (error: AppError) => {
+    // Outside the shell (plain `vite dev`) every getter fails the same way: say it once.
+    if (error.code === api.ERR_NO_SHELL) {
+      if (reportedNoShell) return;
+      reportedNoShell = true;
+    }
+    toasts.error(error);
+  };
+
+  const keep = (pending: Promise<api.UnlistenFn>) => {
+    pending
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlisteners.push(unlisten);
+      })
+      .catch((e: unknown) => reportError(api.toAppError(e)));
+  };
+
+  keep(api.onAppError((error) => toasts.error(error)));
+  keep(api.subscribeSnapshot((s) => session.apply(s), reportError));
+  keep(api.subscribeShields((s) => shields.apply(s), reportError));
+  keep(api.subscribeTeams((s) => teams.apply(s), reportError));
+  keep(api.subscribeMediaWindow((s) => mediaWindow.apply(s), reportError));
+  keep(api.subscribeBlocklist((b) => blocklist.apply(b), reportError));
+  keep(api.subscribeTint((t) => tint.apply(t), reportError));
+  // Calendar errors never log their detail (it could come from a calendar server).
+  keep(api.subscribeCalendar((c) => calendar.apply(c), reportCalendarError));
+  // Same for the developer tools (a detail could come from a tool's server); tokens never reach the UI.
+  keep(api.subscribeWork((w) => work.apply(w), reportWorkError));
+  keep(api.subscribeYoutubeAccount((a) => youtubeAccount.apply(a), reportError));
+  // Beta rewards (ADR-022): decorative view state, so a failing getter is only logged (never a toast).
+  keep(api.subscribeRewards((r) => rewards.apply(r), (e) => rewards.reportError(e)));
+  keep(
+    api.onPhaseChanged((change) => {
+      session.announce(change);
+      const cue = cueForPhaseChange(change);
+      if (cue) mascotCues.emit(cue);
+    }),
+  );
+  keep(api.onNudge((n) => nudge.show(n)));
+  keep(
+    api.onSessionSummary((s) => {
+      summary.add(s);
+      // Before the summary page opens, so its axolotl still sees the cue as fresh.
+      const cue = cueForSummary(s, focusSecs());
+      if (cue) mascotCues.emit(cue);
+      // A delete in the privacy panel stopped the session: the user stays in the panel (ADR-020).
+      if (!privacy.deleting) void goto("/summary");
+    }),
+  );
+
+  void config.load();
+  void summary.load();
+  // Presentation mode (ADR-019): a showcase the shell started (`--presentation`, a reload) and the language it follows.
+  unlisteners.push(presentation.listen());
+
+  return () => {
+    disposed = true;
+    for (const unlisten of unlisteners.splice(0)) unlisten();
+  };
+}

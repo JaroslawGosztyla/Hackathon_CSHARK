@@ -1,0 +1,319 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mascot tool</title>
+<body style="background:#333;margin:0">
+<canvas id="c"></canvas>
+<script>
+// Sprite extraction for the FocusMode axolotl sheet: detect frames, cut out the white background, align, export.
+const img = new Image();
+const ready = new Promise((r) => { img.onload = r; });
+img.src = new URLSearchParams(location.search).get('sheet') || 'sheet.webp';
+let W, H, data;
+async function load() {
+  await ready;
+  W = img.naturalWidth; H = img.naturalHeight;
+  const c = document.getElementById('c'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  data = ctx.getImageData(0, 0, W, H).data;
+  return { W, H };
+}
+const px = (x, y) => { const i = (y * W + x) * 4; return [data[i], data[i + 1], data[i + 2], data[i + 3]]; };
+// "Ink" = clearly not paper: dark-ish or saturated. Paper, lavender label pills and grey dividers are not ink.
+const isInk = (r, g, b, a) => a > (window.INK_ALPHA ?? 24);
+
+function components() {
+  const lab = new Int32Array(W * H).fill(-1);
+  const comps = [];
+  const stack = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    if (lab[i] !== -1) continue;
+    const [r, g, b, a] = px(x, y);
+    if (!isInk(r, g, b, a)) continue;
+    const id = comps.length;
+    const box = { x0: x, y0: y, x1: x, y1: y, n: 0 };
+    lab[i] = id; stack.push(i);
+    while (stack.length) {
+      const j = stack.pop(); const jx = j % W, jy = (j / W) | 0;
+      box.n++; if (jx < box.x0) box.x0 = jx; if (jx > box.x1) box.x1 = jx; if (jy < box.y0) box.y0 = jy; if (jy > box.y1) box.y1 = jy;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = jx + dx, ny = jy + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const k = ny * W + nx; if (lab[k] !== -1) continue;
+        const [r2, g2, b2, a2] = px(nx, ny); if (!isInk(r2, g2, b2, a2)) continue;
+        lab[k] = id; stack.push(k);
+      }
+    }
+    comps.push(box);
+  }
+  return { lab, comps };
+}
+
+// Groups components whose boxes are within `gap` px of each other (one sprite = outline + eyes + blush …).
+function group(comps, gap) {
+  const parent = comps.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const isDecor = (c) => { const w = c.x1 - c.x0 + 1, h = c.y1 - c.y0 + 1; return (h <= 30 && w >= 40) || (w <= 6 && h >= 60); };
+  const big = comps.map((c, i) => i).filter((i) => comps[i].n > 3 && !isDecor(comps[i]));
+  for (let a = 0; a < big.length; a++) for (let b = a + 1; b < big.length; b++) {
+    const p = comps[big[a]], q = comps[big[b]];
+    if (p.x0 - gap <= q.x1 && q.x0 - gap <= p.x1 && p.y0 - gap <= q.y1 && q.y0 - gap <= p.y1) parent[find(big[a])] = find(big[b]);
+  }
+  const groups = new Map();
+  for (const i of big) {
+    const r = find(i); const c = comps[i];
+    const g = groups.get(r) ?? { x0: 1e9, y0: 1e9, x1: -1, y1: -1, n: 0, ids: [] };
+    g.x0 = Math.min(g.x0, c.x0); g.y0 = Math.min(g.y0, c.y0); g.x1 = Math.max(g.x1, c.x1); g.y1 = Math.max(g.y1, c.y1); g.n += c.n; g.ids.push(i);
+    groups.set(r, g);
+  }
+  return [...groups.values()].map((g) => ({ ...g, w: g.x1 - g.x0 + 1, h: g.y1 - g.y0 + 1 }));
+}
+
+window.analyze = async (gap = 6) => {
+  await load();
+  const { comps, lab } = components(); window._lab = lab;
+  const gs = group(comps, gap).filter((g) => g.w > 20 && g.h > 20).sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+  window._groups = gs;
+  return gs.map((g) => [g.x0, g.y0, g.w, g.h, g.n]);
+};
+
+window.samplePalette = async (x, y, w, h) => {
+  await load();
+  const counts = new Map();
+  for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) {
+    const [r, g, b] = px(i, j); const k = `${r >> 3 << 3},${g >> 3 << 3},${b >> 3 << 3}`;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+};
+
+// Cuts one sprite: exterior paper (flood-filled from the crop border) becomes transparent; a 2-px rim of
+// anti-aliased edge pixels is "colour-to-alpha"-ed against white so no light halo remains on dark themes.
+function cut(box, pad = 3) {
+  const x0 = Math.max(0, box.x0 - pad), y0 = Math.max(0, box.y0 - pad);
+  const x1 = Math.min(W - 1, box.x1 + pad), y1 = Math.min(H - 1, box.y1 + pad);
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  const out = new ImageData(w, h);
+  const ids = new Set(box.ids);
+  const own = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (ids.has(window._lab[(y0 + j) * W + x0 + i])) own[j * w + i] = 1;
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const k = j * w + i; let keep = own[k];
+    if (!keep && window._lab[(y0 + j) * W + x0 + i] === -1) {
+      for (let dy = -1; dy <= 1 && !keep; dy++) for (let dx = -1; dx <= 1; dx++) { const ni = i + dx, nj = j + dy; if (ni >= 0 && nj >= 0 && ni < w && nj < h && own[nj * w + ni]) { keep = 1; break; } }
+    }
+    if (!keep) continue;
+    const [r, g, b, a] = px(x0 + i, y0 + j); const o = k * 4;
+    out.data[o] = r; out.data[o + 1] = g; out.data[o + 2] = b; out.data[o + 3] = a;
+  }
+  return { x0, y0, w, h, img: out };
+}
+function cutWhite(box, pad = 3) {
+  const x0 = Math.max(0, box.x0 - pad), y0 = Math.max(0, box.y0 - pad);
+  const x1 = Math.min(W - 1, box.x1 + pad), y1 = Math.min(H - 1, box.y1 + pad);
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  const out = new ImageData(w, h);
+  const paper = (r, g, b) => Math.min(r, g, b) >= 228 && Math.max(r, g, b) - Math.min(r, g, b) <= 22;
+  const ext = new Uint8Array(w * h);
+  const stack = [];
+  for (let i = 0; i < w; i++) { stack.push(i, (h - 1) * w + i); }
+  for (let j = 0; j < h; j++) { stack.push(j * w, j * w + w - 1); }
+  while (stack.length) {
+    const k = stack.pop(); if (ext[k]) continue;
+    const kx = k % w, ky = (k / w) | 0; const [r, g, b] = px(x0 + kx, y0 + ky);
+    if (!paper(r, g, b)) continue;
+    ext[k] = 1;
+    if (kx > 0) stack.push(k - 1); if (kx < w - 1) stack.push(k + 1); if (ky > 0) stack.push(k - w); if (ky < h - 1) stack.push(k + w);
+  }
+  // distance (in px, up to 3) from the exterior, for the anti-alias rim
+  const dist = new Uint8Array(w * h).fill(9);
+  for (let k = 0; k < w * h; k++) if (ext[k]) dist[k] = 0;
+  for (let pass = 1; pass <= 3; pass++) for (let k = 0; k < w * h; k++) {
+    if (dist[k] !== 9) continue; const kx = k % w, ky = (k / w) | 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = kx + dx, ny = ky + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      if (dist[ny * w + nx] === pass - 1) { dist[k] = pass; dy = dx = 2; }
+    }
+  }
+  for (let k = 0; k < w * h; k++) {
+    const kx = k % w, ky = (k / w) | 0; let [r, g, b] = px(x0 + kx, y0 + ky); let a = 255;
+    if (ext[k]) { a = 0; }
+    else if (dist[k] <= 2) {
+      const alpha = Math.max(255 - r, 255 - g, 255 - b) / 255;
+      const al = Math.min(1, alpha * 1.15);
+      if (al < 1) {
+        a = Math.round(al * 255);
+        if (al > 0.02) { r = (r - 255 * (1 - al)) / al; g = (g - 255 * (1 - al)) / al; b = (b - 255 * (1 - al)) / al; }
+      }
+    }
+    const o = k * 4; out.data[o] = Math.max(0, Math.min(255, r)); out.data[o + 1] = Math.max(0, Math.min(255, g)); out.data[o + 2] = Math.max(0, Math.min(255, b)); out.data[o + 3] = a;
+  }
+  return { x0, y0, w, h, img: out };
+}
+
+// Anchor: x = centroid of opaque pixels in the top 45 % (head + headphones), y = lowest opaque row (feet).
+function anchor(c) {
+  let sx = 0, n = 0, bottom = 0, top = c.h;
+  for (let j = 0; j < c.h; j++) for (let i = 0; i < c.w; i++) if (c.img.data[(j * c.w + i) * 4 + 3] > 128) { if (j > bottom) bottom = j; if (j < top) top = j; }
+  const headLimit = top + (bottom - top) * 0.45;
+  for (let j = top; j < headLimit; j++) for (let i = 0; i < c.w; i++) if (c.img.data[(j * c.w + i) * 4 + 3] > 128) { sx += i; n++; }
+  return { ax: n ? sx / n : c.w / 2, ay: bottom };
+}
+
+async function post(name, blob) {
+  const r = await fetch('/save?name=' + encodeURIComponent(name), { method: 'POST', body: blob });
+  if (!r.ok) throw new Error('save failed ' + name);
+}
+const toBlob = (canvas) => new Promise((r) => canvas.toBlob(r, 'image/png'));
+
+// names: array of [frameName, groupIndex]; exports aligned frames + atlas + manifest.
+window.exportFrames = async (names, opts = {}) => {
+  const pad = opts.pad ?? 6;
+  const cuts = names.map(([name, gi]) => { const c = cut(window._groups[gi]); return { name, ...c, ...anchor(c) }; });
+  const left = Math.ceil(Math.max(...cuts.map((c) => c.ax))) + pad;
+  const right = Math.ceil(Math.max(...cuts.map((c) => c.w - c.ax))) + pad;
+  const up = Math.ceil(Math.max(...cuts.map((c) => c.ay))) + pad;
+  const down = Math.ceil(Math.max(...cuts.map((c) => c.h - c.ay))) + pad;
+  const FW = left + right, FH = up + down;
+  const cols = opts.cols ?? 6, rows = Math.ceil(cuts.length / cols);
+  const atlas = document.createElement('canvas'); atlas.width = FW * cols; atlas.height = FH * rows;
+  const actx = atlas.getContext('2d');
+  const manifest = { frameWidth: FW, frameHeight: FH, anchorX: left, anchorY: up, columns: cols, frames: {} };
+  for (let i = 0; i < cuts.length; i++) {
+    const c = cuts[i];
+    const fc = document.createElement('canvas'); fc.width = FW; fc.height = FH;
+    const t = document.createElement('canvas'); t.width = c.w; t.height = c.h; t.getContext('2d').putImageData(c.img, 0, 0);
+    const dx = Math.round(left - c.ax), dy = Math.round(up - c.ay);
+    fc.getContext('2d').drawImage(t, dx, dy);
+    await post(c.name + '.png', await toBlob(fc));
+    const col = i % cols, row = (i / cols) | 0;
+    actx.drawImage(fc, col * FW, row * FH);
+    manifest.frames[c.name] = { x: col * FW, y: row * FH, index: i };
+  }
+  await post('atlas.png', await toBlob(atlas));
+  await post('manifest.json', new Blob([JSON.stringify(manifest, null, 1)]));
+  return { FW, FH, count: cuts.length, atlas: [atlas.width, atlas.height] };
+};
+
+// Splits a merged group (n frames drawn touching) along minimum-alpha vertical seams; returns n masks (Uint8 over the group box).
+window.splitGroup = (gi, n = 3, search = 28) => {
+  const g = window._groups[gi]; const w = g.w, h = g.h; const ids = new Set(g.ids);
+  const A = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { const X = g.x0 + i, Y = g.y0 + j; const k = Y * W + X; if (ids.has(window._lab[k]) || window._lab[k] === -1) A[j * w + i] = data[k * 4 + 3]; }
+  const seams = [];
+  for (let s2 = 1; s2 < n; s2++) {
+    const c = Math.round(w * s2 / n); const lo = Math.max(1, c - search), hi = Math.min(w - 2, c + search); const span = hi - lo + 1;
+    const cost = new Float32Array(span * h); const from = new Int16Array(span * h);
+    for (let x = 0; x < span; x++) cost[x] = A[lo + x];
+    for (let y = 1; y < h; y++) for (let x = 0; x < span; x++) {
+      let best = Infinity, arg = 0;
+      for (let d = -1; d <= 1; d++) { const px2 = x + d; if (px2 < 0 || px2 >= span) continue; const v = cost[(y - 1) * span + px2] + (d ? 4 : 0); if (v < best) { best = v; arg = px2; } }
+      cost[y * span + x] = best + A[y * w + lo + x]; from[y * span + x] = arg;
+    }
+    let x = 0, best = Infinity; for (let i = 0; i < span; i++) if (cost[(h - 1) * span + i] < best) { best = cost[(h - 1) * span + i]; x = i; }
+    const seam = new Int16Array(h); for (let y = h - 1; y >= 0; y--) { seam[y] = lo + x; x = from[y * span + x]; }
+    seams.push({ seam, cost: best });
+  }
+  window._splits = window._splits || {}; window._splits[gi] = { seams: seams.map((q) => q.seam), n };
+  return seams.map((q) => Math.round(q.cost));
+};
+
+// Cuts part `part` (0-based) of a split group (or the whole group when part is null) into an ImageData.
+function cutPart(gi, part) {
+  const g = window._groups[gi]; const ids = new Set(g.ids); const sp = part == null ? null : window._splits[gi];
+  const pad = 2; const x0 = Math.max(0, g.x0 - pad), y0 = Math.max(0, g.y0 - pad), x1 = Math.min(W - 1, g.x1 + pad), y1 = Math.min(H - 1, g.y1 + pad);
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  let minX = w, maxX = 0, minY = h, maxY = 0;
+  const keep = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const X = x0 + i, Y = y0 + j; const k = Y * W + X; const lab = window._lab[k];
+    if (!(ids.has(lab) || (lab === -1 && data[k * 4 + 3] > 0))) continue;
+    if (lab === -1) { let near = false; for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) { const nk = (Y + dy) * W + X + dx; if (ids.has(window._lab[nk])) { near = true; break; } } if (!near) continue; }
+    if (sp) { const gy = Math.min(g.h - 1, Math.max(0, Y - g.y0)); const gx = X - g.x0; const left = part === 0 ? -1e9 : sp.seams[part - 1][gy]; const right = part === sp.n - 1 ? 1e9 : sp.seams[part][gy]; if (gx < left || gx >= right) continue; }
+    keep[j * w + i] = 1; if (i < minX) minX = i; if (i > maxX) maxX = i; if (j < minY) minY = j; if (j > maxY) maxY = j;
+  }
+  const cw = maxX - minX + 1, ch = maxY - minY + 1; const out = new ImageData(cw, ch);
+  for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) { if (!keep[(j + minY) * w + i + minX]) continue; const k = ((y0 + j + minY) * W + x0 + i + minX) * 4; const o = (j * cw + i) * 4; out.data[o] = data[k]; out.data[o + 1] = data[k + 1]; out.data[o + 2] = data[k + 2]; out.data[o + 3] = data[k + 3]; }
+  return { w: cw, h: ch, img: out };
+}
+
+// Scales an ImageData with high-quality smoothing.
+function scaleImg(c, f) {
+  if (Math.abs(f - 1) < 0.01) return c;
+  const t = document.createElement('canvas'); t.width = c.w; t.height = c.h; t.getContext('2d').putImageData(c.img, 0, 0);
+  const W2 = Math.round(c.w * f), H2 = Math.round(c.h * f); const o = document.createElement('canvas'); o.width = W2; o.height = H2;
+  const ctx = o.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(t, 0, 0, W2, H2);
+  return { w: W2, h: H2, img: ctx.getImageData(0, 0, W2, H2) };
+}
+
+// spec: [[name, groupIndex, part|null, scale]] → aligned frames, atlas, manifest
+window.exportSpec = async (spec, opts = {}) => {
+  const pad = opts.pad ?? 6;
+  const cuts = spec.map(([name, gi, part, f]) => { const c = scaleImg(cutPart(gi, part), f); return { name, ...c, ...anchor(c) }; });
+  const left = Math.ceil(Math.max(...cuts.map((c) => c.ax))) + pad, right = Math.ceil(Math.max(...cuts.map((c) => c.w - c.ax))) + pad;
+  const up = Math.ceil(Math.max(...cuts.map((c) => c.ay))) + pad, down = Math.ceil(Math.max(...cuts.map((c) => c.h - c.ay))) + pad;
+  const FW = left + right, FH = up + down; const cols = opts.cols ?? 6, rows = Math.ceil(cuts.length / cols);
+  const atlas = document.createElement('canvas'); atlas.width = FW * cols; atlas.height = FH * rows; const actx = atlas.getContext('2d');
+  const manifest = { frameWidth: FW, frameHeight: FH, anchorX: left, anchorY: up, columns: cols, frames: {} };
+  for (let i = 0; i < cuts.length; i++) {
+    const c = cuts[i]; const fc = document.createElement('canvas'); fc.width = FW; fc.height = FH;
+    const t = document.createElement('canvas'); t.width = c.w; t.height = c.h; t.getContext('2d').putImageData(c.img, 0, 0);
+    fc.getContext('2d').drawImage(t, Math.round(left - c.ax), Math.round(up - c.ay));
+    if (opts.frames !== false) await post(c.name + '.png', await toBlob(fc));
+    const col = i % cols, row = (i / cols) | 0; actx.drawImage(fc, col * FW, row * FH);
+    manifest.frames[c.name] = { x: col * FW, y: row * FH, w: FW, h: FH, srcW: c.w, srcH: c.h };
+  }
+  await post((opts.prefix ?? '') + 'atlas.png', await toBlob(atlas));
+  await post((opts.prefix ?? '') + 'manifest.json', new Blob([JSON.stringify(manifest, null, 1)]));
+  return { FW, FH, count: cuts.length, atlas: [atlas.width, atlas.height] };
+};
+
+// Dark blobs (eyes, mouth, outlines) inside a frame: components of pixels with luminance < lumMax.
+window.faceBlobs = (gi, lumMax = 120) => {
+  const c = cutPart(gi, null); window._base = c; const w = c.w, h = c.h, d = c.img.data;
+  const L = (k) => 0.2126 * d[k * 4] + 0.7152 * d[k * 4 + 1] + 0.0722 * d[k * 4 + 2];
+  const lab = new Int32Array(w * h).fill(-1); const out = []; const st = [];
+  for (let k = 0; k < w * h; k++) {
+    if (lab[k] !== -1 || d[k * 4 + 3] < 200 || L(k) > lumMax) continue;
+    const id = out.length; const b = { x0: 1e9, y0: 1e9, x1: -1, y1: -1, n: 0, sx: 0, sy: 0, r: 0, g: 0, bl: 0 };
+    lab[k] = id; st.push(k);
+    while (st.length) { const j = st.pop(); const x = j % w, y = (j / w) | 0; b.n++; b.sx += x; b.sy += y; b.r += d[j*4]; b.g += d[j*4+1]; b.bl += d[j*4+2]; b.x0 = Math.min(b.x0, x); b.x1 = Math.max(b.x1, x); b.y0 = Math.min(b.y0, y); b.y1 = Math.max(b.y1, y);
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue; const q = ny * w + nx; if (lab[q] !== -1 || d[q*4+3] < 200 || L(q) > lumMax) continue; lab[q] = id; st.push(q); } }
+    out.push(b);
+  }
+  return { size: [w, h], blobs: out.filter((b) => b.n >= 12).map((b, i) => ({ i, box: [b.x0, b.y0, b.x1 - b.x0 + 1, b.y1 - b.y0 + 1], n: b.n, c: [Math.round(b.sx / b.n), Math.round(b.sy / b.n)], rgb: [Math.round(b.r / b.n), Math.round(b.g / b.n), Math.round(b.bl / b.n)] })) };
+};
+
+// Erases face features (ellipses around the given boxes) with the median skin colour of a ring around each,
+// feathering the last pixel, then saves base.png and face.json (feature geometry for the vector face).
+window.blankFace = async (features, opts = {}) => { window._blankDone = true;
+  const c = window._base; const w = c.w, h = c.h; const d = new Uint8ClampedArray(c.img.data);
+  const grow = opts.grow ?? 3;
+  for (const f of features) {
+    const [bx, by, bw, bh] = f.box; const cx = bx + bw / 2, cy = by + bh / 2; const rx = bw / 2 + grow, ry = bh / 2 + grow;
+    const ring = [];
+    for (let y = Math.floor(cy - ry - 4); y <= cy + ry + 4; y++) for (let x = Math.floor(cx - rx - 4); x <= cx + rx + 4; x++) {
+      if (x < 0 || y < 0 || x >= w || y >= h) continue; const e = ((x - cx) / (rx + 3)) ** 2 + ((y - cy) / (ry + 3)) ** 2; if (e < 1 || e > 1.9) continue;
+      const k = (y * w + x) * 4; const lum = 0.2126 * d[k] + 0.7152 * d[k + 1] + 0.0722 * d[k + 2]; if (d[k + 3] < 250 || lum < 180) continue; ring.push([d[k], d[k + 1], d[k + 2]]);
+    }
+    const med = (i) => { const v = ring.map((p) => p[i]).sort((a, b) => a - b); return v[(v.length / 2) | 0] ?? 238; };
+    const skin = [med(0), med(1), med(2)]; f.skin = skin;
+    for (let y = Math.floor(cy - ry - 1); y <= cy + ry + 1; y++) for (let x = Math.floor(cx - rx - 1); x <= cx + rx + 1; x++) {
+      if (x < 0 || y < 0 || x >= w || y >= h) continue; const e = Math.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2); if (e > 1.15) continue;
+      const k = (y * w + x) * 4; const t = e <= 1 ? 1 : 1 - (e - 1) / 0.15;
+      for (let i = 0; i < 3; i++) d[k + i] = Math.round(d[k + i] * (1 - t) + skin[i] * t);
+    }
+  }
+  const img = new ImageData(d, w, h); window._blank = { w, h, img }; const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').putImageData(img, 0, 0);
+  await post('base.png', await toBlob(cv));
+  const big = document.createElement('canvas'); big.width = w * 3; big.height = h * 3; const bctx = big.getContext('2d'); bctx.imageSmoothingEnabled = false; bctx.drawImage(cv, 0, 0, w * 3, h * 3);
+  await post('base-zoom.png', await toBlob(big));
+  await post('face.json', new Blob([JSON.stringify({ size: [w, h], features }, null, 1)]));
+  return features.map((f) => ({ name: f.name, skin: f.skin }));
+};
+
+</script>
+
+<script src="fast.js"></script>
+
+<script src="cut3.js"></script>

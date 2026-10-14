@@ -1,0 +1,79 @@
+{
+ "frameWidth": 495,
+ "frameHeight": 300,
+ "columns": 6,
+ "anchorX": 258,
+ "anchorY": 288,
+ "frames": {
+  "idle": {
+   "x": 0,
+   "y": 0,
+   "scale": 1
+  },
+  "blink-1": {
+   "x": 495,
+   "y": 0,
+   "scale": 1
+  },
+  "blink-2": {
+   "x": 990,
+   "y": 0,
+   "scale": 1
+  },
+  "blink-3": {
+   "x": 1485,
+   "y": 0,
+   "scale": 1
+  },
+  "blink-4": {
+   "x": 1980,
+   "y": 0,
+   "scale": 1
+  },
+  "mouth-a": {
+   "x": 2475,
+   "y": 0,
+   "scale": 1
+  },
+  "mouth-e": {
+   "x": 0,
+   "y": 300,
+   "scale": 1
+  },
+  "mouth-i": {
+   "x": 495,
+   "y": 300,
+   "scale": 1
+  },
+  "mouth-u": {
+   "x": 990,
+   "y": 300,
+   "scale": 1
+  },
+  "mouth-y": {
+   "x": 1485,
+   "y": 300,
+   "scale": 1
+  },
+  "smile": {
+   "x": 1980,
+   "y": 300,
+   "scale": 1
+  },
+  "sad": {
+   "x": 2475,
+   "y": 300,
+   "scale": 1
+  },
+  "angry": {
+   "x": 0,
+   "y": 600,
+   "scale": 1
+  },
+  "happy": {
+   "x": 495,
+   "y": 600,
+   "scale": 1
+  }
+ }
+}

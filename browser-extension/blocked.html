@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en" data-i18n-doc-title="blockedPageTitle">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>FocusMode</title>
+    <link rel="icon" href="icons/icon-32.png" />
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="blocked.css" />
+    <script type="module" src="blocked.js"></script>
+  </head>
+  <body class="blocked">
+    <!-- Texts: data-i18n keys in _locales/<language>/messages.json (filled by localizePage in common.js). -->
+    <div class="sky" aria-hidden="true">
+      <div class="sky__moon"></div>
+      <div class="sky__rain sky__rain--far"></div>
+      <div class="sky__rain sky__rain--near"></div>
+      <div class="sky__glow"></div>
+    </div>
+
+    <main class="card" id="card" data-mode="loading">
+      <!-- Focus only: the angry axolotl (one still frame of images/axo-angry.webp) and what it says, letter by letter. -->
+      <div class="axo" id="axo" hidden>
+        <div class="axo__art" id="axo-art" aria-hidden="true"></div>
+        <p class="axo__bubble" id="axo-bubble">
+          <span class="visually-hidden" id="axo-text"></span>
+          <span class="axo__letters" id="axo-letters" aria-hidden="true"></span>
+        </p>
+      </div>
+
+      <p class="card__eyebrow">FocusMode</p>
+
+      <h1 class="card__headline">
+        <span id="headline" data-i18n="headlineFocus"></span>
+        <span class="card__emoji" id="headline-emoji" aria-hidden="true">🎧</span>
+      </h1>
+
+      <p class="card__site" id="site" data-i18n="siteWaits"></p>
+
+      <p class="card__match" id="match" hidden>
+        <span id="match-label" data-i18n="matchLabel"></span>
+        <code class="card__entry" id="match-entry"></code>
+      </p>
+
+      <div class="timer" id="timer">
+        <p class="timer__label" id="timer-label" data-i18n="timerFocus"></p>
+        <p class="timer__clock" id="timer-clock">--:--</p>
+      </div>
+
+      <p class="card__line" id="line"></p>
+
+      <div class="card__actions">
+        <a class="btn btn--primary" id="open" href="#" rel="noreferrer" hidden data-i18n="openSite"></a>
+        <button type="button" class="btn btn--ghost" id="back" data-i18n="back"></button>
+      </div>
+
+      <p class="card__status" id="status" role="status" aria-live="polite"></p>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,134 @@
+{
+  "source": "axolotl-poses-sheet.webp",
+  "scale": 4,
+  "model": "realesrgan-x4plus-anime",
+  "margin": 24,
+  "alphaClean": {
+    "zeroAtOrBelow": 40,
+    "opaqueAtOrAbove": 215,
+    "between": "unchanged"
+  },
+  "poses": [
+    {
+      "file": "01-point-excited.png",
+      "name": "01-point-excited",
+      "row": 1,
+      "col": 1,
+      "x": 199,
+      "y": 359,
+      "width": 1403,
+      "height": 1260,
+      "baselineY": 1233
+    },
+    {
+      "file": "02-clasped-hands-heart.png",
+      "name": "02-clasped-hands-heart",
+      "row": 1,
+      "col": 2,
+      "x": 1631,
+      "y": 390,
+      "width": 1342,
+      "height": 1239,
+      "baselineY": 1210
+    },
+    {
+      "file": "03-thinking.png",
+      "name": "03-thinking",
+      "row": 1,
+      "col": 3,
+      "x": 3063,
+      "y": 287,
+      "width": 1266,
+      "height": 1354,
+      "baselineY": 1327
+    },
+    {
+      "file": "04-lying-awake.png",
+      "name": "04-lying-awake",
+      "row": 1,
+      "col": 4,
+      "x": 4517,
+      "y": 676,
+      "width": 1519,
+      "height": 921,
+      "baselineY": 894
+    },
+    {
+      "file": "05-look-up.png",
+      "name": "05-look-up",
+      "row": 2,
+      "col": 2,
+      "x": 1697,
+      "y": 1751,
+      "width": 1200,
+      "height": 1090,
+      "baselineY": 1063
+    },
+    {
+      "file": "06-amazed-sparkles.png",
+      "name": "06-amazed-sparkles",
+      "row": 2,
+      "col": 3,
+      "x": 3100,
+      "y": 1760,
+      "width": 1258,
+      "height": 1094,
+      "baselineY": 1067
+    },
+    {
+      "file": "07-sleeping.png",
+      "name": "07-sleeping",
+      "row": 2,
+      "col": 4,
+      "x": 4539,
+      "y": 1774,
+      "width": 1450,
+      "height": 1139,
+      "baselineY": 1112
+    },
+    {
+      "file": "08-back-view.png",
+      "name": "08-back-view",
+      "row": 3,
+      "col": 1,
+      "x": 228,
+      "y": 3014,
+      "width": 1180,
+      "height": 979,
+      "baselineY": 952
+    },
+    {
+      "file": "09-lying-look-up.png",
+      "name": "09-lying-look-up",
+      "row": 3,
+      "col": 2,
+      "x": 1635,
+      "y": 3008,
+      "width": 1283,
+      "height": 1001,
+      "baselineY": 974
+    },
+    {
+      "file": "10-holding-heart.png",
+      "name": "10-holding-heart",
+      "row": 3,
+      "col": 3,
+      "x": 3198,
+      "y": 3013,
+      "width": 1127,
+      "height": 1008,
+      "baselineY": 980
+    },
+    {
+      "file": "11-point-happy.png",
+      "name": "11-point-happy",
+      "row": 3,
+      "col": 4,
+      "x": 4649,
+      "y": 2983,
+      "width": 1341,
+      "height": 1052,
+      "baselineY": 1025
+    }
+  ]
+}
