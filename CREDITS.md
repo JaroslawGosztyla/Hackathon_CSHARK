@@ -26,6 +26,9 @@ Zasoby dołączone do FocusMode (CLAUDE.md, zasada 10). Każdy nowy plik muzyki,
   atlas `static/mascot/poses-atlas.webp` (11 klatek) z manifestem `poses-manifest.json`. Atlas tylko **skaluje** wycięte pozy (jedna wspólna skala
   dla wszystkich, wspólna linia stóp; `tools/mascot/poses-atlas.mjs`, opis w `tools/mascot/README.md`), bez przerysowania, przekolorowania,
   obrysu ani odbicia; kanał alfa jak w plikach PNG.
+- **Pozy 2 (na później):** arkusz autora `art/mascot/axolotl-poses-2-sheet.webp` (18 póz na białym tle), wycięte ×4 do
+  `art/mascot/poses-2/`. Białe tło wokół rysunków zamienione na przezroczyste (`tools/mascot/white-to-alpha.mjs`): kolory
+  rysunku bez zmian, tylko wygładzona krawędź bez domieszki bieli. Jeszcze nie w aplikacji.
 - **Obróbka:** arkusze zostały **powiększone ×4 narzędziem [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)** (`realesrgan-ncnn-vulkan` v0.2.5.0,
   licencja BSD-3, model `realesrgan-x4plus-anime`), a potem wycięte na klatki i wyrównane (wspólna skala i kotwica, usunięta miękka poświata krawędzi;
   `tools/mascot/`, opis w `art/mascot/README.md`). Grafika **nie jest wektoryzowana, przerysowywana ani przekolorowana**: klatki to oryginalne rysunki autora.

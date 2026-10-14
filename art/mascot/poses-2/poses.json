@@ -1,0 +1,207 @@
+{
+  "source": "axolotl-poses-2-sheet.webp",
+  "scale": 4,
+  "model": "realesrgan-x4plus-anime",
+  "margin": 24,
+  "background": "white-to-alpha.mjs",
+  "poses": [
+    {
+      "file": "01-wave-hello.png",
+      "name": "01-wave-hello",
+      "row": 1,
+      "col": 1,
+      "x": 79,
+      "y": 127,
+      "width": 1192,
+      "height": 1155,
+      "baselineY": 1130
+    },
+    {
+      "file": "02-giggle-heart.png",
+      "name": "02-giggle-heart",
+      "row": 1,
+      "col": 2,
+      "x": 1359,
+      "y": 294,
+      "width": 1137,
+      "height": 1009,
+      "baselineY": 983
+    },
+    {
+      "file": "03-point-right.png",
+      "name": "03-point-right",
+      "row": 1,
+      "col": 3,
+      "x": 2528,
+      "y": 309,
+      "width": 1061,
+      "height": 991,
+      "baselineY": 966
+    },
+    {
+      "file": "04-question.png",
+      "name": "04-question",
+      "row": 1,
+      "col": 4,
+      "x": 3759,
+      "y": 227,
+      "width": 1032,
+      "height": 1072,
+      "baselineY": 1046
+    },
+    {
+      "file": "05-lying-smile.png",
+      "name": "05-lying-smile",
+      "row": 1,
+      "col": 5,
+      "x": 4860,
+      "y": 555,
+      "width": 1196,
+      "height": 747,
+      "baselineY": 722
+    },
+    {
+      "file": "06-cheer.png",
+      "name": "06-cheer",
+      "row": 2,
+      "col": 1,
+      "x": 102,
+      "y": 1298,
+      "width": 1098,
+      "height": 1034,
+      "baselineY": 1008
+    },
+    {
+      "file": "07-side-glance.png",
+      "name": "07-side-glance",
+      "row": 2,
+      "col": 2,
+      "x": 1340,
+      "y": 1381,
+      "width": 929,
+      "height": 949,
+      "baselineY": 924
+    },
+    {
+      "file": "08-amazed-sparkles.png",
+      "name": "08-amazed-sparkles",
+      "row": 2,
+      "col": 3,
+      "x": 2391,
+      "y": 1398,
+      "width": 1058,
+      "height": 887,
+      "baselineY": 862
+    },
+    {
+      "file": "09-sleeping.png",
+      "name": "09-sleeping",
+      "row": 2,
+      "col": 4,
+      "x": 3535,
+      "y": 1396,
+      "width": 1257,
+      "height": 966,
+      "baselineY": 940
+    },
+    {
+      "file": "10-back-view.png",
+      "name": "10-back-view",
+      "row": 2,
+      "col": 5,
+      "x": 5104,
+      "y": 1453,
+      "width": 905,
+      "height": 880,
+      "baselineY": 855
+    },
+    {
+      "file": "11-wink.png",
+      "name": "11-wink",
+      "row": 3,
+      "col": 2,
+      "x": 1239,
+      "y": 2358,
+      "width": 1059,
+      "height": 865,
+      "baselineY": 840
+    },
+    {
+      "file": "12-holding-heart.png",
+      "name": "12-holding-heart",
+      "row": 3,
+      "col": 3,
+      "x": 2451,
+      "y": 2384,
+      "width": 943,
+      "height": 844,
+      "baselineY": 819
+    },
+    {
+      "file": "13-grumpy.png",
+      "name": "13-grumpy",
+      "row": 3,
+      "col": 4,
+      "x": 3672,
+      "y": 2432,
+      "width": 981,
+      "height": 806,
+      "baselineY": 780
+    },
+    {
+      "file": "14-point-excited.png",
+      "name": "14-point-excited",
+      "row": 3,
+      "col": 5,
+      "x": 4853,
+      "y": 2379,
+      "width": 1135,
+      "height": 861,
+      "baselineY": 836
+    },
+    {
+      "file": "15-bounce.png",
+      "name": "15-bounce",
+      "row": 4,
+      "col": 1,
+      "x": 116,
+      "y": 3180,
+      "width": 944,
+      "height": 821,
+      "baselineY": 795
+    },
+    {
+      "file": "16-lying-wink.png",
+      "name": "16-lying-wink",
+      "row": 4,
+      "col": 2,
+      "x": 1172,
+      "y": 3250,
+      "width": 996,
+      "height": 780,
+      "baselineY": 755
+    },
+    {
+      "file": "17-thinking-bubble.png",
+      "name": "17-thinking-bubble",
+      "row": 4,
+      "col": 3,
+      "x": 2528,
+      "y": 3242,
+      "width": 932,
+      "height": 815,
+      "baselineY": 790
+    },
+    {
+      "file": "18-celebrate-stars.png",
+      "name": "18-celebrate-stars",
+      "row": 4,
+      "col": 5,
+      "x": 4977,
+      "y": 3222,
+      "width": 1042,
+      "height": 835,
+      "baselineY": 810
+    }
+  ]
+}

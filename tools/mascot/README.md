@@ -8,6 +8,8 @@ Grafiki **nie przerysowujemy, nie przekolorowujemy, nie obrysowujemy ani nie wek
 |---|---|
 | `tool.html`, `server.mjs`, `cdp.mjs`, `fast.js`, `cut3.js` | cięcie klatek głównych i „peek” (atlasy `axo-atlas.webp`, `peek-atlas.webp`) |
 | `png.mjs`, `poses-analyze.mjs`, `poses-cut.mjs` | kodek PNG w czystym Node i wycięcie 11 póz do `art/mascot/poses/` |
+| `white-to-alpha.mjs` | białe tło arkusza ×4 → przezroczyste (z wygładzoną krawędzią bez jasnej obwódki), opis w `art/mascot/README.md` (Pozy 2) |
+| `sheet-cut.mjs` | cięcie dowolnego arkusza póz w wierszach (nazwy w kolejności czytania), np. 18 póz do `art/mascot/poses-2/` |
 | `poses-atlas.mjs`, `poses-atlas.html` | atlas póz dla aplikacji (funkcje beta, ADR-022), opis niżej |
 
 ## Atlas póz (`static/mascot/poses-atlas.webp` + `poses-manifest.json`)
